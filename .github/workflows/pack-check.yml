@@ -1,0 +1,80 @@
+# On every pull request: pack each published plugin exactly as npm would and
+# install the tarball with buddi's own CLI from npm (`@withbuddi/buddi@next`),
+# into a scratch data directory and a Postgres service: stage, approve with
+# the integrity the staged card printed, then `buddi plugins list` must say ok.
+# This is the path a stranger's install takes, so a `link:` left in a
+# package.json, a file missing from `files` or a manifest that no longer
+# imports fails here rather than on someone's machine.
+name: pack-check
+on:
+  pull_request:
+jobs:
+  pack-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: buddi
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: buddi
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U buddi" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://buddi:test@127.0.0.1:5432/buddi
+      BUDDI_VAULT: memory
+      PLUGINS: finance image speech
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: buddi-plugins }
+      - uses: actions/checkout@v4
+        with: { repository: withbuddi/buddi, path: buddi }
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: buddi-plugins/package.json }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            buddi/pnpm-lock.yaml
+            buddi-plugins/pnpm-lock.yaml
+      - name: Build the core the plugins link to
+        working-directory: buddi
+        run: pnpm install --frozen-lockfile && pnpm --filter '@buddi/core...' build
+      - working-directory: buddi-plugins
+        run: pnpm install --frozen-lockfile
+      - name: Pack each plugin
+        working-directory: buddi-plugins
+        run: |
+          mkdir -p "$RUNNER_TEMP/tgz"
+          for p in $PLUGINS; do (cd "$p" && npm pack --pack-destination "$RUNNER_TEMP/tgz"); done
+          ls -l "$RUNNER_TEMP/tgz"
+      - name: buddi from npm, in a scratch installation
+        run: |
+          npm install -g @withbuddi/buddi@next
+          scratch="$RUNNER_TEMP/buddi"
+          mkdir -p "$scratch/data" && : > "$scratch/empty.env"
+          {
+            echo "BUDDI_DATA_DIR=$scratch/data"
+            echo "BUDDI_PLUGINS_FILE=$scratch/plugins.json"
+            echo "BUDDI_ENV_FILE=$scratch/empty.env"
+          } >> "$GITHUB_ENV"
+      - run: buddi migrate
+      - name: Stage, approve, list
+        run: |
+          for p in $PLUGINS; do
+            tgz=$(ls "$RUNNER_TEMP"/tgz/withbuddi-plugin-"$p"-*.tgz)
+            # Staged, not installed: exit 3, and the card ends with the approve line.
+            out=$(buddi plugins install "$tgz" 2>&1) || true
+            echo "$out" | tail -5
+            approve=$(printf '%s\n' "$out" | grep -o 'buddi plugins approve [0-9a-f]* --integrity [^ ]*' | tail -1)
+            test -n "$approve" || { echo "::error::$p was not staged"; printf '%s\n' "$out"; exit 1; }
+            $approve
+          done
+          buddi plugins list | tee "$RUNNER_TEMP/list.txt"
+          for p in $PLUGINS; do
+            grep -Eq "^[[:space:]]*ok[[:space:]]+$p[[:space:]]" "$RUNNER_TEMP/list.txt" || { echo "::error::$p is not ok in buddi plugins list"; exit 1; }
+          done

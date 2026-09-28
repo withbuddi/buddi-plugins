@@ -1,0 +1,96 @@
+# Publishing one plugin: a tag `<name>@<version>` (`finance@0.1.1`) builds,
+# typechecks and tests that plugin against a Postgres service, then publishes
+# `<name>/` to npmjs.com as `@withbuddi/plugin-<name>` with provenance, through
+# npm's trusted publishing (OIDC: no token lives in this repository). A
+# pre-release version (`0.2.0-pre.1`) goes under the `next` dist-tag.
+#
+# The plugins are developed against a buddi checkout beside this repository
+# (pnpm-workspace.yaml links `@buddi/core` to ../buddi/packages/core), so the
+# job checks out both side by side: this repository in `buddi-plugins/`,
+# withbuddi/buddi in `buddi/`. What npm publishes names core only as an
+# optional peer; the link is never packed.
+#
+# Once per plugin, on npmjs.com: package `@withbuddi/plugin-<name>` → Settings
+# → Trusted publisher: GitHub Actions, owner `withbuddi`, repository
+# `buddi-plugins`, workflow `publish.yml`, environment `npm` (README.md,
+# "Publishing").
+name: publish
+on:
+  push:
+    tags: ['*@*']
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write   # npm trusted publishing (provenance)
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: buddi
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: buddi
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U buddi" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://buddi:test@127.0.0.1:5432/buddi
+      BUDDI_VAULT: memory
+    steps:
+      - name: Plugin and version from the tag
+        id: tag
+        run: |
+          name="${GITHUB_REF_NAME%@*}"
+          version="${GITHUB_REF_NAME#*@}"
+          case "$name" in ''|*[!a-z0-9-]*) echo "::error::tag $GITHUB_REF_NAME does not name a plugin (<name>@<version>)"; exit 1;; esac
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "dist=next" >> "$GITHUB_OUTPUT";; *) echo "dist=latest" >> "$GITHUB_OUTPUT";; esac
+      - uses: actions/checkout@v4
+        with: { path: buddi-plugins }
+      - uses: actions/checkout@v4
+        with: { repository: withbuddi/buddi, path: buddi }
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: buddi-plugins/package.json }
+      # No `registry-url`: it writes an .npmrc with a token placeholder, and npm
+      # then sends that instead of the OIDC token.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            buddi/pnpm-lock.yaml
+            buddi-plugins/pnpm-lock.yaml
+      # Trusted publishing needs npm 11.5 or later; Node 22 ships an older one.
+      - run: npm install -g npm@11 && npm --version
+      - name: The package is the one the tag names
+        working-directory: buddi-plugins
+        run: |
+          dir="${{ steps.tag.outputs.name }}"
+          test -f "$dir/package.json" || { echo "::error::no plugin directory $dir/"; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1] + "/package.json");
+            const want = { name: "@withbuddi/plugin-" + process.argv[1], version: process.argv[2] };
+            if (p.private) throw new Error(p.name + " is private");
+            if (p.name !== want.name) throw new Error("package.json names " + p.name + ", the tag wants " + want.name);
+            if (p.version !== want.version) throw new Error("package.json is at " + p.version + ", the tag says " + want.version);
+            if (p.buddi?.name !== process.argv[1]) throw new Error("buddi.name is " + p.buddi?.name);
+          ' "$dir" "${{ steps.tag.outputs.version }}"
+      - name: Build the core the plugins link to
+        working-directory: buddi
+        run: pnpm install --frozen-lockfile && pnpm --filter '@buddi/core...' build
+      - working-directory: buddi-plugins
+        run: pnpm install --frozen-lockfile
+      - working-directory: buddi-plugins
+        run: node scripts/check-plugin-imports.mjs
+      - working-directory: buddi-plugins/${{ steps.tag.outputs.name }}
+        run: pnpm build && pnpm typecheck && pnpm test
+      - name: Publish to npm
+        working-directory: buddi-plugins/${{ steps.tag.outputs.name }}
+        # prepack builds dist/ afresh; --provenance attests the tarball to this
+        # public repository and this run.
+        run: npm publish --provenance --access public --tag "${{ steps.tag.outputs.dist }}"

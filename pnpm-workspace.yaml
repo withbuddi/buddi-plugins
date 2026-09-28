@@ -1,0 +1,27 @@
+packages:
+  - 'finance'
+  - 'developer'
+  - 'image'
+  - 'speech'
+  # Future plugins sit beside it, one directory each.
+
+# The core these plugins are developed against: a buddi checkout beside this
+# repository (../buddi, built). Never shipped: a plugin's package.json names
+# `@buddi/core` only as an optional peer, and an installed plugin gets the core
+# of the buddi that installs it.
+#
+# onnxruntime-web: @huggingface/transformers lists it, its Node build never
+# loads it; speech ships a stub in its place (speech/package.json `overrides`
+# does the same for npm), so the tests here run without it too.
+overrides:
+  '@buddi/core': 'link:../buddi/packages/core'
+  onnxruntime-web: 'link:./speech/stubs/onnxruntime-web'
+
+# vitest's esbuild only unpacks its prebuilt binary in this script.
+# speech: ONNX Runtime and sharp ship their binaries prebuilt in the package;
+# their scripts only fetch CUDA builds or compile from source, so they stay off.
+allowBuilds:
+  esbuild: true
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false

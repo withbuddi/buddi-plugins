@@ -1,0 +1,11 @@
+-- A process name is how a preview is asked for.
+--
+-- The gateway's `previews.resolve(name, ctx)` is given a name and nothing
+-- else — no agent, because the owner is the one browsing. So a name that two
+-- agents could both hold would make "preview `web`" mean whichever row came
+-- back first, which is another agent's process framed on the owner's canvas.
+--
+-- One name, one process, installation-wide. `start` says so in a sentence
+-- before this constraint ever has to; the index is what makes the sentence
+-- true under a race.
+create unique index if not exists processes_name_unique on processes (name);

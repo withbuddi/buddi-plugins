@@ -1,0 +1,7 @@
+# The core this plugin is developed against. Never shipped: npm pack does not
+# include this file, and an installed plugin gets the core of the buddi that
+# installs it.
+overrides:
+  '@buddi/core': "link:../../buddi/packages/core"
+allowBuilds:
+  esbuild: true

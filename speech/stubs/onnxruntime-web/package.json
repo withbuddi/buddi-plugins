@@ -1,0 +1,7 @@
+{
+  "name": "onnxruntime-web",
+  "version": "0.0.0-unused",
+  "description": "Stands in for onnxruntime-web, which @huggingface/transformers lists but never loads in Node (its Node build uses onnxruntime-node). Saves about 90 MB.",
+  "license": "GPL-3.0-only",
+  "main": "index.js"
+}

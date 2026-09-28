@@ -1,0 +1,53 @@
+{
+  "name": "@buddi/tool-developer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A workspace an agent may read, edit and run code in, bounded to one directory the owner named.",
+  "keywords": [
+    "buddi-plugin"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "buddi": {
+    "manifest": "manifest",
+    "core": ">=0.1.0",
+    "uses": [
+      "files",
+      "secrets"
+    ],
+    "hostApi": "^1.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --emitDeclarationOnly && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "playwright-core": "1.63.0",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@buddi/core": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@buddi/core": "link:../../buddi/packages/core",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "skills",
+    "buddi.md"
+  ]
+}
