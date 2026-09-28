@@ -50,9 +50,12 @@ the base URL of your OpenAI-compatible account. With Whisper and Kokoro on
 this computer, nothing. Installing them fetches from huggingface.co, its
 download servers (*.hf.co) and registry.npmjs.org (eSpeak NG), and sends
 nothing. Every request goes through buddi's own web access, which refuses
-addresses on this computer and your network; an OpenAI-compatible server of
-yours on such an address is reached directly, as buddi reaches it for an
-agent.
+addresses on this computer and your network, with one exception: it talks
+directly to a server you run on your own network. An OpenAI-compatible
+account whose base URL is on this computer or your network (localhost, a
+loopback, private or tailnet address, or a name that resolves only to one)
+is reached directly, as buddi reaches it for an agent; any other base URL
+goes through buddi's web access.
 
 ## What it proposes
 

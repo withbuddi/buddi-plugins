@@ -22,6 +22,14 @@ One of:
 A ChatGPT subscription, a Claude sign-in and Ollama Cloud serve no audio, so
 they are not offered.
 
+Every request goes through buddi's own web access, which refuses addresses on
+your computer and your network. One exception: it **talks directly to a server
+you run on your own network**. An OpenAI-compatible account whose base URL is
+`localhost`, a loopback, private (192.168.x, 10.x, 172.16–31.x, fc00::/7) or
+tailnet (100.64.0.0/10) address, or a name that resolves only to those, is
+called directly, on any port, as buddi calls it for an agent. Any other base
+URL goes through buddi's web access.
+
 The plugin is large: about 340 MB on disk once installed, most of it ONNX
 Runtime's prebuilt engine for the local models, which it carries whether you
 use them or not.
@@ -160,7 +168,10 @@ since Hugging Face answers each file with one to its CDN): a pinned
 manifest (`local/models.ts`, Hugging Face `resolve/<commit>` URLs, sizes and
 SHA-256), downloaded into a temporary directory, verified, then renamed into
 place; a failed hash keeps nothing. `installLocal`, `installedLocal` and
-`removeLocal` are exported for `buddi speech install`; the page uses
+`removeLocal` are exported for `buddi speech install`, which hands
+`installLocal` an `http` area of its own (core's address rules, and any host
+not declared under `network` refused), so the CLI path follows the same rules
+without a running gateway; the page uses
 `speech.install` (background) and polls `install_status`. With nothing
 chosen for a side and the model installed, the local backend is used.
 

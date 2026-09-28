@@ -1,5 +1,5 @@
 # On every pull request: pack each published plugin exactly as npm would and
-# install the tarball with buddi's own CLI from npm (`@withbuddi/buddi@next`),
+# install the tarball with buddi's own CLI from npm (`@withbuddi/buddi`, its `latest`),
 # into a scratch data directory and a Postgres service: stage, approve with
 # the integrity the staged card printed, then `buddi plugins list` must say ok.
 # This is the path a stranger's install takes, so a `link:` left in a
@@ -54,7 +54,7 @@ jobs:
           ls -l "$RUNNER_TEMP/tgz"
       - name: buddi from npm, in a scratch installation
         run: |
-          npm install -g @withbuddi/buddi@next
+          npm install -g @withbuddi/buddi
           scratch="$RUNNER_TEMP/buddi"
           mkdir -p "$scratch/data" && : > "$scratch/empty.env"
           {

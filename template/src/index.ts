@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EffectDescription, PluginManifest, ToolDefinition } from '@buddi/core/plugin';
 import { z } from 'zod';
+import { VERSION } from './version.js';
 
 /**
  * Absolute, and resolved from the *built* file so it is right from `dist`.
@@ -143,8 +144,9 @@ export const forgetNote: ToolDefinition<z.infer<typeof forgetInput>, { deleted: 
 
 export const manifest: PluginManifest = {
   name: 'template',
-  // Bumping this voids every standing approval for this plugin's tools.
-  version: '0.1.0',
+  // package.json's version (src/version.ts). Bumping it voids every standing
+  // approval for this plugin's tools.
+  version: VERSION,
   schema: 'template',
   migrationsDir: MIGRATIONS_DIR,
   tools: [listNotes, forgetNote],

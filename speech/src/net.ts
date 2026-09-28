@@ -11,12 +11,18 @@
  * file with a redirect to its download servers).
  *
  * One exception, `directForOwnEndpoint`: an OpenAI-compatible account whose
- * address the host would refuse — a server on this computer or the LAN, or on
- * another port (LM Studio, a local Whisper server) — is the owner's own
+ * base URL is on this computer or the owner's own network (loopback, a
+ * private or tailnet address, `localhost`, or a name that resolves only to
+ * such addresses) — LM Studio, a local Whisper server — is the owner's own
  * endpoint, typed by them into Settings → Model accounts, and is reached
- * directly, as buddi reaches it for an agent's run.
+ * directly on any port, as buddi reaches it for an agent's run. Any other
+ * base URL goes through the host, which refuses what it refuses (a public
+ * host on another port, a link-local metadata address). buddi.md and the
+ * README declare the exception.
  */
-import { checkUrl, type HttpArea } from '@buddi/core/plugin';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import type { HttpArea } from '@buddi/core/plugin';
 
 /** The most an account's answer may be: twice the largest recording this plugin keeps. */
 export const RESPONSE_CAP = 50 * 1024 * 1024;
@@ -94,20 +100,65 @@ export function hostFetch(http: HttpArea, options: HostFetchOptions = {}): typeo
   return Object.assign(doFetch, { [HOST_FETCH]: true }) as unknown as typeof fetch;
 }
 
+type Lookup = (hostname: string) => Promise<readonly { address: string }[]>;
+const defaultLookup: Lookup = (hostname) => dnsLookup(hostname, { all: true });
+
 /**
  * The fetch for a call to an account's `baseUrl`: the host's, unless the
- * account is the owner's own endpoint on an address the host refuses (see the
- * file comment). A test's fetch is always used as it is.
+ * account is the owner's own server on their own network (see the file
+ * comment), decided on the first call and kept. A test's fetch is always
+ * used as it is.
  */
-export function directForOwnEndpoint(chosen: typeof fetch | undefined, baseUrl: string): typeof fetch {
-  if (!chosen) return fetch;
+export function directForOwnEndpoint(
+  chosen: typeof fetch | undefined,
+  baseUrl: string,
+  deps: { lookup?: Lookup; direct?: typeof fetch } = {},
+): typeof fetch {
+  if (!chosen) return deps.direct ?? fetch;
   if (!(chosen as unknown as Record<symbol, unknown>)[HOST_FETCH]) return chosen;
+  let decided: Promise<typeof fetch> | undefined;
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    decided ??= onOwnNetwork(baseUrl, deps.lookup).then((own) => (own ? (deps.direct ?? fetch) : chosen));
+    return (await decided)(input, init);
+  }) as typeof fetch;
+}
+
+/**
+ * True when `baseUrl` is http(s) on this computer or the owner's network:
+ * `localhost`, a loopback, private (RFC 1918, fc00::/7) or tailnet
+ * (100.64.0.0/10) address, or a name every address of which is one. Never
+ * link-local (169.254/16, fe80::/10), where cloud metadata services live.
+ */
+export async function onOwnNetwork(baseUrl: string, lookup: Lookup = defaultLookup): Promise<boolean> {
+  let url: URL;
   try {
-    checkUrl(baseUrl);
-    return chosen;
+    url = new URL(baseUrl);
   } catch {
-    return fetch;
+    return false;
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (isIP(host) !== 0) return ownAddress(host);
+  try {
+    const found = await lookup(host);
+    return found.length > 0 && found.every((a) => ownAddress(a.address));
+  } catch {
+    return false;
+  }
+}
+
+/** Loopback, private or tailnet; IPv4-mapped IPv6 judged as its IPv4. */
+export function ownAddress(address: string): boolean {
+  const a = address.toLowerCase();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (mapped) return ownAddress(mapped[1]!);
+  if (isIP(a) === 4) {
+    const [x, y] = a.split('.').map(Number) as [number, number];
+    return x === 127 || x === 10 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127);
+  }
+  if (isIP(a) === 6) return a === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(a);
+  return false;
 }
 
 /** `fetch` over the host's `http` area, or undefined where the host has none (a test's own host). */

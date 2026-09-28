@@ -1,7 +1,7 @@
 /** `hostFetch`: fetch's shape over `ctx.buddi.http`, redirects followed hop by hop through the host. */
 import { describe, expect, it } from 'vitest';
 import type { HttpArea, HttpRequest, HttpResponse } from '@buddi/core/plugin';
-import { directForOwnEndpoint, hostFetch } from './net.js';
+import { directForOwnEndpoint, hostFetch, onOwnNetwork, ownAddress } from './net.js';
 
 function answer(status: number, body: string, headers: Record<string, string> = {}): HttpResponse {
   const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
@@ -55,14 +55,35 @@ describe('hostFetch', () => {
 });
 
 describe('directForOwnEndpoint', () => {
-  const host = hostFetch(fakeHttp(() => answer(200, '')));
-  it('keeps the host for a public endpoint, and a test fetch always', () => {
-    expect(directForOwnEndpoint(host, 'https://api.openai.com/v1')).toBe(host);
+  const host = hostFetch(fakeHttp(() => answer(200, 'via host')));
+  const direct = (async () => new Response('direct')) as unknown as typeof fetch;
+  const lookup = async (name: string) => {
+    if (name === 'whisper.lan') return [{ address: '192.168.1.20' }];
+    if (name === 'mixed.example') return [{ address: '192.168.1.20' }, { address: '93.184.216.34' }];
+    return [{ address: '93.184.216.34' }];
+  };
+  const via = async (baseUrl: string) => (await directForOwnEndpoint(host, baseUrl, { lookup, direct })(`${baseUrl}/models`)).text();
+
+  it('keeps a test fetch as it is', () => {
     const own = (async () => new Response('')) as unknown as typeof fetch;
     expect(directForOwnEndpoint(own, 'http://127.0.0.1:1234/v1')).toBe(own);
   });
-  it("reaches the owner's own local server directly", () => {
-    expect(directForOwnEndpoint(host, 'http://127.0.0.1:1234/v1')).toBe(fetch);
-    expect(directForOwnEndpoint(host, 'http://localhost:8000/v1')).toBe(fetch);
+  it('keeps the host for a public endpoint, on any port', async () => {
+    expect(await via('https://api.openai.com/v1')).toBe('via host');
+    expect(await via('http://speech.example:8080/v1')).toBe('via host');
+    expect(await via('http://mixed.example:8000/v1')).toBe('via host');
+  });
+  it("reaches the owner's own server on loopback or the private network directly", async () => {
+    expect(await via('http://127.0.0.1:1234/v1')).toBe('direct');
+    expect(await via('http://localhost:8000/v1')).toBe('direct');
+    expect(await via('http://192.168.1.20:8000/v1')).toBe('direct');
+    expect(await via('http://[::1]:8000/v1')).toBe('direct');
+    expect(await via('http://whisper.lan:8000/v1')).toBe('direct');
+  });
+  it('never treats link-local (cloud metadata) as the owner\'s own', async () => {
+    expect(await onOwnNetwork('http://169.254.169.254/latest')).toBe(false);
+    expect(ownAddress('fe80::1')).toBe(false);
+    expect(ownAddress('100.100.1.2')).toBe(true);
+    expect(ownAddress('::ffff:10.0.0.1')).toBe(true);
   });
 });

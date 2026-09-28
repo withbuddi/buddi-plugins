@@ -29,6 +29,8 @@ import {
   COMPANIONS, ESPEAK_MODEL, LOCAL_KINDS, LOCAL_MODELS, megabytes, totalBytes, type LocalKind, type LocalModel, type LocalPart,
 } from './local/models.js';
 import { untarFiles } from './local/untar.js';
+import type { HttpArea } from '@buddi/core/plugin';
+import { DOWNLOAD_CAP, hostFetch } from './net.js';
 
 export {
   COMPANIONS, ESPEAK_MODEL, LOCAL_KINDS, LOCAL_MODELS, megabytes, totalBytes, type LocalKind, type LocalModel, type LocalPart,
@@ -51,8 +53,14 @@ export interface InstallOptions {
   dir: string;
   onProgress?: (progress: InstallProgress) => void;
   signal?: AbortSignal;
-  /** A transport for tests; the global `fetch` otherwise. */
+  /** A transport for tests, or the page's `hostFetch(ctx.buddi.http)`. */
   fetch?: typeof fetch;
+  /**
+   * The host's `http` area, when the caller has one and no `fetch`: what
+   * `buddi speech install` hands in (an area that refuses a host the manifest
+   * does not declare). With neither, the global `fetch` (an older buddi CLI).
+   */
+  http?: HttpArea;
   /** Another manifest, for tests. */
   model?: LocalModel;
   /** Other companions, for tests; with `model` given and these not, none. */
@@ -179,7 +187,7 @@ async function doInstall(kind: LocalKind, options: InstallOptions): Promise<Inst
 async function installPart(model: LocalModel, options: InstallOptions, progress: (p: { bytes: number; file: string }) => void): Promise<void> {
   const target = modelDir(options.dir, model.kind, model);
   const temp = await mkdtemp(path.join(options.dir, `.install-${model.kind}-`));
-  const doFetch = options.fetch ?? fetch;
+  const doFetch = options.fetch ?? (options.http ? hostFetch(options.http, { maxBytes: DOWNLOAD_CAP }) : fetch);
   let before = 0;
   try {
     for (const file of model.files) {

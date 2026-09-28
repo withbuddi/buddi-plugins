@@ -103,7 +103,7 @@ then add the trusted publisher.
 
 Every pull request also runs `.github/workflows/pack-check.yml`: it packs each
 plugin and installs the tarballs with buddi's CLI from npm
-(`@withbuddi/buddi@next`) in a scratch data directory — stage, approve, then
+(`@withbuddi/buddi`, its `latest`) in a scratch data directory — stage, approve, then
 `buddi plugins list` must say ok.
 
 ## Shared skills

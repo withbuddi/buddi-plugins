@@ -15,6 +15,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
+import { VERSION } from './version.js';
 import { generateTool } from './generate.js';
 import { imagePages, imageQueries, setSettingsTool } from './settings.js';
 import { imageViews } from './views.js';
@@ -24,7 +25,7 @@ export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.met
 
 export const manifest: PluginManifest = {
   name: 'image',
-  version: '0.1.0',
+  version: VERSION,
   schema: 'image',
   migrationsDir: MIGRATIONS_DIR,
   description:

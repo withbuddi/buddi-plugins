@@ -2,7 +2,11 @@
 # typechecks and tests that plugin against a Postgres service, then publishes
 # `<name>/` to npmjs.com as `@withbuddi/plugin-<name>` with provenance, through
 # npm's trusted publishing (OIDC: no token lives in this repository). A
-# pre-release version (`0.2.0-pre.1`) goes under the `next` dist-tag.
+# pre-release version (`0.2.0-pre.1`) goes under the `next` dist-tag. Only
+# `npm publish` writes to npm: it takes one `--tag`, and trusted publishing
+# does not authorise `npm dist-tag add`, so a publish never moves a second
+# tag. `latest` stays on the last stable version and `next` on the last
+# pre-release; nothing here advertises `next` for installs.
 #
 # The plugins are developed against a buddi checkout beside this repository
 # (pnpm-workspace.yaml links `@buddi/core` to ../buddi/packages/core), so the

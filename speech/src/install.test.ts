@@ -54,6 +54,27 @@ describe('the pinned manifest', () => {
 });
 
 describe('installLocal', () => {
+  it('goes through the host http area when one is handed in and no fetch', async () => {
+    const urls: string[] = [];
+    const http = {
+      async request(req: { url: string; method?: string }) {
+        urls.push(req.url);
+        const r = await fetch(req.url);
+        const bytes = await r.arrayBuffer();
+        return {
+          ok: r.ok, status: r.status, statusText: r.statusText,
+          headers: { get: (n: string) => r.headers.get(n) },
+          text: async () => Buffer.from(bytes).toString('utf8'),
+          json: async () => JSON.parse(Buffer.from(bytes).toString('utf8')),
+          arrayBuffer: async () => bytes,
+        };
+      },
+    };
+    await installLocal('kokoro', { dir, model: server.model, http });
+    expect(isInstalled(dir, 'kokoro', server.model)).toBe(true);
+    expect(urls).toEqual(server.model.files.map((f) => f.url));
+  });
+
   it('downloads, checks each hash, reports progress, and renames into place', async () => {
     const seen: InstallProgress[] = [];
     const result = await installLocal('kokoro', { dir, model: server.model, onProgress: (p) => seen.push(p) });

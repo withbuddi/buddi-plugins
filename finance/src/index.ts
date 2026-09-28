@@ -14,6 +14,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
+import { VERSION } from './version.js';
 import { financeAgents, ledgerOfferQuery } from './agents.js';
 import { financeMissions } from './missions.js';
 import { financeSentinels } from './sentinels/index.js';
@@ -69,7 +70,7 @@ export const MIGRATIONS_DIR = path.resolve(
  */
 export const manifest: PluginManifest & { sentinels: NonNullable<PluginManifest['sentinels']> } = {
   name: 'finance',
-  version: '0.1.0',
+  version: VERSION,
   schema: 'finance',
   migrationsDir: MIGRATIONS_DIR,
   description:

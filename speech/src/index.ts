@@ -18,6 +18,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
+import { VERSION } from './version.js';
 import { sayTool, transcribeTool } from './tools.js';
 import { installTool, removeTool, setSettingsTool, speechPages, speechQueries, telegramVoiceTool, testTool } from './settings.js';
 import { speechSkills } from './skills.js';
@@ -27,7 +28,7 @@ export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.met
 
 export const manifest: PluginManifest = {
   name: 'speech',
-  version: '0.1.0',
+  version: VERSION,
   schema: 'speech',
   migrationsDir: MIGRATIONS_DIR,
   description:
