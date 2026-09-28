@@ -5,9 +5,11 @@ directory each, published to npm as `@withbuddi/plugin-<name>`:
 
 | Plugin | npm | License |
 | --- | --- | --- |
+| [calendar](calendar/README.md) | `@withbuddi/plugin-calendar` | Apache-2.0 (needs host API 1.9) |
 | [finance](finance/README.md) | `@withbuddi/plugin-finance` | Apache-2.0 |
 | [image](image/README.md) | `@withbuddi/plugin-image` | Apache-2.0 |
 | [speech](speech/README.md) | `@withbuddi/plugin-speech` | GPL-3.0-only (its local voice runs eSpeak NG) |
+| [weather](weather/README.md) | `@withbuddi/plugin-weather` | Apache-2.0 |
 
 Install one with `buddi plugins install @withbuddi/plugin-<name>`, or from
 Settings → Plugins. Each plugin's README says what it needs, what it costs and

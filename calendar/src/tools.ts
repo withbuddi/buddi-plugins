@@ -1,0 +1,199 @@
+/**
+ * The four tools a model sees, all `auto` and read-only: today, the coming
+ * days, a search, and the free time in a day. Times are the owner's; answers
+ * are short plain lines. A calendar that cannot be read is named in
+ * `problems` and the rest still answer.
+ */
+import { z } from 'zod';
+import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
+import { occurrences, type Occurrence } from './ics.js';
+import { eventsOf, listCalendars } from './store.js';
+import { addDays, dateIn, dayLabel, duration, parseDay, timeIn, zonedTime } from './time.js';
+
+export const NO_CALENDAR = 'No calendar is linked yet. Add one on Settings → Calendar.';
+
+type Host = Pick<BuddiHost, 'http' | 'network' | 'db' | 'clock' | 'owner'>;
+
+/** Every occurrence in the window across the linked calendars, and what could not be read. */
+export async function gather(buddi: Host, from: Date, to: Date): Promise<{ items: Occurrence[]; problems: string[] }> {
+  const calendars = await listCalendars(buddi.db);
+  if (calendars.length === 0) throw new Error(NO_CALENDAR);
+  const items: Occurrence[] = [];
+  const problems: string[] = [];
+  for (const row of calendars) {
+    try {
+      items.push(...occurrences(await eventsOf(buddi, row), from, to, buddi.owner.timezone, row.name));
+    } catch (err) {
+      problems.push(`${row.name} could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  items.sort((a, b) => a.start.getTime() - b.start.getTime() || Number(b.allDay) - Number(a.allDay));
+  return { items, problems };
+}
+
+/** One line: "09:30–10:00 Team standup (Work, Zoom)". */
+export function line(o: Occurrence, timezone: string, many: boolean, withDay = false): string {
+  const where = [many ? o.calendar : undefined, o.location].filter(Boolean).join(', ');
+  const tail = where ? ` (${where})` : '';
+  if (o.allDay) {
+    const last = addDays(o.endDate!, -1);
+    const span = last === o.startDate ? '' : ` until ${dayLabel(last)}`;
+    return `${withDay ? `${dayLabel(o.startDate!)} ` : ''}all day${span}: ${o.summary}${tail}`;
+  }
+  const startDay = dateIn(o.start, timezone);
+  const endDay = dateIn(o.end, timezone);
+  const end = o.end.getTime() === o.start.getTime() ? '' : `–${endDay === startDay ? '' : `${dayLabel(endDay)} `}${timeIn(o.end, timezone)}`;
+  return `${withDay ? `${dayLabel(startDay)} ` : ''}${timeIn(o.start, timezone)}${end} ${o.summary}${tail}`;
+}
+
+const withProblems = <T extends object>(body: T, problems: string[]): T & { problems?: string[] } =>
+  problems.length > 0 ? { ...body, problems } : body;
+
+export const todayTool: ToolDefinition<Record<string, never>, { date: string; events: string[]; problems?: string[] }> = {
+  name: 'calendar.today',
+  description:
+    "Today's events from the owner's linked calendars, in their time: all-day events first, then each meeting with its " +
+    'start and end. Use it for the morning brief and whenever the owner asks what today holds.',
+  tier: 'auto',
+  input: z.object({}).strict() as unknown as z.ZodType<Record<string, never>>,
+  async execute(_input, ctx) {
+    const buddi = ctx.buddi!;
+    const tz = buddi.owner.timezone;
+    const date = dateIn(buddi.clock.now(), tz);
+    const { items, problems } = await gather(buddi, zonedTime(date, '00:00', tz), zonedTime(addDays(date, 1), '00:00', tz));
+    const many = new Set(items.map((i) => i.calendar)).size > 1;
+    const events = items.map((o) => line(o, tz, many));
+    return withProblems({ date: `${dayLabel(date)} (${date})`, events: events.length > 0 ? events : ['No events today.'] }, problems);
+  },
+};
+
+const upcomingInput = z
+  .object({ days: z.coerce.number().int().min(1).max(14).optional().describe('Days ahead, today included. 7 when left out, at most 14.') })
+  .strict();
+
+export const upcomingTool: ToolDefinition<z.infer<typeof upcomingInput>, { days: Array<{ date: string; events: string[] }>; problems?: string[] }> = {
+  name: 'calendar.upcoming',
+  description:
+    "The owner's events for the coming days, today included, grouped by day in their time. Use it to plan the week " +
+    'or answer "what do I have on Thursday".',
+  tier: 'auto',
+  input: upcomingInput,
+  async execute(input, ctx) {
+    const buddi = ctx.buddi!;
+    const tz = buddi.owner.timezone;
+    const today = dateIn(buddi.clock.now(), tz);
+    const count = input.days ?? 7;
+    const { items, problems } = await gather(buddi, zonedTime(today, '00:00', tz), zonedTime(addDays(today, count), '00:00', tz));
+    const many = new Set(items.map((i) => i.calendar)).size > 1;
+    const days: Array<{ date: string; events: string[] }> = [];
+    for (let i = 0; i < count; i++) {
+      const date = addDays(today, i);
+      const from = zonedTime(date, '00:00', tz).getTime();
+      const to = zonedTime(addDays(date, 1), '00:00', tz).getTime();
+      const events = items.filter((o) => o.start.getTime() < to && o.end.getTime() > from || (o.start.getTime() === o.end.getTime() && o.start.getTime() >= from && o.start.getTime() < to));
+      if (events.length > 0) days.push({ date: `${dayLabel(date)} (${date})`, events: events.map((o) => line(o, tz, many)) });
+    }
+    return withProblems({ days }, problems);
+  },
+};
+
+const findInput = z
+  .object({
+    query: z.string().trim().min(2).max(120).describe('Words in the title, place or notes.'),
+    from: z.string().max(10).optional().describe('YYYY-MM-DD, today or tomorrow. 30 days ago when left out.'),
+    to: z.string().max(10).optional().describe('YYYY-MM-DD, the last day searched. 180 days ahead when left out.'),
+  })
+  .strict();
+
+export const MAX_FOUND = 25;
+
+export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string[]; more?: number; problems?: string[] }> = {
+  name: 'calendar.find',
+  description:
+    "Search the owner's calendars for events whose title, place or notes contain the words, from 30 days ago to 180 " +
+    'days ahead unless given dates. Use it for "when is the dentist" or "when did I last see Sam".',
+  tier: 'auto',
+  input: findInput,
+  async execute(input, ctx) {
+    const buddi = ctx.buddi!;
+    const tz = buddi.owner.timezone;
+    const now = buddi.clock.now();
+    const today = dateIn(now, tz);
+    const fromDay = input.from ? parseDay(input.from, now, tz) : addDays(today, -30);
+    const toDay = input.to ? parseDay(input.to, now, tz) : addDays(today, 180);
+    if (!fromDay || !toDay) throw new Error('Give dates as YYYY-MM-DD, today or tomorrow.');
+    if (toDay < fromDay) throw new Error('The last day is before the first.');
+    const { items, problems } = await gather(buddi, zonedTime(fromDay, '00:00', tz), zonedTime(addDays(toDay, 1), '00:00', tz));
+    const words = input.query.toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = items.filter((o) => {
+      const hay = [o.summary, o.location ?? '', o.description ?? ''].join(' ').toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+    const many = new Set(items.map((i) => i.calendar)).size > 1;
+    const found = matches.slice(0, MAX_FOUND).map((o) => line(o, tz, many, true));
+    return withProblems(
+      { found: found.length > 0 ? found : [`Nothing matching "${input.query}" between ${fromDay} and ${toDay}.`], ...(matches.length > MAX_FOUND ? { more: matches.length - MAX_FOUND } : {}) },
+      problems,
+    );
+  },
+};
+
+const freeInput = z
+  .object({
+    date: z.string().max(10).describe('YYYY-MM-DD, today or tomorrow.'),
+    from: z.string().regex(/^\d{1,2}:\d{2}$/).optional().describe('Start of the day to consider, HH:MM. 09:00 when left out.'),
+    to: z.string().regex(/^\d{1,2}:\d{2}$/).optional().describe('End of the day to consider, HH:MM. 18:00 when left out.'),
+  })
+  .strict();
+
+/** The gaps in `[from, to)` that no busy occurrence covers, at least `min` long. */
+export function freeSlots(busy: ReadonlyArray<{ start: Date; end: Date }>, from: Date, to: Date, minMs = 15 * 60_000): Array<{ start: Date; end: Date }> {
+  const spans = busy
+    .map((b) => ({ start: Math.max(b.start.getTime(), from.getTime()), end: Math.min(b.end.getTime(), to.getTime()) }))
+    .filter((b) => b.end > b.start)
+    .sort((a, b) => a.start - b.start);
+  const out: Array<{ start: Date; end: Date }> = [];
+  let cursor = from.getTime();
+  for (const span of spans) {
+    if (span.start - cursor >= minMs) out.push({ start: new Date(cursor), end: new Date(span.start) });
+    cursor = Math.max(cursor, span.end);
+  }
+  if (to.getTime() - cursor >= minMs) out.push({ start: new Date(cursor), end: to });
+  return out;
+}
+
+const hhmm = (t: string): string => t.padStart(5, '0');
+
+export const freeTool: ToolDefinition<z.infer<typeof freeInput>, { date: string; free: string[]; busy: string[]; problems?: string[] }> = {
+  name: 'calendar.free',
+  description:
+    "The owner's free time on one day, between 09:00 and 18:00 unless told otherwise, from the meetings in their " +
+    'calendars (all-day events and ones marked free do not count). Use it before proposing a time.',
+  tier: 'auto',
+  input: freeInput,
+  async execute(input, ctx) {
+    const buddi = ctx.buddi!;
+    const tz = buddi.owner.timezone;
+    const date = parseDay(input.date, buddi.clock.now(), tz);
+    if (!date) throw new Error('Give the date as YYYY-MM-DD, today or tomorrow.');
+    const fromTime = hhmm(input.from ?? '09:00');
+    const toTime = hhmm(input.to ?? '18:00');
+    if (toTime <= fromTime) throw new Error('The end of the day is before its start.');
+    const from = zonedTime(date, fromTime, tz);
+    const to = zonedTime(date, toTime, tz);
+    const { items, problems } = await gather(buddi, from, to);
+    const busy = items.filter((o) => o.busy);
+    const many = new Set(items.map((i) => i.calendar)).size > 1;
+    const free = freeSlots(busy, from, to).map((s) => `${timeIn(s.start, tz)}–${timeIn(s.end, tz)} (${duration(s.end.getTime() - s.start.getTime())})`);
+    return withProblems(
+      {
+        date: `${dayLabel(date)} (${date}), ${fromTime}–${toTime}`,
+        free: free.length > 0 ? free : ['No free time in those hours.'],
+        busy: busy.map((o) => line(o, tz, many)),
+      },
+      problems,
+    );
+  },
+};
+
+export const calendarTools = [todayTool, upcomingTool, findTool, freeTool];
