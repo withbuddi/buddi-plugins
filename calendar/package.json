@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-calendar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reads your calendars from their private ICS links, kept like passwords, so your agents know your day.",
   "keywords": [
     "buddi-plugin"
