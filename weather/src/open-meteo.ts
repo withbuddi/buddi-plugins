@@ -36,6 +36,8 @@ export interface Current {
   gustKmh: number;
   precipitationMm: number;
   humidity: number;
+  /** False at night at the place, when the service said. */
+  isDay?: boolean;
 }
 
 /** One day, in metric. `date` is the place's local date. */
@@ -112,6 +114,30 @@ export function describeCode(code: number | undefined): string {
   }
 }
 
+/** The dashboard's pinned sky glyphs: what a tile or a glance can wear. */
+export type SkyGlyph = 'sun' | 'moon-clear' | 'partly-cloudy' | 'cloud' | 'fog' | 'drizzle' | 'rain' | 'snow' | 'storm' | 'wind';
+
+/**
+ * A WMO code as one of the dashboard's glyphs. A clear sky at night is the
+ * moon; a dry day with gusts of 50 km/h or more is the wind, because that is
+ * what the owner will notice.
+ */
+export function glyphOf(code: number | undefined, opts: { isDay?: boolean; gustKmh?: number } = {}): SkyGlyph {
+  const dry = code === undefined || code <= 3;
+  if (dry && (opts.gustKmh ?? 0) >= 50) return 'wind';
+  switch (code) {
+    case 0: case 1: return opts.isDay === false ? 'moon-clear' : 'sun';
+    case 2: return 'partly-cloudy';
+    case 3: return 'cloud';
+    case 45: case 48: return 'fog';
+    case 51: case 53: case 55: case 56: case 57: return 'drizzle';
+    case 61: case 63: case 65: case 66: case 67: case 80: case 81: case 82: return 'rain';
+    case 71: case 73: case 75: case 77: case 85: case 86: return 'snow';
+    case 95: case 96: case 99: return 'storm';
+    default: return 'cloud';
+  }
+}
+
 const num = (value: unknown, fallback = Number.NaN): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
@@ -155,6 +181,7 @@ export function toForecast(payload: unknown): Forecast {
         gustKmh: num(c.wind_gusts_10m, 0),
         precipitationMm: num(c.precipitation, 0),
         humidity: num(c.relative_humidity_2m),
+        ...(c.is_day === 0 || c.is_day === 1 ? { isDay: c.is_day === 1 } : {}),
       }
     : undefined;
   const d = (p.daily ?? {}) as Record<string, unknown[] | undefined>;
@@ -217,7 +244,7 @@ export const openMeteo: WeatherService = {
     if (query.current) {
       url.searchParams.set(
         'current',
-        'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m,precipitation,relative_humidity_2m',
+        'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m,precipitation,relative_humidity_2m,is_day',
       );
     }
     if (query.hourly) {

@@ -74,7 +74,13 @@ suite('calendar (postgres)', () => {
   });
 
   it('says where to link one before any is', async () => {
-    await expect(run('calendar.today', {})).rejects.toThrow(/Add one on Settings → Calendar/);
+    // Not linked is an answer, not a failure: the canvas draws it as one card linking to Settings.
+    const notLinked = { linked: false, message: 'No calendar is linked yet. Add one on Settings → Calendar.' };
+    expect(await run('calendar.today', {})).toEqual(notLinked);
+    expect(await run('calendar.upcoming', {})).toEqual(notLinked);
+    expect(await run('calendar.find', { query: 'dentist' })).toEqual(notLinked);
+    expect(await run('calendar.free', { date: 'today' })).toEqual(notLinked);
+    expect(await manifest.home![0]!.produce(ctx())).toBeNull();
   });
 
   it('keeps the link as a secret the plugin fetches without holding it', async () => {
@@ -96,6 +102,12 @@ suite('calendar (postgres)', () => {
     expect(today).toEqual({
       date: 'Mon 28 Sep (2026-09-28)',
       events: ['all day: Company offsite', '11:00–11:30 Team standup (moved) (Room 4)', '14:00–15:00 Call with Paris office', '15:00–16:00 Dentist (12 Main St)'],
+      tiles: [
+        { time: 'All day', title: 'Company offsite' },
+        { time: '11:00', title: 'Team standup (moved)', where: 'Room 4' },
+        { time: '14:00', title: 'Call with Paris office' },
+        { time: '15:00', title: 'Dentist', where: '12 Main St' },
+      ],
     });
     expect(JSON.stringify(today)).not.toContain('private-');
     // Read within ten minutes: from memory.
@@ -114,6 +126,20 @@ suite('calendar (postgres)', () => {
       'Mon 28 Sep (2026-09-28)', 'Thu 1 Oct (2026-10-01)', 'Fri 2 Oct (2026-10-02)',
     ]);
     expect(upcoming.days[1].events).toEqual(['all day until Fri 2 Oct: Trip to Boston']);
+    expect(upcoming.tiles.slice(4)).toEqual([
+      { time: 'All day', title: 'Trip to Boston', day: 'Thu 1 Oct' },
+      { time: 'All day', title: 'Trip to Boston', day: 'Fri 2 Oct' },
+    ]);
+
+    // Home's glance: the next meeting today, then nothing once the day's are over.
+    const glance = manifest.home![0]!;
+    expect(glance.placement).toBe('glance');
+    expect(await glance.produce(ctx())).toEqual({ icon: 'calendar', text: 'Next: Team standup (moved) at 11:00' });
+    now = new Date('2026-09-28T18:30:00Z');
+    expect(await glance.produce(ctx())).toEqual({ icon: 'calendar', text: 'Next: Dentist at 15:00' });
+    now = new Date('2026-09-28T21:00:00Z');
+    expect(await glance.produce(ctx())).toBeNull();
+    now = new Date('2026-09-28T12:00:00Z');
 
     expect(await run('calendar.find', { query: 'dentist' })).toEqual({ found: ['Mon 28 Sep 15:00–16:00 Dentist (12 Main St)'] });
     expect((await run('calendar.find', { query: 'standup', to: '2026-10-07' })).found).toEqual([

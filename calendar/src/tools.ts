@@ -2,7 +2,12 @@
  * The four tools a model sees, all `auto` and read-only: today, the coming
  * days, a search, and the free time in a day. Times are the owner's; answers
  * are short plain lines. A calendar that cannot be read is named in
- * `problems` and the rest still answer.
+ * `problems` and the rest still answer. Today and the coming days also carry
+ * `tiles`, the same events as data the canvas draws (`views.ts`).
+ *
+ * With no calendar linked a tool is not set up rather than broken: it answers
+ * `{ linked: false, message }`, which the canvas draws as one card linking to
+ * Settings → Calendar, and a model reads as a sentence to pass on.
  */
 import { z } from 'zod';
 import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
@@ -12,12 +17,44 @@ import { addDays, dateIn, dayLabel, duration, parseDay, timeIn, zonedTime } from
 
 export const NO_CALENDAR = 'No calendar is linked yet. Add one on Settings → Calendar.';
 
+/** Home's limit on a glance's text (core's `HOME_GLANCE_MAX`), kept here so no core value is imported. */
+export const HOME_GLANCE_MAX_TEXT = 60;
+
 type Host = Pick<BuddiHost, 'http' | 'network' | 'db' | 'clock' | 'owner'>;
 
-/** Every occurrence in the window across the linked calendars, and what could not be read. */
-export async function gather(buddi: Host, from: Date, to: Date): Promise<{ items: Occurrence[]; problems: string[] }> {
+/** What a tool answers when no calendar is linked. */
+export interface NotLinked {
+  linked: false;
+  message: string;
+}
+
+export const NOT_LINKED: NotLinked = { linked: false, message: NO_CALENDAR };
+
+/** One card on the canvas: the time, the title, and the day or the place under it. */
+export interface EventTile {
+  time: string;
+  title: string;
+  day?: string;
+  where?: string;
+}
+
+export function eventTile(o: Occurrence, timezone: string, withDay = false): EventTile {
+  const day = o.allDay ? o.startDate! : dateIn(o.start, timezone);
+  return {
+    time: o.allDay ? 'All day' : timeIn(o.start, timezone),
+    title: o.summary,
+    ...(withDay ? { day: dayLabel(day) } : {}),
+    ...(o.location ? { where: o.location } : {}),
+  };
+}
+
+/**
+ * Every occurrence in the window across the linked calendars, and what could
+ * not be read; null when no calendar is linked at all.
+ */
+export async function gather(buddi: Host, from: Date, to: Date): Promise<{ items: Occurrence[]; problems: string[] } | null> {
   const calendars = await listCalendars(buddi.db);
-  if (calendars.length === 0) throw new Error(NO_CALENDAR);
+  if (calendars.length === 0) return null;
   const items: Occurrence[] = [];
   const problems: string[] = [];
   for (const row of calendars) {
@@ -49,7 +86,7 @@ export function line(o: Occurrence, timezone: string, many: boolean, withDay = f
 const withProblems = <T extends object>(body: T, problems: string[]): T & { problems?: string[] } =>
   problems.length > 0 ? { ...body, problems } : body;
 
-export const todayTool: ToolDefinition<Record<string, never>, { date: string; events: string[]; problems?: string[] }> = {
+export const todayTool: ToolDefinition<Record<string, never>, { date: string; events: string[]; tiles: EventTile[]; problems?: string[] } | NotLinked> = {
   name: 'calendar.today',
   description:
     "Today's events from the owner's linked calendars, in their time: all-day events first, then each meeting with its " +
@@ -60,10 +97,15 @@ export const todayTool: ToolDefinition<Record<string, never>, { date: string; ev
     const buddi = ctx.buddi!;
     const tz = buddi.owner.timezone;
     const date = dateIn(buddi.clock.now(), tz);
-    const { items, problems } = await gather(buddi, zonedTime(date, '00:00', tz), zonedTime(addDays(date, 1), '00:00', tz));
+    const found = await gather(buddi, zonedTime(date, '00:00', tz), zonedTime(addDays(date, 1), '00:00', tz));
+    if (!found) return NOT_LINKED;
+    const { items, problems } = found;
     const many = new Set(items.map((i) => i.calendar)).size > 1;
     const events = items.map((o) => line(o, tz, many));
-    return withProblems({ date: `${dayLabel(date)} (${date})`, events: events.length > 0 ? events : ['No events today.'] }, problems);
+    return withProblems(
+      { date: `${dayLabel(date)} (${date})`, events: events.length > 0 ? events : ['No events today.'], tiles: items.map((o) => eventTile(o, tz)) },
+      problems,
+    );
   },
 };
 
@@ -71,7 +113,10 @@ const upcomingInput = z
   .object({ days: z.coerce.number().int().min(1).max(14).optional().describe('Days ahead, today included. 7 when left out, at most 14.') })
   .strict();
 
-export const upcomingTool: ToolDefinition<z.infer<typeof upcomingInput>, { days: Array<{ date: string; events: string[] }>; problems?: string[] }> = {
+export const upcomingTool: ToolDefinition<
+  z.infer<typeof upcomingInput>,
+  { days: Array<{ date: string; events: string[] }>; tiles: EventTile[]; problems?: string[] } | NotLinked
+> = {
   name: 'calendar.upcoming',
   description:
     "The owner's events for the coming days, today included, grouped by day in their time. Use it to plan the week " +
@@ -83,17 +128,22 @@ export const upcomingTool: ToolDefinition<z.infer<typeof upcomingInput>, { days:
     const tz = buddi.owner.timezone;
     const today = dateIn(buddi.clock.now(), tz);
     const count = input.days ?? 7;
-    const { items, problems } = await gather(buddi, zonedTime(today, '00:00', tz), zonedTime(addDays(today, count), '00:00', tz));
+    const found = await gather(buddi, zonedTime(today, '00:00', tz), zonedTime(addDays(today, count), '00:00', tz));
+    if (!found) return NOT_LINKED;
+    const { items, problems } = found;
     const many = new Set(items.map((i) => i.calendar)).size > 1;
     const days: Array<{ date: string; events: string[] }> = [];
+    const tiles: EventTile[] = [];
     for (let i = 0; i < count; i++) {
       const date = addDays(today, i);
       const from = zonedTime(date, '00:00', tz).getTime();
       const to = zonedTime(addDays(date, 1), '00:00', tz).getTime();
       const events = items.filter((o) => o.start.getTime() < to && o.end.getTime() > from || (o.start.getTime() === o.end.getTime() && o.start.getTime() >= from && o.start.getTime() < to));
       if (events.length > 0) days.push({ date: `${dayLabel(date)} (${date})`, events: events.map((o) => line(o, tz, many)) });
+      // One card per event per day it falls on, with that day under the title.
+      for (const o of events) tiles.push({ ...eventTile(o, tz), day: dayLabel(date) });
     }
-    return withProblems({ days }, problems);
+    return withProblems({ days, tiles }, problems);
   },
 };
 
@@ -107,7 +157,7 @@ const findInput = z
 
 export const MAX_FOUND = 25;
 
-export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string[]; more?: number; problems?: string[] }> = {
+export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string[]; more?: number; problems?: string[] } | NotLinked> = {
   name: 'calendar.find',
   description:
     "Search the owner's calendars for events whose title, place or notes contain the words, from 30 days ago to 180 " +
@@ -123,7 +173,9 @@ export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string
     const toDay = input.to ? parseDay(input.to, now, tz) : addDays(today, 180);
     if (!fromDay || !toDay) throw new Error('Give dates as YYYY-MM-DD, today or tomorrow.');
     if (toDay < fromDay) throw new Error('The last day is before the first.');
-    const { items, problems } = await gather(buddi, zonedTime(fromDay, '00:00', tz), zonedTime(addDays(toDay, 1), '00:00', tz));
+    const gathered = await gather(buddi, zonedTime(fromDay, '00:00', tz), zonedTime(addDays(toDay, 1), '00:00', tz));
+    if (!gathered) return NOT_LINKED;
+    const { items, problems } = gathered;
     const words = input.query.toLowerCase().split(/\s+/).filter(Boolean);
     const matches = items.filter((o) => {
       const hay = [o.summary, o.location ?? '', o.description ?? ''].join(' ').toLowerCase();
@@ -164,7 +216,7 @@ export function freeSlots(busy: ReadonlyArray<{ start: Date; end: Date }>, from:
 
 const hhmm = (t: string): string => t.padStart(5, '0');
 
-export const freeTool: ToolDefinition<z.infer<typeof freeInput>, { date: string; free: string[]; busy: string[]; problems?: string[] }> = {
+export const freeTool: ToolDefinition<z.infer<typeof freeInput>, { date: string; free: string[]; busy: string[]; problems?: string[] } | NotLinked> = {
   name: 'calendar.free',
   description:
     "The owner's free time on one day, between 09:00 and 18:00 unless told otherwise, from the meetings in their " +
@@ -181,7 +233,9 @@ export const freeTool: ToolDefinition<z.infer<typeof freeInput>, { date: string;
     if (toTime <= fromTime) throw new Error('The end of the day is before its start.');
     const from = zonedTime(date, fromTime, tz);
     const to = zonedTime(date, toTime, tz);
-    const { items, problems } = await gather(buddi, from, to);
+    const gathered = await gather(buddi, from, to);
+    if (!gathered) return NOT_LINKED;
+    const { items, problems } = gathered;
     const busy = items.filter((o) => o.busy);
     const many = new Set(items.map((i) => i.calendar)).size > 1;
     const free = freeSlots(busy, from, to).map((s) => `${timeIn(s.start, tz)}–${timeIn(s.end, tz)} (${duration(s.end.getTime() - s.start.getTime())})`);

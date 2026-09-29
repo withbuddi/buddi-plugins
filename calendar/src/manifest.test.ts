@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
+import { parseViewDescriptors } from '@buddi/core/plugin';
 import { manifest } from './index.js';
 import { normaliseLink, providerOf } from './store.js';
 
@@ -18,8 +19,8 @@ describe('calendar manifest', () => {
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name)).toEqual(['calendar.add', 'calendar.remove']);
   });
 
-  it('needs host API 1.9 for a secret address, and says what it uses and where it reads', () => {
-    expect(pkg.buddi.hostApi).toBe('^1.9');
+  it('needs host API 1.10 for its tiles and glance, and says what it uses and where it reads', () => {
+    expect(pkg.buddi.hostApi).toBe('^1.10');
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe('calendar');
     expect(pkg.license).toBe('Apache-2.0');
@@ -27,6 +28,21 @@ describe('calendar manifest', () => {
     const md = readFileSync(new URL('../buddi.md', import.meta.url), 'utf8');
     expect(md).toMatch(/^Schema: calendar$/m);
     expect(md).toMatch(new RegExp(`^Hosts: ${manifest.network!.map((n) => n.host.replace(/[.*]/g, '\\$&')).join(', ')}$`, 'm'));
+  });
+});
+
+describe('the dashboard', () => {
+  it('draws today and the coming days as tiles core accepts, and glances at the next meeting', () => {
+    expect(manifest.views?.map((v) => [v.tool, v.renderer])).toEqual([['calendar.today', 'tiles'], ['calendar.upcoming', 'tiles']]);
+    expect(() => parseViewDescriptors(manifest.views!, { plugin: 'calendar', tools: manifest.tools.map((t) => t.name), pages: ['settings'] })).not.toThrow();
+    expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['calendar.next', 'glance']]);
+  });
+
+  it('says how to find the link in a fold, and keeps the link in the vault, not a keychain', () => {
+    const body = manifest.pages![0]!.body;
+    expect(body.some((c) => c.kind === 'expand' && c.label === 'How to find the link')).toBe(true);
+    expect(JSON.stringify(body)).toMatch(/buddi's vault/);
+    expect(JSON.stringify(body)).not.toMatch(/keychain/);
   });
 });
 

@@ -8,7 +8,7 @@ are free. Read-only: nothing is ever written to a calendar.
 Each calendar is linked on Settings → Calendar by its private ICS address:
 Google's "Secret address in iCal format", iCloud's public calendar link, or
 Outlook's published ICS link. Anyone with that link can read the calendar, so
-buddi keeps it like a password: it becomes an owner secret in your keychain
+buddi keeps it like a password: it becomes an owner secret in buddi's vault
 the moment you save it, never shown again, and this plugin fetches it through
 buddi without ever reading it. No other plugin can fetch it.
 

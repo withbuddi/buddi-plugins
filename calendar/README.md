@@ -28,8 +28,8 @@ Each calendar is linked by its private ICS address:
   copy the ICS link.
 
 Anyone with that link can read the calendar. So buddi keeps it like a
-password: the moment you save it, it becomes an owner secret in your
-keychain, never shown again. When an agent asks, buddi fetches the link on
+password: the moment you save it, it becomes an owner secret in buddi's
+vault (the keychain on a Mac, an encrypted file elsewhere), never shown again. When an agent asks, buddi fetches the link on
 this plugin's behalf; the plugin itself never reads it, and no other plugin
 can fetch it. If you reset the link at Google or stop sharing at iCloud, the
 calendar says it cannot be read; add it again with the new link.

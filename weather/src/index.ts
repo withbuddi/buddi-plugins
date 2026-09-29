@@ -14,6 +14,8 @@ import { openMeteo, type WeatherService } from './open-meteo.js';
 import { createSevereSentinel } from './sentinel.js';
 import { createAddPlaceTool, removePlaceTool, setHomeTool, setUnitsTool, weatherPages, weatherQueries } from './settings.js';
 import { createForecastTool, createNowTool, createPlacesTool } from './tools.js';
+import { createWeatherGlance } from './home.js';
+import { weatherViews } from './views.js';
 import { VERSION } from './version.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -44,6 +46,8 @@ export function createWeatherManifest(service: WeatherService = openMeteo): Plug
     sentinels: [createSevereSentinel(service)],
     pages: weatherPages,
     queries: weatherQueries,
+    views: weatherViews,
+    home: [createWeatherGlance(service)],
   };
 }
 
@@ -58,3 +62,5 @@ export * from './units.js';
 export * from './tools.js';
 export * from './settings.js';
 export * from './sentinel.js';
+export * from './views.js';
+export * from './home.js';

@@ -43,3 +43,9 @@ export function depth(mm: number, units: Units): string {
 export function snow(cm: number, units: Units): string {
   return units === 'imperial' ? `${(cm / 2.54).toFixed(1)} in` : `${cm < 10 ? cm.toFixed(1) : round(cm)} cm`;
 }
+
+/** Degrees without the letter, for a tile beside others that already say the unit: "64°". */
+export function degrees(celsius: number, units: Units): string {
+  if (!Number.isFinite(celsius)) return '?';
+  return `${round(units === 'imperial' ? celsius * 9 / 5 + 32 : celsius)}°`;
+}

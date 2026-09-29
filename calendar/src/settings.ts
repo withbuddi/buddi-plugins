@@ -10,15 +10,27 @@ import { parseIcs } from './ics.js';
 import { declareHost, dropCache, fetchIcs, listCalendars, normaliseLink, providerOf, remember } from './store.js';
 
 export const CALENDAR_NOTICE =
-  'Anyone with a private calendar link can read that calendar, so buddi keeps it like a password: in your ' +
-  'keychain, never shown again, and fetched only by this plugin. Reading is all it does; nothing is ever ' +
+  "Anyone with a private calendar link can read that calendar, so buddi keeps it like a password: in buddi's " +
+  'vault, never shown again, and fetched only by this plugin. Reading is all it does; nothing is ever ' +
   'written to your calendar.';
 
-/** Where each provider keeps the private link, one line each. */
+/**
+ * Where each provider keeps the private link: the exact clicks, one block
+ * each. The page grammar links only inside buddi, so Google's help page is
+ * named as text rather than as a link.
+ */
 export const PROVIDER_HELP = [
-  'Google: Settings → your calendar → Integrate calendar → Secret address in iCal format. A work or school Google account may have it turned off by its administrator.',
-  'iCloud: in the Calendar app, share the calendar → Public Calendar → copy the link.',
-  'Outlook: Settings → Calendar → Shared calendars → Publish a calendar → copy the ICS link.',
+  'Google: open Google Calendar on the web → Settings (the gear) → under "Settings for my calendars" pick the ' +
+    'calendar → Integrate calendar → "Secret address in iCal format" → the copy button beside it.',
+  'Google, careful: not the Public address, which only works for a calendar you made public. If the secret link ' +
+    'ever leaks, Reset beside it makes the old ' +
+    'one stop working. A work or school account may have it turned off by its administrator. Google\'s help: ' +
+    'support.google.com/calendar/answer/37648.',
+  'iCloud: in the Calendar app (or at icloud.com/calendar), share the calendar → tick Public Calendar → copy the ' +
+    'link. Unlike Google\'s, this link is public: anyone who has it can read the calendar, though nobody can find ' +
+    'it without it.',
+  'Outlook: on outlook.com or Outlook on the web, Settings (the gear) → Calendar → Shared calendars → Publish a ' +
+    'calendar → pick the calendar and "Can view all details" → Publish → copy the ICS link.',
 ];
 
 export const calendarQueries: PageQuery[] = [
@@ -169,7 +181,7 @@ export const calendarPages: PageDescriptor[] = [
                 label: 'Private link',
                 type: 'secret',
                 required: true,
-                hint: "The calendar's private ICS address, https:// or webcal://. Where each service keeps it is under Where to find the link.",
+                hint: "The calendar's private ICS address, https:// or webcal://. Where each service keeps it is under How to find the link.",
               },
             ],
             submit: {
@@ -185,8 +197,9 @@ export const calendarPages: PageDescriptor[] = [
         ],
       },
       {
-        kind: 'section',
-        title: 'Where to find the link',
+        kind: 'expand',
+        query: { query: 'settings' },
+        label: 'How to find the link',
         body: PROVIDER_HELP.map((text) => ({ kind: 'notice' as const, text })),
       },
     ],

@@ -67,6 +67,7 @@ suite('weather (postgres)', () => {
       now: '12°C (feels 11°C), overcast, wind 14 km/h',
       today: 'high 18°C, low 10°C, light rain, 60% chance of rain',
       note: 'Home is Paris, Île-de-France, France, from your timezone; change it on Settings → Weather.',
+      tiles: [{ icon: 'cloud', value: '12°C', label: 'Home', sky: 'Overcast, feels 11°', rain: 'High 18°, low 10°' }],
     });
     expect(asked.geocode).toEqual(['Paris']);
     const second = await run('weather.now', {});
@@ -75,7 +76,12 @@ suite('weather (postgres)', () => {
   });
 
   it('asks for home when the timezone names no city', async () => {
-    await expect(run('weather.now', {}, { timezone: 'UTC' })).rejects.toThrow(/Add your home on Settings → Weather/);
+    // Not set up is an answer, not a failure: the canvas draws it as one card.
+    expect(await run('weather.now', {}, { timezone: 'UTC' })).toEqual({ setUp: false, message: expect.stringMatching(/Add your home on Settings → Weather/) });
+    expect((await run('weather.forecast', {}, { timezone: 'UTC' })).setUp).toBe(false);
+    // And Home has no glance, rather than deriving a home it may not write.
+    const glance = manifest.home!.find((h) => h.id === 'weather.now')!;
+    expect(await glance.produce(ctx({ timezone: 'UTC' }))).toBeNull();
   });
 
   it('keeps places from the settings page: add, make home, units, remove', async () => {
@@ -112,8 +118,29 @@ suite('weather (postgres)', () => {
     expect(await run('weather.forecast', { place: 'work', days: 2 })).toEqual({
       place: 'Work (Lyon, Auvergne-Rhône-Alpes, France)',
       days: ['2026-09-28: thunderstorm, 15°C to 24°C, 12 mm rain (90%), gusts 60 km/h', '2026-09-29: mostly clear, 12°C to 21°C'],
+      tiles: [
+        { icon: 'storm', value: '24° / 15°', label: 'Today', sky: 'Thunderstorm', rain: '90% chance · 12 mm' },
+        { icon: 'sun', value: '21° / 12°', label: 'Tuesday', sky: 'Mostly clear', rain: '10% chance' },
+      ],
     });
     expect((await run('weather.forecast', { place: 'Paris', days: 1 })).place).toBe('Paris (Paris, Île-de-France, France)');
+  });
+
+  it('glances at home from Home: temperature and sky in the owner units, cached, linking to Settings', async () => {
+    await run('weather.add_place', { label: 'Home', place: 'Paris' }, { agentId: 'owner' });
+    forecast = {
+      timezone: 'Europe/Paris',
+      current: { time: '2026-09-28T08:00', temperatureC: 17.8, feelsLikeC: 17, code: 3, windKmh: 10, gustKmh: 20, precipitationMm: 0, humidity: 70, isDay: true },
+      days: [],
+      hours: [],
+    };
+    await run('weather.set_units', { units: 'imperial' }, { agentId: 'owner' });
+    const glance = manifest.home!.find((h) => h.id === 'weather.now')!;
+    expect(glance.placement).toBe('glance');
+    const before = asked.forecast.length;
+    expect(await glance.produce(ctx())).toEqual({ icon: 'cloud', text: '64°F, overcast in Paris', link: { route: { page: 'settings' } } });
+    await glance.produce(ctx());
+    expect(asked.forecast.length).toBe(before + 1);
   });
 
   it('tells the owner once per severe event, and nothing without saved places', async () => {
