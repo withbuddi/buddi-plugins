@@ -30,10 +30,11 @@ name; left out, it is home.
 ## The Weather page
 
 A place in the rail. Pick the place at the top (Home, Work, …), then Today
-(now in large, the next 24 hours, the temperature over the chance of rain),
-Week (pick a day to see its hours) or 10 days. A warning sits at the top when
-something severe is coming there in the next 24 hours. Needs buddi with host
-API 1.12.
+(now in large, then one panel of the next 24 hours: temperature, rain or wind
+as a chart with its values written on it, over the hourly strip; hover or pick
+an hour and both mark it), Week (pick a day to see its hours in the same
+panel) or 10 days. A warning sits at the top when something severe is coming
+there in the next 24 hours. Needs buddi with host API 1.13.
 
 ## Settings → Weather
 

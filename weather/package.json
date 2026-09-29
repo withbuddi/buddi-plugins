@@ -33,7 +33,7 @@
       "http",
       "owner:notify"
     ],
-    "hostApi": "^1.12"
+    "hostApi": "^1.13"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

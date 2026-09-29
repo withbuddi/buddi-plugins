@@ -36,7 +36,7 @@ describe('weather manifest', () => {
   it('has one sentinel, every three hours, a rail page and a settings page', () => {
     expect(manifest.sentinels?.map((s) => [s.id, s.every])).toEqual([['weather.severe', 10_800]]);
     expect(manifest.pages?.map((p) => [p.id, p.place, p.icon])).toEqual([['weather', 'rail', 'cloud'], ['settings', 'settings', 'globe']]);
-    // The rail page draws tabs, a hero and tiles: the first host that has them is 1.12.
-    expect(pkg.buddi.hostApi).toBe('^1.12');
+    // The rail page draws a series panel: the first host that draws one is 1.13.
+    expect(pkg.buddi.hostApi).toBe('^1.13');
   });
 });

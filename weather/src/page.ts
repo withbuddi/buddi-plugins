@@ -1,9 +1,10 @@
 /**
  * The Weather page in the rail: a saved place at a time, as the design kit's
- * Weather screen draws it — Today (now, large; the next 24 hours; the
- * temperature over the chance of rain), Week (seven days, the picked one's
- * hours below) and 10 days — with a warning at the top when something severe
- * is coming there in the next 24 hours.
+ * Weather screen draws it — Today (now, large; then one panel of the next 24
+ * hours: temperature, rain or wind as a chart with its values written on it,
+ * over the hourly strip, one highlight between them), Week (seven days, the
+ * picked one's hours in the same panel below) and 10 days — with a warning at
+ * the top when something severe is coming there in the next 24 hours.
  *
  * Four read-only queries, every value already written in the owner's units.
  * One forecast per place feeds all of them, kept ten minutes: switching
@@ -40,7 +41,12 @@ export function inUnits(celsius: number, units: Units): number {
   return Math.round(units === 'imperial' ? (celsius * 9) / 5 + 32 : celsius);
 }
 
-/** One hour as a tile and as a point of the chart. */
+/** A wind speed as the chart reads it: km/h or mph, a whole number. */
+export function speedInUnits(kmh: number, units: Units): number {
+  return Math.round(units === 'imperial' ? kmh / 1.609344 : kmh);
+}
+
+/** One hour as a tile of the strip and as a point of the chart: the same row, so they cannot disagree. */
 export function hourRow(h: Hour, units: Units, label: string) {
   const chance = h.precipitationChance ?? 0;
   return {
@@ -51,6 +57,7 @@ export function hourRow(h: Hour, units: Units, label: string) {
     rain: `Rain ${chance}%`,
     temp: inUnits(h.temperatureC, units),
     chance,
+    wind: speedInUnits(h.windKmh, units),
   };
 }
 
@@ -178,6 +185,30 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
 
 const placeRef = { place: { param: 'place' } } as const;
 
+type SeriesPanel = Extract<PageDescriptor['body'][number], { kind: 'series-panel' }>;
+
+/**
+ * A day's hours in one panel: temperature, rain chance and wind as the tabs
+ * of its chart, and the strip of the same hours under it.
+ */
+function dayPanel(title: string, query: SeriesPanel['query']): SeriesPanel {
+  return {
+    kind: 'series-panel',
+    title,
+    query,
+    points: 'hours',
+    x: 'time',
+    series: [
+      { id: 'temp', label: 'Temperature', y: 'temp', unit: 'temp', kind: 'area' },
+      { id: 'rain', label: 'Rain', y: 'chance', unit: 'percent', kind: 'bars' },
+      { id: 'wind', label: 'Wind', y: 'wind', unit: 'speed', kind: 'area' },
+    ],
+    tiles: { icon: { path: 'icon' }, value: 'value', label: 'time', lines: ['rain'] },
+    labelEvery: 3,
+    empty: 'No hours came back.',
+  };
+}
+
 export const weatherRailPage: PageDescriptor = {
   id: 'weather',
   title: 'Weather',
@@ -213,30 +244,7 @@ export const weatherRailPage: PageDescriptor = {
               ],
               empty: 'No forecast came back.',
             },
-            {
-              kind: 'tiles',
-              title: 'Next 24 hours',
-              query: { query: 'hours', params: placeRef },
-              items: 'hours',
-              icon: { path: 'icon' },
-              value: 'value',
-              label: 'time',
-              lines: ['rain'],
-              layout: 'strip',
-              empty: 'No hours came back.',
-            },
-            {
-              kind: 'chart',
-              title: 'Temperature and rain',
-              query: { query: 'hours', params: placeRef },
-              rows: 'hours',
-              x: 'time',
-              series: [
-                { y: 'temp', type: 'line', label: 'Temperature' },
-                { y: 'chance', type: 'bar', label: 'Chance of rain', unit: 'percent' },
-              ],
-              empty: 'No hours came back.',
-            },
+            dayPanel('Today', { query: 'hours', params: placeRef }),
           ],
         },
         {
@@ -255,18 +263,7 @@ export const weatherRailPage: PageDescriptor = {
               select: { param: 'date', key: 'date' },
               empty: 'No forecast came back.',
             },
-            {
-              kind: 'tiles',
-              title: 'By the hour',
-              query: { query: 'hours', params: { ...placeRef, date: { param: 'date' } } },
-              items: 'hours',
-              icon: { path: 'icon' },
-              value: 'value',
-              label: 'time',
-              lines: ['rain'],
-              layout: 'strip',
-              empty: 'No hours came back.',
-            },
+            dayPanel('By the hour', { query: 'hours', params: { ...placeRef, date: { param: 'date' } } }),
           ],
         },
         {

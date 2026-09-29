@@ -76,13 +76,14 @@ function setup(opts: { places?: typeof SAVED; units?: 'metric' | 'imperial'; tim
 }
 
 describe('the weather page', () => {
-  it('is a rail page core accepts: tabs with the place pick, over a hero, tiles and a two-kind chart', () => {
-    // Registering is what checks a page: its shape, its queries, a tab bar's default, a chart's series.
+  it('is a rail page core accepts: tabs with the place pick, over a hero and the day in one panel', () => {
+    // Registering is what checks a page: its shape, its queries, a tab bar's default, a panel's series.
     expect(() => new ToolRegistry().register(manifest)).not.toThrow();
     expect(weatherRailPage).toMatchObject({ id: 'weather', place: 'rail', title: 'Weather', icon: 'cloud' });
     const tabs = weatherRailPage.body.find((c) => c.kind === 'tabs')!;
     expect(tabs.kind === 'tabs' && tabs.tabs.map((t) => [t.id, t.label])).toEqual([['today', 'Today'], ['week', 'Week'], ['days', '10 days']]);
-    expect(tabs.kind === 'tabs' && tabs.tabs[0]!.body.map((c) => c.kind)).toEqual(['hero', 'tiles', 'chart']);
+    expect(tabs.kind === 'tabs' && tabs.tabs[0]!.body.map((c) => c.kind)).toEqual(['hero', 'series-panel']);
+    expect(tabs.kind === 'tabs' && tabs.tabs[1]!.body.map((c) => c.kind)).toEqual(['tiles', 'series-panel']);
   });
 
   it('answers now at a place, in the owner units, with the facts the hero shows', async () => {
@@ -102,7 +103,7 @@ describe('the weather page', () => {
     const { run } = setup();
     const next = (await run('hours')).hours;
     expect(next).toHaveLength(24);
-    expect(next[0]).toEqual({ date: '2026-09-28', time: 'Now', icon: 'partly-cloudy', value: '15°', rain: 'Rain 20%', temp: 15, chance: 20 });
+    expect(next[0]).toEqual({ date: '2026-09-28', time: 'Now', icon: 'partly-cloudy', value: '15°', rain: 'Rain 20%', temp: 15, chance: 20, wind: 10 });
     expect(next[6]).toMatchObject({ time: '16:00', icon: 'storm' });
     expect(next[23]).toMatchObject({ date: '2026-09-29', time: '09:00' });
     const tuesday = (await run('hours', { date: '2026-09-29' })).hours;
@@ -149,6 +150,27 @@ describe('the weather page', () => {
 
   it('writes an hour in imperial for the chart as a number', () => {
     const hour = forecast().hours[14]!;
-    expect(hourRow(hour, 'imperial', '14:00')).toMatchObject({ value: '63°', temp: 63, icon: 'partly-cloudy' });
+    expect(hourRow(hour, 'imperial', '14:00')).toMatchObject({ value: '63°', temp: 63, icon: 'partly-cloudy', wind: 6 });
+  });
+
+  it('draws the panel’s chart and its strip from the same hours: the temperature is the tiles’ value, point for point', async () => {
+    const tabs = weatherRailPage.body.find((c) => c.kind === 'tabs')!;
+    const panels = tabs.kind === 'tabs' ? tabs.tabs.flatMap((t) => t.body.filter((c) => c.kind === 'series-panel')) : [];
+    expect(panels).toHaveLength(2);
+    for (const units of ['metric', 'imperial'] as const) {
+      const { run } = setup({ units });
+      for (const panel of panels) {
+        if (panel.kind !== 'series-panel') continue;
+        expect(panel.series.map((s) => [s.id, s.unit, s.kind])).toEqual([['temp', 'temp', 'area'], ['rain', 'percent', 'bars'], ['wind', 'speed', 'area']]);
+        const date = panel.query.params && 'date' in panel.query.params ? { date: '2026-09-29' } : {};
+        const points = (await run(panel.query.query, date))[panel.points] as Array<Record<string, unknown>>;
+        expect(points).toHaveLength(24);
+        const temp = panel.series.find((s) => s.id === 'temp')!;
+        const rain = panel.series.find((s) => s.id === 'rain')!;
+        expect(points.map((p) => `${p[temp.y]}°`)).toEqual(points.map((p) => p[panel.tiles.value]));
+        expect(points.map((p) => `Rain ${p[rain.y]}%`)).toEqual(points.map((p) => p[panel.tiles.lines![0]!]));
+        expect(points.map((p) => p[panel.x])).toEqual(points.map((p) => p[panel.tiles.label]));
+      }
+    }
   });
 });
