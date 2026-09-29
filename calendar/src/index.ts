@@ -25,6 +25,7 @@ export const manifest: PluginManifest = {
   version: VERSION,
   schema: 'calendar',
   migrationsDir: MIGRATIONS_DIR,
+  author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'Reads your Google, iCloud or Outlook calendars from their private links, kept like passwords, so your agents ' +
     'know today, the coming days and your free time. Read-only.',

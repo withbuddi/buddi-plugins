@@ -5,6 +5,10 @@
   "keywords": [
     "buddi-plugin"
   ],
+  "author": {
+    "name": "withbuddi",
+    "url": "https://withbuddi.com"
+  },
   "license": "Apache-2.0",
   "homepage": "https://withbuddi.com/plugins/weather",
   "repository": {

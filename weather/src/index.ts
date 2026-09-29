@@ -28,6 +28,7 @@ export function createWeatherManifest(service: WeatherService = openMeteo): Plug
     version: VERSION,
     schema: 'weather',
     migrationsDir: MIGRATIONS_DIR,
+    author: { name: 'withbuddi', url: 'https://withbuddi.com' },
     description:
       'The weather now and the forecast for the places you save, from Open-Meteo with no key, and a message ' +
       'once when severe weather is coming at one of them.',

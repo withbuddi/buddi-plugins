@@ -22,7 +22,7 @@ you publish carries the peer range and no link. The checkout must be built
 
 `buddi plugins init <name>` writes this same tree, with the override already
 resolved to the core your installation is running. Copying `template/` by hand
-is the other way in; rename it, and change `name`, `buddi.name`, `schema` and the tool family
+is the other way in; rename it, and change `name`, `buddi.name`, `schema`, `author` and the tool family
 together.
 
 ## Install it

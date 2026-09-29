@@ -7,6 +7,10 @@
   "keywords": [
     "buddi-plugin"
   ],
+  "author": {
+    "name": "withbuddi",
+    "url": "https://withbuddi.com"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

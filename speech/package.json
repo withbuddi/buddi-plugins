@@ -5,6 +5,10 @@
   "keywords": [
     "buddi-plugin"
   ],
+  "author": {
+    "name": "withbuddi",
+    "url": "https://withbuddi.com"
+  },
   "license": "GPL-3.0-only",
   "homepage": "https://withbuddi.com/plugins/speech",
   "repository": {

@@ -151,6 +151,9 @@ export const manifest: PluginManifest = {
   migrationsDir: MIGRATIONS_DIR,
   tools: [listNotes, forgetNote],
   // One line, shown before anybody installs you.
+  // Who made it: "by <name>" on the install card. The name must match
+  // package.json's author, which is what the card reads before this is imported.
+  author: { name: 'Your name' },
   description: 'Keeps short notes, and deletes one when the owner says so.',
   // Every host you intend to reach, and why. Documentation, not a sandbox —
   // and it is compared with your buddi.md at install.

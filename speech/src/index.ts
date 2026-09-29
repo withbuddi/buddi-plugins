@@ -31,6 +31,7 @@ export const manifest: PluginManifest = {
   version: VERSION,
   schema: 'speech',
   migrationsDir: MIGRATIONS_DIR,
+  author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'Lets agents listen to an audio file and answer with a voice, through the OpenAI or OpenAI-compatible ' +
     'account you choose on Settings → Speech, or Whisper and Kokoro on this computer, with daily limits.',

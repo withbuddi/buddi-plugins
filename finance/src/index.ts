@@ -73,6 +73,7 @@ export const manifest: PluginManifest & { sentinels: NonNullable<PluginManifest[
   version: VERSION,
   schema: 'finance',
   migrationsDir: MIGRATIONS_DIR,
+  author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'Keeps your accounts, cards, loans, recurring charges and receipts in one place, projects your cash flow, ' +
     'and watches for a breached floor, a payment coming due and a statement closing high. Nothing leaves this computer.',

@@ -28,6 +28,7 @@ export const manifest: PluginManifest = {
   version: VERSION,
   schema: 'image',
   migrationsDir: MIGRATIONS_DIR,
+  author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'Makes one image from a prompt with the provider account you choose (ChatGPT subscription, OpenAI, ' +
     'Gemini, or an OpenAI-compatible server) and keeps it in the Files library. Proposes an Illustrator agent.',

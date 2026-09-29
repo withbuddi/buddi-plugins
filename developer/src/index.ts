@@ -56,6 +56,7 @@ export const manifest: PluginManifest = {
   version: '0.1.0',
   schema: 'developer',
   migrationsDir: MIGRATIONS_DIR,
+  author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'A workspace an agent may read, edit and run code in — one directory you name, with a mode ' +
     'you choose. It runs code you did not write, as your user.',
