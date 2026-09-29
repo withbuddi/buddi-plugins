@@ -20,8 +20,9 @@ Four tools, none of which changes anything: `calendar.today`,
 
 ## What you see
 
-Calendar on the rail: today and the seven days after it, grouped by day, with
-a filter by calendar when more than one is linked.
+Calendar on the rail: the week by the hour, the month by the day, or the next
+seven days as a list, each calendar in its own colour, with a filter by
+calendar when more than one is linked.
 
 ## What it stores
 

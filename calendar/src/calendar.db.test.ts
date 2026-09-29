@@ -87,34 +87,47 @@ suite('calendar (postgres)', () => {
     });
   });
 
-  it('draws the Calendar page: today first, each day grouped, all-day first, Nothing. on an empty day, filtered by calendar', async () => {
+  it('answers the Calendar page: the days it asks for, each event with its calendar, tone and place, filtered by calendar', async () => {
     await run('calendar.add', { name: 'Work', link: LINK }, asOwner);
-    type Row = { id: string; day: string; time: string; title: string; where: string; calendar: string };
-    const agenda = (await agendaQuery.produce({}, ctx())) as { linked: boolean; many: boolean; events: Row[]; summary: Array<{ text: string }> };
+    type Event = { id: string; title: string; start: string; end: string; allDay: boolean; calendar: string; tone: number; location: string };
+    type Agenda = { linked: boolean; many: boolean; events: Event[]; summary: Array<{ text: string }> };
+    const agenda = (await agendaQuery.produce({}, ctx())) as Agenda;
     expect(agenda).toMatchObject({ linked: true, many: false });
-    const days = [...new Set(agenda.events.map((e) => e.day))];
-    expect(days).toEqual([
-      'Today · Mon 28 Sep', 'Tomorrow · Tue 29 Sep', 'Wed 30 Sep', 'Thu 1 Oct', 'Fri 2 Oct', 'Sat 3 Oct', 'Sun 4 Oct', 'Mon 5 Oct',
+    // Today and the six days after it, when the page does not say.
+    expect(agenda.events.filter((e) => e.start.startsWith('2026-09-28')).map((e) => [e.title, e.start, e.end, e.allDay, e.calendar, e.tone, e.location])).toEqual([
+      ['Company offsite', '2026-09-28', '2026-09-29', true, 'Work', 0, ''],
+      ['Team standup (moved)', '2026-09-28T15:00:00.000Z', '2026-09-28T15:30:00.000Z', false, 'Work', 0, 'Room 4'],
+      ['Call with Paris office', '2026-09-28T18:00:00.000Z', '2026-09-28T19:00:00.000Z', false, 'Work', 0, ''],
+      ['Dentist', '2026-09-28T19:00:00.000Z', '2026-09-28T20:00:00.000Z', false, 'Work', 0, '12 Main St'],
     ]);
-    expect(agenda.events.filter((e) => e.day === 'Today · Mon 28 Sep').map((e) => [e.time, e.title, e.where, e.calendar])).toEqual([
-      ['All day', 'Company offsite', '', 'Work'],
-      ['11:00–11:30', 'Team standup (moved)', 'Room 4', 'Work'],
-      ['14:00–15:00', 'Call with Paris office', '', 'Work'],
-      ['15:00–16:00', 'Dentist', '12 Main St', 'Work'],
-    ]);
-    expect(agenda.events.find((e) => e.day === 'Tomorrow · Tue 29 Sep')).toMatchObject({ id: '2026-09-29:none', title: 'Nothing.', time: '' });
+    expect(agenda.events.find((e) => e.title === 'Trip to Boston')).toMatchObject({ start: '2026-10-01', end: '2026-10-03', allDay: true });
+    expect(agenda.events.every((e) => e.start < '2026-10-05T04:00')).toBe(true);
     expect(new Set(agenda.events.map((e) => e.id)).size).toBe(agenda.events.length);
-    expect((await agendaQuery.produce({ days: '2' }, ctx()) as { events: Row[] }).events.at(-1)!.title).toBe('Nothing.');
+    expect(agenda.summary[0]!.text).toMatch(/^\d+ events over the next 7 days\.$/);
+    // Nothing is a row no longer: the page draws "Nothing." on an empty day itself.
+    expect(agenda.events.some((e) => e.title === 'Nothing.')).toBe(false);
+
+    // The range the page asks for as the owner moves: a later week, and one the other way round.
+    const later = (await agendaQuery.produce({ from: '2026-10-05', to: '2026-10-12' }, ctx())) as Agenda;
+    expect(later.events.every((e) => e.start >= '2026-10-05' && e.start < '2026-10-12T04:00')).toBe(true);
+    expect(later.events.filter((e) => e.title === 'Team standup').length).toBe(2);
+    expect(later.summary[0]!.text).toBe('2 events from Mon 5 Oct to Sun 11 Oct.');
+    const tuesday = (await agendaQuery.produce({ from: '2026-09-29', to: '2026-09-20' }, ctx())) as Agenda;
+    expect(tuesday.events).toEqual([]);
+    expect(tuesday.summary[0]!.text).toBe('No events from Tue 29 Sep to Tue 29 Sep.');
+    await expect(agendaQuery.produce({ from: 'monday' }, ctx())).rejects.toThrow();
 
     await run('calendar.add', { name: 'Family', link: 'webcal://p12-caldav.icloud.com/published/2/MTIzNDU2Nzg5MTIzNDU2N' }, asOwner);
-    const both = (await agendaQuery.produce({}, ctx())) as { many: boolean; calendars: unknown; events: Row[] };
+    const both = (await agendaQuery.produce({}, ctx())) as Agenda & { calendars: unknown };
     expect(both.many).toBe(true);
     expect(both.calendars).toEqual([{ id: 'work', name: 'Work' }, { id: 'family', name: 'Family' }]);
-    const onlyFamily = (await agendaQuery.produce({ calendars: 'family' }, ctx())) as { events: Row[] };
-    expect(onlyFamily.events.every((e) => e.calendar === '' || e.calendar === 'Family')).toBe(true);
-    const onlyWork = (await agendaQuery.produce({ calendars: 'work,nobody' }, ctx())) as { events: Row[] };
-    expect(onlyWork.events.filter((e) => e.calendar !== '').every((e) => e.calendar === 'Work')).toBe(true);
-    expect(onlyWork.events.filter((e) => e.calendar !== '').length).toBeGreaterThan(0);
+    // Each calendar wears its own tone: its place in the list.
+    expect(new Set(both.events.map((e) => `${e.calendar}:${e.tone}`))).toEqual(new Set(['Work:0', 'Family:1']));
+    const onlyFamily = (await agendaQuery.produce({ calendars: 'family' }, ctx())) as Agenda;
+    expect(onlyFamily.events.every((e) => e.calendar === 'Family' && e.tone === 1)).toBe(true);
+    const onlyWork = (await agendaQuery.produce({ calendars: 'work,nobody' }, ctx())) as Agenda;
+    expect(onlyWork.events.every((e) => e.calendar === 'Work')).toBe(true);
+    expect(onlyWork.events.length).toBeGreaterThan(0);
   });
 
   it('keeps the link as a secret the plugin fetches without holding it', async () => {

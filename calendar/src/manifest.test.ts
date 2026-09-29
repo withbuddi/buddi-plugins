@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
-import { parseViewDescriptors } from '@buddi/core/plugin';
+import { parseViewDescriptors, type Component } from '@buddi/core/plugin';
 import { manifest } from './index.js';
 import { normaliseLink, providerOf } from './store.js';
 
@@ -19,8 +19,8 @@ describe('calendar manifest', () => {
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name)).toEqual(['calendar.add', 'calendar.remove']);
   });
 
-  it('needs host API 1.10 for its tiles and glance, and says what it uses and where it reads', () => {
-    expect(pkg.buddi.hostApi).toBe('^1.10');
+  it('needs host API 1.11 for its calendar page, tiles and glance, and says what it uses and where it reads', () => {
+    expect(pkg.buddi.hostApi).toBe('^1.11');
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe('calendar');
     expect(pkg.license).toBe('Apache-2.0');
@@ -38,14 +38,18 @@ describe('the dashboard', () => {
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['calendar.next', 'glance']]);
   });
 
-  it('puts a Calendar place in the rail: the days grouped, a calendar filter, and Settings when none is linked', () => {
+  it('puts a Calendar place in the rail: week, month and list, a calendar filter, and Settings when none is linked', () => {
     const registry = new ToolRegistry();
     registry.register(manifest);
     const page = registry.pages().find((p) => p.id === 'agenda')!;
     expect(page).toMatchObject({ plugin: 'calendar', title: 'Calendar', place: 'rail', icon: 'calendar' });
-    const list = page.body.find((c) => c.kind === 'list') as { groupBy?: { key: string }; query: { query: string; params?: unknown } };
-    expect(list.groupBy).toEqual({ key: 'day' });
-    expect(list.query).toEqual({ query: 'agenda', params: { calendars: { param: 'calendars' } } });
+    const calendar = page.body.find((c) => c.kind === 'calendar') as Extract<Component, { kind: 'calendar' }>;
+    expect(calendar).toMatchObject({ views: ['week', 'month', 'list'], default: 'week', events: 'events', empty: 'Nothing.', when: { path: 'linked', equals: true } });
+    expect(calendar.map).toEqual({ id: 'id', title: 'title', start: 'start', end: 'end', allDay: 'allDay', calendar: 'calendar', tone: 'tone', location: 'location' });
+    expect(calendar.query).toEqual({ query: 'agenda', params: { calendars: { param: 'calendars' } } });
+    // The not-linked notice and its link are as they were.
+    const notLinked = page.body.find((c) => c.kind === 'section' && c.when?.equals === false) as Extract<Component, { kind: 'section' }>;
+    expect(notLinked.body).toEqual([{ kind: 'notice', text: { path: 'message' } }, { kind: 'link', label: 'Link a calendar', to: { page: 'settings' } }]);
     const picker = page.body.find((c) => c.kind === 'search') as { when?: unknown; fields: Array<{ multiple?: boolean }> };
     expect(picker.when).toEqual({ path: 'many', equals: true });
     expect(picker.fields[0]!.multiple).toBe(true);

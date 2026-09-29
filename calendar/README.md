@@ -10,7 +10,7 @@ never writes to a calendar.
 buddi plugins install @withbuddi/plugin-calendar
 ```
 
-It needs buddi with host API 1.9 or later. Then link a calendar on Settings →
+It needs buddi with host API 1.11 or later. Then link a calendar on Settings →
 Calendar, and grant the tools to an agent (`calendar.*`), or let Planner pick
 them up: its morning brief lists today's meetings and the gaps between them
 when this plugin is installed.
@@ -36,12 +36,16 @@ calendar says it cannot be read; add it again with the new link.
 
 ## The Calendar page
 
-The plugin adds Calendar to the dashboard's rail: today first, then the seven
-days after it, one group per day with its weekday and date. All-day events
-come first in their day, then the rest by time; each row shows the time, the
-title, the place and which calendar it is from. A day with nothing on says
-"Nothing.". With more than one calendar linked, a filter at the top shows only
-the ones you pick. With none linked, the page links to Settings → Calendar.
+The plugin adds Calendar to the dashboard's rail, with three views behind a
+switch: the week, its days as columns with the hours down the side and each
+event placed at its time (all-day ones at the top); the month, six weeks of
+days with up to three events each, and a day's whole list under the grid
+when you choose it; and a list, one group per day for the next seven days.
+‹ Today › move through the weeks or months, as do the arrow keys, and T comes
+back to today. Each calendar has its own colour, and a day with nothing on
+says "Nothing.". The page remembers the view you chose; a phone opens on the
+list. With more than one calendar linked, a filter at the top shows only the
+ones you pick. With none linked, the page links to Settings → Calendar.
 It reads through the same ten-minute cache as the tools. You can hide it from
 the rail in Settings → Appearance.
 
