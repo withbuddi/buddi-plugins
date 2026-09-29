@@ -98,3 +98,35 @@ jobs:
         # prepack builds dist/ afresh; --provenance attests the tarball to this
         # public repository and this run.
         run: npm publish --provenance --access public --tag "${{ steps.tag.outputs.dist }}"
+      # The listing follows the release: a pull request in withbuddi/buddi-market
+      # bumping this plugin's entry to the version just published. Its check
+      # rewrites the claims from the code and a merge puts it on the site.
+      # MARKET_TOKEN is a fine-grained token with contents and pull requests
+      # on buddi-market; without it this step says so and the bump is by hand.
+      - name: Propose the listing
+        if: steps.tag.outputs.dist == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.MARKET_TOKEN }}
+          NAME: ${{ steps.tag.outputs.name }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "MARKET_TOKEN is not set: bump plugins/$NAME/entry.json in withbuddi/buddi-market by hand"; exit 0; fi
+          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/withbuddi/buddi-market.git" "$RUNNER_TEMP/market"
+          cd "$RUNNER_TEMP/market"
+          test -f "plugins/$NAME/entry.json" || { echo "$NAME is not listed yet; nothing to bump"; exit 0; }
+          node -e '
+            const fs = require("fs"); const f = `plugins/${process.env.NAME}/entry.json`;
+            const e = JSON.parse(fs.readFileSync(f, "utf8"));
+            if (e.version === process.env.VERSION) { console.log("already at " + e.version); process.exit(0); }
+            e.version = process.env.VERSION;
+            if (e.reviewed) e.reviewed.version = process.env.VERSION;
+            fs.writeFileSync(f, JSON.stringify(e, null, 2) + "\n");
+          '
+          git config user.name "buddi-plugins" && git config user.email "noreply@withbuddi.com"
+          branch="bump/$NAME-$VERSION"
+          git checkout -q -b "$branch" && git add -A
+          git diff --cached --quiet && { echo "nothing to bump"; exit 0; }
+          git commit -qm "$NAME $VERSION" && git push -q origin "$branch"
+          gh pr create -R withbuddi/buddi-market --head "$branch" --title "$NAME $VERSION" \
+            --body "Published by withbuddi/buddi-plugins run ${{ github.run_id }}. The check rewrites the claims from the code; a merge lists it."
+
