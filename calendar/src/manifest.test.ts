@@ -38,6 +38,20 @@ describe('the dashboard', () => {
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['calendar.next', 'glance']]);
   });
 
+  it('puts a Calendar place in the rail: the days grouped, a calendar filter, and Settings when none is linked', () => {
+    const registry = new ToolRegistry();
+    registry.register(manifest);
+    const page = registry.pages().find((p) => p.id === 'agenda')!;
+    expect(page).toMatchObject({ plugin: 'calendar', title: 'Calendar', place: 'rail', icon: 'calendar' });
+    const list = page.body.find((c) => c.kind === 'list') as { groupBy?: { key: string }; query: { query: string; params?: unknown } };
+    expect(list.groupBy).toEqual({ key: 'day' });
+    expect(list.query).toEqual({ query: 'agenda', params: { calendars: { param: 'calendars' } } });
+    const picker = page.body.find((c) => c.kind === 'search') as { when?: unknown; fields: Array<{ multiple?: boolean }> };
+    expect(picker.when).toEqual({ path: 'many', equals: true });
+    expect(picker.fields[0]!.multiple).toBe(true);
+    expect(JSON.stringify(page.body)).toContain('{"page":"settings"}');
+  });
+
   it('says how to find the link in a fold, and keeps the link in the vault, not a keychain', () => {
     const body = manifest.pages![0]!.body;
     expect(body.some((c) => c.kind === 'expand' && c.label === 'How to find the link')).toBe(true);

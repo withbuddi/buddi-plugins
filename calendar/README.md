@@ -34,6 +34,17 @@ this plugin's behalf; the plugin itself never reads it, and no other plugin
 can fetch it. If you reset the link at Google or stop sharing at iCloud, the
 calendar says it cannot be read; add it again with the new link.
 
+## The Calendar page
+
+The plugin adds Calendar to the dashboard's rail: today first, then the seven
+days after it, one group per day with its weekday and date. All-day events
+come first in their day, then the rest by time; each row shows the time, the
+title, the place and which calendar it is from. A day with nothing on says
+"Nothing.". With more than one calendar linked, a filter at the top shows only
+the ones you pick. With none linked, the page links to Settings → Calendar.
+It reads through the same ten-minute cache as the tools. You can hide it from
+the rail in Settings → Appearance.
+
 ## What your agents get
 
 - `calendar.today`: today's events, all-day ones first, in your time.

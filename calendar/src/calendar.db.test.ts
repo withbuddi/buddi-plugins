@@ -16,6 +16,7 @@ import {
 import type { ToolDefinition } from '@buddi/core/plugin';
 import { manifest } from './index.js';
 import { dropCache } from './store.js';
+import { agendaQuery } from './agenda.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
@@ -81,6 +82,39 @@ suite('calendar (postgres)', () => {
     expect(await run('calendar.find', { query: 'dentist' })).toEqual(notLinked);
     expect(await run('calendar.free', { date: 'today' })).toEqual(notLinked);
     expect(await manifest.home![0]!.produce(ctx())).toBeNull();
+    expect(await agendaQuery.produce({}, ctx())).toEqual({
+      linked: false, many: false, calendars: [], message: 'No calendar is linked yet. Add one on Settings → Calendar.', events: [], summary: [], problem: '',
+    });
+  });
+
+  it('draws the Calendar page: today first, each day grouped, all-day first, Nothing. on an empty day, filtered by calendar', async () => {
+    await run('calendar.add', { name: 'Work', link: LINK }, asOwner);
+    type Row = { id: string; day: string; time: string; title: string; where: string; calendar: string };
+    const agenda = (await agendaQuery.produce({}, ctx())) as { linked: boolean; many: boolean; events: Row[]; summary: Array<{ text: string }> };
+    expect(agenda).toMatchObject({ linked: true, many: false });
+    const days = [...new Set(agenda.events.map((e) => e.day))];
+    expect(days).toEqual([
+      'Today · Mon 28 Sep', 'Tomorrow · Tue 29 Sep', 'Wed 30 Sep', 'Thu 1 Oct', 'Fri 2 Oct', 'Sat 3 Oct', 'Sun 4 Oct', 'Mon 5 Oct',
+    ]);
+    expect(agenda.events.filter((e) => e.day === 'Today · Mon 28 Sep').map((e) => [e.time, e.title, e.where, e.calendar])).toEqual([
+      ['All day', 'Company offsite', '', 'Work'],
+      ['11:00–11:30', 'Team standup (moved)', 'Room 4', 'Work'],
+      ['14:00–15:00', 'Call with Paris office', '', 'Work'],
+      ['15:00–16:00', 'Dentist', '12 Main St', 'Work'],
+    ]);
+    expect(agenda.events.find((e) => e.day === 'Tomorrow · Tue 29 Sep')).toMatchObject({ id: '2026-09-29:none', title: 'Nothing.', time: '' });
+    expect(new Set(agenda.events.map((e) => e.id)).size).toBe(agenda.events.length);
+    expect((await agendaQuery.produce({ days: '2' }, ctx()) as { events: Row[] }).events.at(-1)!.title).toBe('Nothing.');
+
+    await run('calendar.add', { name: 'Family', link: 'webcal://p12-caldav.icloud.com/published/2/MTIzNDU2Nzg5MTIzNDU2N' }, asOwner);
+    const both = (await agendaQuery.produce({}, ctx())) as { many: boolean; calendars: unknown; events: Row[] };
+    expect(both.many).toBe(true);
+    expect(both.calendars).toEqual([{ id: 'work', name: 'Work' }, { id: 'family', name: 'Family' }]);
+    const onlyFamily = (await agendaQuery.produce({ calendars: 'family' }, ctx())) as { events: Row[] };
+    expect(onlyFamily.events.every((e) => e.calendar === '' || e.calendar === 'Family')).toBe(true);
+    const onlyWork = (await agendaQuery.produce({ calendars: 'work,nobody' }, ctx())) as { events: Row[] };
+    expect(onlyWork.events.filter((e) => e.calendar !== '').every((e) => e.calendar === 'Work')).toBe(true);
+    expect(onlyWork.events.filter((e) => e.calendar !== '').length).toBeGreaterThan(0);
   });
 
   it('keeps the link as a secret the plugin fetches without holding it', async () => {

@@ -49,12 +49,19 @@ export function eventTile(o: Occurrence, timezone: string, withDay = false): Eve
 }
 
 /**
- * Every occurrence in the window across the linked calendars, and what could
- * not be read; null when no calendar is linked at all.
+ * Every occurrence in the window across the linked calendars (or only the
+ * ones named), and what could not be read; null when no calendar is linked.
  */
-export async function gather(buddi: Host, from: Date, to: Date): Promise<{ items: Occurrence[]; problems: string[] } | null> {
-  const calendars = await listCalendars(buddi.db);
-  if (calendars.length === 0) return null;
+export async function gather(
+  buddi: Host,
+  from: Date,
+  to: Date,
+  only?: ReadonlySet<string>,
+): Promise<{ items: Occurrence[]; problems: string[] } | null> {
+  const linked = await listCalendars(buddi.db);
+  if (linked.length === 0) return null;
+  // `only`: the ids the Calendar page's filter chose; every calendar without it.
+  const calendars = only ? linked.filter((row) => only.has(row.id)) : linked;
   const items: Occurrence[] = [];
   const problems: string[] = [];
   for (const row of calendars) {

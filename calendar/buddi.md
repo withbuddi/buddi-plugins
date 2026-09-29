@@ -18,6 +18,11 @@ Four tools, none of which changes anything: `calendar.today`,
 `calendar.upcoming` (up to 14 days), `calendar.find` (a search) and
 `calendar.free` (the free time in a day). Times are in your timezone.
 
+## What you see
+
+Calendar on the rail: today and the seven days after it, grouped by day, with
+a filter by calendar when more than one is linked.
+
 ## What it stores
 
 `calendar.calendar`: each calendar's name, service, host, the name of the

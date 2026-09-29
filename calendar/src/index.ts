@@ -15,6 +15,7 @@ import { addCalendarTool, calendarPages, calendarQueries, removeCalendarTool } f
 import { calendarTools } from './tools.js';
 import { nextMeetingGlance } from './home.js';
 import { calendarViews } from './views.js';
+import { agendaPage, agendaQuery } from './agenda.js';
 import { VERSION } from './version.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -35,8 +36,8 @@ export const manifest: PluginManifest = {
   ],
   uses: ['http', 'secrets'],
   tools: [...calendarTools, addCalendarTool, removeCalendarTool],
-  pages: calendarPages,
-  queries: calendarQueries,
+  pages: [...calendarPages, agendaPage],
+  queries: [...calendarQueries, agendaQuery],
   views: calendarViews,
   home: [nextMeetingGlance],
 };
@@ -50,3 +51,4 @@ export * from './tools.js';
 export * from './settings.js';
 export * from './views.js';
 export * from './home.js';
+export * from './agenda.js';
