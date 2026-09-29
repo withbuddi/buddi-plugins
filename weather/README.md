@@ -27,6 +27,14 @@ installed.
 All three only read. A place is one you saved (home, work) or any city by
 name; left out, it is home.
 
+## The Weather page
+
+A place in the rail. Pick the place at the top (Home, Work, …), then Today
+(now in large, the next 24 hours, the temperature over the chance of rain),
+Week (pick a day to see its hours) or 10 days. A warning sits at the top when
+something severe is coming there in the next 24 hours. Needs buddi with host
+API 1.12.
+
 ## Settings → Weather
 
 Your places and your units. Home starts as the city your timezone names, so a

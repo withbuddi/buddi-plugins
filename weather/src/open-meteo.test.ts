@@ -95,6 +95,27 @@ describe('open-meteo', () => {
     await expect(openMeteo.geocode('x', undefined)).rejects.toThrow(/no http area/);
   });
 
+  it('asks the page\'s fuller read for ten days, and shapes its extra fields', async () => {
+    const fc = recordingHttp({
+      ...FORECAST,
+      daily: { ...FORECAST.daily, wind_speed_10m_max: [14.2, 30], sunrise: ['2026-09-28T07:42', '2026-09-29T07:43'], sunset: ['2026-09-28T19:31', '2026-09-29T19:29'] },
+      hourly: { ...FORECAST.hourly, precipitation_probability: [40, null], is_day: [1, 0] },
+    });
+    const f = await openMeteo.forecast({ latitude: 45.75, longitude: 4.85, days: 10, current: true, detailed: true }, fc.http);
+    const u = new URL(fc.sent[0]!.url);
+    expect(u.searchParams.get('forecast_days')).toBe('10');
+    expect(u.searchParams.get('daily')).toContain('sunrise,sunset');
+    expect(u.searchParams.get('hourly')).toContain('precipitation_probability,is_day');
+    expect(f.days[0]).toMatchObject({ windKmh: 14.2, sunrise: '2026-09-28T07:42', sunset: '2026-09-28T19:31' });
+    expect(f.hours.map((h) => [h.precipitationChance, h.isDay])).toEqual([[40, true], [null, false]]);
+    // Never more than ten days, and the tools' plainer read asks none of it.
+    await openMeteo.forecast({ latitude: 1, longitude: 1, days: 16 }, fc.http);
+    const plain = new URL(fc.sent[1]!.url);
+    expect(plain.searchParams.get('forecast_days')).toBe('10');
+    expect(plain.searchParams.get('daily')).not.toContain('sunrise');
+    expect(plain.searchParams.get('hourly')).toBeNull();
+  });
+
   it('names the WMO codes in a few words', () => {
     expect(describeCode(0)).toBe('clear');
     expect(describeCode(65)).toBe('heavy rain');

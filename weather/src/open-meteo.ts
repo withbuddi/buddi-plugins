@@ -49,6 +49,11 @@ export interface Day {
   precipitationMm: number;
   precipitationChance: number | null;
   gustKmh: number;
+  /** The strongest sustained wind of the day, when asked for. */
+  windKmh?: number;
+  /** The place's local time, `YYYY-MM-DDTHH:MM`, when asked for. */
+  sunrise?: string;
+  sunset?: string;
 }
 
 /** One hour, in metric, with its instant. */
@@ -62,6 +67,10 @@ export interface Hour {
   snowfallCm: number;
   gustKmh: number;
   windKmh: number;
+  /** Chance of rain, 0–100, when asked for. */
+  precipitationChance?: number | null;
+  /** False at night at the place, when asked for. */
+  isDay?: boolean;
 }
 
 export interface Forecast {
@@ -77,7 +86,12 @@ export interface ForecastQuery {
   days: number;
   current?: boolean;
   hourly?: boolean;
+  /** The page's fuller read: the chance of rain and day or night each hour, the day's wind, sunrise and sunset. */
+  detailed?: boolean;
 }
+
+/** The furthest ahead a forecast is asked for: the page's ten days. */
+export const MAX_FORECAST_DAYS = 10;
 
 /** The seam to the network. */
 export interface WeatherService {
@@ -193,6 +207,9 @@ export function toForecast(payload: unknown): Forecast {
     precipitationMm: num(d.precipitation_sum?.[i], 0),
     precipitationChance: typeof d.precipitation_probability_max?.[i] === 'number' ? (d.precipitation_probability_max[i] as number) : null,
     gustKmh: num(d.wind_gusts_10m_max?.[i], 0),
+    ...(typeof d.wind_speed_10m_max?.[i] === 'number' ? { windKmh: d.wind_speed_10m_max[i] as number } : {}),
+    ...(typeof d.sunrise?.[i] === 'string' ? { sunrise: d.sunrise[i] as string } : {}),
+    ...(typeof d.sunset?.[i] === 'string' ? { sunset: d.sunset[i] as string } : {}),
   }));
   const h = (p.hourly ?? {}) as Record<string, unknown[] | undefined>;
   const hours: Hour[] = (h.time ?? []).map((local, i) => ({
@@ -204,6 +221,8 @@ export function toForecast(payload: unknown): Forecast {
     snowfallCm: num(h.snowfall?.[i], 0),
     gustKmh: num(h.wind_gusts_10m?.[i], 0),
     windKmh: num(h.wind_speed_10m?.[i], 0),
+    ...(h.precipitation_probability ? { precipitationChance: typeof h.precipitation_probability[i] === 'number' ? (h.precipitation_probability[i] as number) : null } : {}),
+    ...(h.is_day?.[i] === 0 || h.is_day?.[i] === 1 ? { isDay: h.is_day[i] === 1 } : {}),
   }));
   return { timezone: typeof p.timezone === 'string' ? p.timezone : 'UTC', ...(current ? { current } : {}), days, hours };
 }
@@ -236,10 +255,11 @@ export const openMeteo: WeatherService = {
     url.searchParams.set('longitude', query.longitude.toFixed(4));
     // The place's own zone: its days are its days.
     url.searchParams.set('timezone', 'auto');
-    url.searchParams.set('forecast_days', String(Math.min(Math.max(query.days, 1), 8)));
+    url.searchParams.set('forecast_days', String(Math.min(Math.max(query.days, 1), MAX_FORECAST_DAYS)));
     url.searchParams.set(
       'daily',
-      'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_gusts_10m_max',
+      'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_gusts_10m_max' +
+        (query.detailed ? ',wind_speed_10m_max,sunrise,sunset' : ''),
     );
     if (query.current) {
       url.searchParams.set(
@@ -247,8 +267,12 @@ export const openMeteo: WeatherService = {
         'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m,precipitation,relative_humidity_2m,is_day',
       );
     }
-    if (query.hourly) {
-      url.searchParams.set('hourly', 'weather_code,temperature_2m,precipitation,snowfall,wind_gusts_10m,wind_speed_10m');
+    if (query.hourly || query.detailed) {
+      url.searchParams.set(
+        'hourly',
+        'weather_code,temperature_2m,precipitation,snowfall,wind_gusts_10m,wind_speed_10m' +
+          (query.detailed ? ',precipitation_probability,is_day' : ''),
+      );
     }
     return toForecast(await getJson(http, url));
   },

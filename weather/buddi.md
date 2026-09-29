@@ -12,6 +12,12 @@ your timezone names (Europe/Paris is Paris), found and saved the first time a
 tool needs it; you change it on Settings → Weather, where you also add work
 or anywhere else, and pick metric or imperial.
 
+The Weather page in the rail shows one place at a time, picked at the top:
+today (now, the next 24 hours, the temperature over the chance of rain), the
+week (pick a day to see its hours) and ten days ahead, with a warning at the
+top when something severe is coming there. It reads the forecast once per
+place every ten minutes and saves nothing.
+
 ## What runs on a timer
 
 `weather.severe`, every three hours: the next 24 hours at each saved place.

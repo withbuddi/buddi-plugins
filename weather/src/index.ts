@@ -4,7 +4,8 @@
  *
  * Three read tools a model sees (`weather.now`, `weather.forecast`,
  * `weather.places`), the owner's places and units on Settings → Weather
- * through `ownerOnly` tools, and one sentinel, `weather.severe`. The service
+ * through `ownerOnly` tools, the Weather page in the rail (`page.ts`), and
+ * one sentinel, `weather.severe`. The service
  * is a parameter (`createWeatherManifest`), so every test runs on a stub.
  */
 import path from 'node:path';
@@ -16,6 +17,7 @@ import { createAddPlaceTool, removePlaceTool, setHomeTool, setUnitsTool, weather
 import { createForecastTool, createNowTool, createPlacesTool } from './tools.js';
 import { createWeatherGlance } from './home.js';
 import { weatherViews } from './views.js';
+import { createPageQueries, weatherRailPage } from './page.js';
 import { VERSION } from './version.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -44,8 +46,8 @@ export function createWeatherManifest(service: WeatherService = openMeteo): Plug
       setUnitsTool,
     ],
     sentinels: [createSevereSentinel(service)],
-    pages: weatherPages,
-    queries: weatherQueries,
+    pages: [weatherRailPage, ...weatherPages],
+    queries: [...weatherQueries, ...createPageQueries(service)],
     views: weatherViews,
     home: [createWeatherGlance(service)],
   };
@@ -64,3 +66,4 @@ export * from './settings.js';
 export * from './sentinel.js';
 export * from './views.js';
 export * from './home.js';
+export * from './page.js';

@@ -33,8 +33,10 @@ describe('weather manifest', () => {
     expect(md).toMatch(/^Hosts: geocoding-api\.open-meteo\.com, api\.open-meteo\.com$/m);
   });
 
-  it('has one sentinel, every three hours, and a settings page', () => {
+  it('has one sentinel, every three hours, a rail page and a settings page', () => {
     expect(manifest.sentinels?.map((s) => [s.id, s.every])).toEqual([['weather.severe', 10_800]]);
-    expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['settings', 'settings']]);
+    expect(manifest.pages?.map((p) => [p.id, p.place, p.icon])).toEqual([['weather', 'rail', 'cloud'], ['settings', 'settings', 'globe']]);
+    // The rail page draws tabs, a hero and tiles: the first host that has them is 1.12.
+    expect(pkg.buddi.hostApi).toBe('^1.12');
   });
 });
