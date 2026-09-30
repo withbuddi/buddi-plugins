@@ -126,19 +126,25 @@ suite('weather (postgres)', () => {
     expect((await run('weather.forecast', { place: 'Paris', days: 1 })).place).toBe('Paris (Paris, Île-de-France, France)');
   });
 
-  it('glances at home from Home: temperature and sky in the owner units, cached, linking to Settings', async () => {
+  it('glances at home from Home: temperature and sky in the owner units, a card with the next hours, cached, linking to the Weather page', async () => {
     await run('weather.add_place', { label: 'Home', place: 'Paris' }, { agentId: 'owner' });
     forecast = {
       timezone: 'Europe/Paris',
       current: { time: '2026-09-28T08:00', temperatureC: 17.8, feelsLikeC: 17, code: 3, windKmh: 10, gustKmh: 20, precipitationMm: 0, humidity: 70, isDay: true },
-      days: [],
-      hours: [],
+      days: [{ date: '2026-09-28', code: 3, highC: 23, lowC: 14, precipitationMm: 0, precipitationChance: 10, gustKmh: 20 }],
+      hours: [7, 8, 9, 10].map((hour) => ({ local: `2026-09-28T${String(hour).padStart(2, '0')}:00`, temperatureC: 10 + hour, code: 3, windKmh: 10, gustKmh: 20, precipitationMm: 0 })) as never,
     };
     await run('weather.set_units', { units: 'imperial' }, { agentId: 'owner' });
     const glance = manifest.home!.find((h) => h.id === 'weather.now')!;
     expect(glance.placement).toBe('glance');
     const before = asked.forecast.length;
-    expect(await glance.produce(ctx())).toEqual({ icon: 'cloud', text: '64°F, overcast in Paris', link: { route: { page: 'settings' } } });
+    expect(await glance.produce(ctx())).toEqual({
+      icon: 'cloud',
+      text: '64°F, overcast in Paris',
+      link: { route: { page: 'weather' } },
+      // The card starts at the hour it is now: 08:00, 09:00, 10:00.
+      card: { value: '64°F', caption: 'Overcast · Paris', trend: { label: 'Next 12 hours', points: [64, 66, 68] }, foot: 'High 73° · Low 57°' },
+    });
     await glance.produce(ctx());
     expect(asked.forecast.length).toBe(before + 1);
   });
