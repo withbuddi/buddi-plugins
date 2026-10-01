@@ -1,7 +1,7 @@
 /** The Open-Meteo answers, shaped; the requests, as sent through the http area. No network. */
 import { describe, expect, it } from 'vitest';
 import type { HttpArea, HttpRequest } from '@buddi/core/plugin';
-import { describeCode, openMeteo, toForecast, toPlaces } from './open-meteo.js';
+import { describeCode, glyphOf, openMeteo, toForecast, toPlaces } from './open-meteo.js';
 
 /** Trimmed from a real geocoding answer. */
 const GEOCODE = {
@@ -89,6 +89,8 @@ describe('open-meteo', () => {
     expect(u.searchParams.get('forecast_days')).toBe('3');
     expect(u.searchParams.get('current')).toContain('temperature_2m');
     expect(u.searchParams.get('hourly')).toContain('snowfall');
+    // Home's strip asks day or night each hour too, so its night hours wear the moon.
+    expect(u.searchParams.get('hourly')).toContain('is_day');
     expect(fc.sent[0]!.auth).toBeUndefined();
 
     await expect(openMeteo.forecast({ latitude: 1, longitude: 1, days: 1 }, recordingHttp({}, 503).http)).rejects.toThrow(/answered 503/);
@@ -105,7 +107,8 @@ describe('open-meteo', () => {
     const u = new URL(fc.sent[0]!.url);
     expect(u.searchParams.get('forecast_days')).toBe('10');
     expect(u.searchParams.get('daily')).toContain('sunrise,sunset');
-    expect(u.searchParams.get('hourly')).toContain('precipitation_probability,is_day');
+    expect(u.searchParams.get('hourly')).toContain('is_day');
+    expect(u.searchParams.get('hourly')).toContain('precipitation_probability');
     expect(f.days[0]).toMatchObject({ windKmh: 14.2, sunrise: '2026-09-28T07:42', sunset: '2026-09-28T19:31' });
     expect(f.hours.map((h) => [h.precipitationChance, h.isDay])).toEqual([[40, true], [null, false]]);
     // Never more than ten days, and the tools' plainer read asks none of it.
@@ -114,6 +117,21 @@ describe('open-meteo', () => {
     expect(plain.searchParams.get('forecast_days')).toBe('10');
     expect(plain.searchParams.get('daily')).not.toContain('sunrise');
     expect(plain.searchParams.get('hourly')).toBeNull();
+  });
+
+  it('wears the moon at night: a clear night the crescent, a partly cloudy one the crescent over the cloud', () => {
+    expect(glyphOf(0, { isDay: false })).toBe('moon-clear');
+    expect(glyphOf(1, { isDay: false })).toBe('moon-clear');
+    expect(glyphOf(2, { isDay: false })).toBe('moon-cloud');
+    expect(glyphOf(2, { isDay: true })).toBe('partly-cloudy');
+    expect(glyphOf(0, { isDay: true })).toBe('sun');
+    // Day or night unknown: the day's glyph, as before.
+    expect(glyphOf(0)).toBe('sun');
+    // A buddi before host API 1.22 cannot draw moon-cloud: the plain cloud, never a sun at night.
+    expect(glyphOf(2, { isDay: false, moonCloud: false })).toBe('cloud');
+    // Rain, fog and wind are the same by night.
+    expect(glyphOf(61, { isDay: false })).toBe('rain');
+    expect(glyphOf(0, { isDay: false, gustKmh: 60 })).toBe('wind');
   });
 
   it('names the WMO codes in a few words', () => {

@@ -69,7 +69,7 @@ export interface Hour {
   windKmh: number;
   /** Chance of rain, 0–100, when asked for. */
   precipitationChance?: number | null;
-  /** False at night at the place, when asked for. */
+  /** False at night at the place, when the service said. */
   isDay?: boolean;
 }
 
@@ -86,7 +86,7 @@ export interface ForecastQuery {
   days: number;
   current?: boolean;
   hourly?: boolean;
-  /** The page's fuller read: the chance of rain and day or night each hour, the day's wind, sunrise and sunset. */
+  /** The page's fuller read: the chance of rain each hour, the day's wind, sunrise and sunset. */
   detailed?: boolean;
 }
 
@@ -129,19 +129,22 @@ export function describeCode(code: number | undefined): string {
 }
 
 /** The dashboard's pinned sky glyphs: what a tile or a glance can wear. */
-export type SkyGlyph = 'sun' | 'moon-clear' | 'partly-cloudy' | 'cloud' | 'fog' | 'drizzle' | 'rain' | 'snow' | 'storm' | 'wind';
+export type SkyGlyph = 'sun' | 'moon-clear' | 'partly-cloudy' | 'moon-cloud' | 'cloud' | 'fog' | 'drizzle' | 'rain' | 'snow' | 'storm' | 'wind';
 
 /**
- * A WMO code as one of the dashboard's glyphs. A clear sky at night is the
- * moon; a dry day with gusts of 50 km/h or more is the wind, because that is
- * what the owner will notice.
+ * A WMO code as one of the dashboard's glyphs. At night (`isDay` false) a
+ * clear sky is the crescent and a partly cloudy one the crescent over the
+ * cloud — `moon-cloud`, which a buddi before host API 1.22 cannot draw, so
+ * `moonCloud: false` makes it the plain cloud there. A dry hour with gusts of
+ * 50 km/h or more is the wind, because that is what the owner will notice.
  */
-export function glyphOf(code: number | undefined, opts: { isDay?: boolean; gustKmh?: number } = {}): SkyGlyph {
+export function glyphOf(code: number | undefined, opts: { isDay?: boolean; gustKmh?: number; moonCloud?: boolean } = {}): SkyGlyph {
   const dry = code === undefined || code <= 3;
   if (dry && (opts.gustKmh ?? 0) >= 50) return 'wind';
+  const night = opts.isDay === false;
   switch (code) {
-    case 0: case 1: return opts.isDay === false ? 'moon-clear' : 'sun';
-    case 2: return 'partly-cloudy';
+    case 0: case 1: return night ? 'moon-clear' : 'sun';
+    case 2: return night ? (opts.moonCloud === false ? 'cloud' : 'moon-cloud') : 'partly-cloudy';
     case 3: return 'cloud';
     case 45: case 48: return 'fog';
     case 51: case 53: case 55: case 56: case 57: return 'drizzle';
@@ -268,10 +271,11 @@ export const openMeteo: WeatherService = {
       );
     }
     if (query.hourly || query.detailed) {
+      // Day or night each hour, so a night hour wears the moon.
       url.searchParams.set(
         'hourly',
-        'weather_code,temperature_2m,precipitation,snowfall,wind_gusts_10m,wind_speed_10m' +
-          (query.detailed ? ',precipitation_probability,is_day' : ''),
+        'weather_code,temperature_2m,precipitation,snowfall,wind_gusts_10m,wind_speed_10m,is_day' +
+          (query.detailed ? ',precipitation_probability' : ''),
       );
     }
     return toForecast(await getJson(http, url));

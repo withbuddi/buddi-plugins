@@ -14,6 +14,7 @@ import type { ToolDefinition } from '@buddi/core/plugin';
 import { describeCode, glyphOf, type Day, type SkyGlyph, type WeatherService } from './open-meteo.js';
 import { ensurePlaces, NO_HOME, resolvePlace, unitsFor } from './places.js';
 import { degrees, depth, speed, temperature, type Units } from './units.js';
+import { drawsMoonCloud } from './time.js';
 
 /** What a tool answers when there is no place to ask about yet. */
 export interface NotSetUp {
@@ -108,7 +109,7 @@ export function createNowTool(service: WeatherService): ToolDefinition<z.infer<t
         : 'not available';
       const tiles: WeatherTile[] = c
         ? [{
-            icon: glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh }),
+            icon: glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh, moonCloud: drawsMoonCloud(buddi.version) }),
             value: temperature(c.temperatureC, units),
             label: place.label,
             sky: `${capital(describeCode(c.code))}, feels ${degrees(c.feelsLikeC, units)}`,

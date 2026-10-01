@@ -163,7 +163,7 @@ suite('weather (postgres)', () => {
     expect(asked.forecast.length).toBe(before + 1);
 
     // Each placement picks its place and units (host API 1.19): home in the plugin's units by default.
-    expect(widget.settings!.map((f) => [f.key, f.kind])).toEqual([['place', 'select'], ['units', 'select']]);
+    expect(widget.settings!.map((f) => [f.key, f.kind])).toEqual([['place', 'select'], ['units', 'select'], ['time', 'timeFormat']]);
     await run('weather.add_place', { label: 'Work', place: 'Lyon' }, { agentId: 'owner' });
     const place = widget.settings![0]! as { options: (ctx: unknown) => Promise<Array<{ value: string; label: string }>> };
     const choices = await place.options(ctx());
@@ -175,6 +175,39 @@ suite('weather (postgres)', () => {
     });
     // A place since removed is no choice: home again.
     expect(await widget.produce(ctx(), { size: 'small', settings: { place: 'gone', units: '' } })).toMatchObject({ caption: 'Overcast · Paris', value: '64°F' });
+  });
+
+  it('draws the night hours of the strip with the moon, and their hours the owner way', async () => {
+    await run('weather.add_place', { label: 'Home', place: 'Paris' }, { agentId: 'owner' });
+    // 18:00 in Paris, partly cloudy, then a clear night: the moon from 20:00, as the service's is_day says.
+    forecast = {
+      timezone: 'Europe/Paris',
+      current: { time: '2026-09-28T18:00', temperatureC: 15, feelsLikeC: 14, code: 2, windKmh: 10, gustKmh: 20, precipitationMm: 0, humidity: 70, isDay: true },
+      days: [{ date: '2026-09-28', code: 2, highC: 20, lowC: 10, precipitationMm: 0, precipitationChance: 10, gustKmh: 20 }],
+      hours: Array.from({ length: 12 }, (_, i) => {
+        const at = 18 + i;
+        const local = at < 24 ? `2026-09-28T${String(at).padStart(2, '0')}:00` : `2026-09-29T${String(at - 24).padStart(2, '0')}:00`;
+        return { local, temperatureC: 15 - i / 2, code: at % 4 === 2 ? 2 : 0, windKmh: 5, gustKmh: 10, precipitationMm: 0, isDay: at < 20 };
+      }) as never,
+    };
+    const widget = manifest.widgets!.find((w) => w.id === 'weather.now')!;
+    // An hour on: past the ten minutes another test's forecast for Paris is kept.
+    const later = { now: () => new Date(NOW.getTime() + 3_600_000) };
+    const twelve = await widget.produce(ctx(later), { size: 'medium', settings: { place: '', units: 'metric', time: '12h' } });
+    expect(twelve).toMatchObject({
+      kind: 'strip',
+      items: [
+        { label: '6 PM', icon: 'partly-cloudy' },
+        { label: '8 PM', icon: 'moon-clear' },
+        { label: '10 PM', icon: 'moon-cloud' },
+        { label: '12 AM', icon: 'moon-clear' },
+        { label: '2 AM', icon: 'moon-cloud' },
+        { label: '4 AM', icon: 'moon-clear' },
+      ],
+    });
+    // A placement on 24-hour (or the Profile resolved to it) keeps "20:00".
+    const day = await widget.produce(ctx(later), { size: 'medium', settings: { place: '', units: 'metric', time: '24h' } });
+    expect((day as { items: Array<{ label: string }> }).items.map((t) => t.label)).toEqual(['18:00', '20:00', '22:00', '00:00', '02:00', '04:00']);
   });
 
   it('tells the owner once per severe event, and nothing without saved places', async () => {

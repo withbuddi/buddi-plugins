@@ -52,7 +52,7 @@ const SAVED = [
   { id: 'work', label: 'Work', name: 'Grenoble, Auvergne-Rhône-Alpes, France', latitude: 45.19, longitude: 5.72, timezone: 'Europe/Paris', is_home: false },
 ];
 
-function setup(opts: { places?: typeof SAVED; units?: 'metric' | 'imperial'; timezone?: string } = {}) {
+function setup(opts: { places?: typeof SAVED; units?: 'metric' | 'imperial'; timezone?: string; time?: '12h' | '24h'; version?: string } = {}) {
   const { service, asked } = stubService({ places: { lyon: [LYON] }, forecast: forecast });
   let now = NOW;
   const buddi = {
@@ -63,7 +63,8 @@ function setup(opts: { places?: typeof SAVED; units?: 'metric' | 'imperial'; tim
         throw new Error(`unexpected sql: ${sql}`);
       },
     },
-    owner: { timezone: opts.timezone ?? 'Europe/Lyon', language: async () => 'en-GB' },
+    owner: { timezone: opts.timezone ?? 'Europe/Lyon', language: async () => 'en-GB', formats: async () => ({ time: opts.time ?? null, date: null }) },
+    ...(opts.version ? { version: opts.version } : {}),
     clock: { now: () => now },
     http: undefined,
   } as unknown as BuddiHost;
@@ -111,6 +112,25 @@ describe('the weather page', () => {
     // A clear night is the moon.
     expect(tuesday[2]).toMatchObject({ icon: 'moon-clear', value: '11°' });
     await expect(setup().run('hours', { date: 'Tuesday' })).rejects.toThrow();
+  });
+
+  it('writes the hours and the sun the owner way, and a partly cloudy night as the crescent over the cloud', async () => {
+    const twelve = setup({ time: '12h', version: '1.22' });
+    const next = (await twelve.run('hours')).hours;
+    expect(next.slice(0, 4).map((h: { time: string }) => h.time)).toEqual(['Now', '11 AM', '12 PM', '1 PM']);
+    expect(next[14]).toMatchObject({ time: '12 AM' });
+    expect(await twelve.run('today')).toMatchObject({ sunrise: '7:42 AM', sunset: '7:31 PM' });
+    // Every hour of the night wears the moon on a buddi that draws moon-cloud; partly cloudy at 22:00 here.
+    const night = forecast();
+    night.hours[22]!.code = 2;
+    const { service } = stubService({ places: { lyon: [LYON] }, forecast: () => night });
+    const buddi = { db: { async query(sql: string) { return { rows: sql.includes('weather.place') ? SAVED : [] }; } }, owner: { timezone: 'Europe/Paris', language: async () => 'en-US', formats: async () => ({ time: null, date: null }) }, clock: { now: () => NOW }, http: undefined, version: '1.22' } as unknown as BuddiHost;
+    const hours = createPageQueries(service).find((q) => q.name === 'hours')!;
+    const day = (await hours.produce(hours.params.parse({ date: '2026-09-28' }), { buddi } as never)) as { hours: Array<{ time: string; icon: string }> };
+    // Auto in en-US: 12-hour.
+    expect(day.hours[22]).toMatchObject({ time: '10 PM', icon: 'moon-cloud' });
+    expect(day.hours[2]).toMatchObject({ time: '2 AM', icon: 'moon-clear' });
+    expect(day.hours[12]).toMatchObject({ time: '12 PM', icon: 'partly-cloudy' });
   });
 
   it('lists seven days or ten, today first, and nothing else', async () => {

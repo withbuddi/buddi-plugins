@@ -1,10 +1,10 @@
 /**
  * The glance beside Home's date: the next meeting today — "Next: Standup at
- * 09:30". Nothing once today's meetings are over, nothing for all-day events,
+ * 09:30", or "at 9:30 AM" when the owner reads 12-hour. Nothing once today's meetings are over, nothing for all-day events,
  * and nothing with no calendar linked. The calendars are read through the
  * same ten-minute cache the tools use.
  */
-import type { HomeGlance, HomeGlanceContribution, WidgetBody, WidgetDefinition } from '@buddi/core/plugin';
+import type { HomeGlance, HomeGlanceContribution, ToolContext, WidgetBody, WidgetDefinition } from '@buddi/core/plugin';
 import { HOME_GLANCE_MAX_TEXT, gather } from './tools.js';
 import { listCalendars } from './store.js';
 import { addDays, dateIn, dayLabel, timeIn, zonedTime } from './time.js';
@@ -21,12 +21,28 @@ export const nextMeetingGlance: HomeGlanceContribution = {
     const found = await gather(buddi, now, zonedTime(addDays(date, 1), '00:00', tz));
     const next = found?.items.find((o) => !o.allDay && o.start.getTime() >= now.getTime());
     if (!next) return null;
-    const at = ` at ${timeIn(next.start, tz)}`;
+    const at = ` at ${clockIn(next.start, tz, await glanceFormat(buddi))}`;
     const room = HOME_GLANCE_MAX_TEXT - 'Next: '.length - at.length;
     const title = next.summary.length > room ? `${next.summary.slice(0, room - 1).trimEnd()}…` : next.summary;
     return { icon: 'calendar', text: `Next: ${title}${at}` };
   },
 };
+
+/**
+ * The glance's time format: the owner's Profile, else — on Auto, where a
+ * glance has no browser to ask — what their language reads, else 24-hour.
+ */
+async function glanceFormat(buddi: NonNullable<ToolContext['buddi']>): Promise<'12h' | '24h'> {
+  try {
+    const time = (await buddi.owner.formats?.())?.time;
+    if (time === '12h' || time === '24h') return time;
+    const tag = await buddi.owner.language();
+    if (!tag) return '24h';
+    return new Intl.DateTimeFormat(tag, { hour: 'numeric' }).resolvedOptions().hourCycle?.startsWith('h1') ? '12h' : '24h';
+  } catch {
+    return '24h';
+  }
+}
 
 /** How many minutes Home keeps the day before asking again; the calendars themselves are cached for ten. */
 export const TODAY_REFRESH_S = 300;

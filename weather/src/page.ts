@@ -18,6 +18,7 @@ import { describeCode, glyphOf, MAX_FORECAST_DAYS, type Forecast, type Hour, typ
 import { cityOfZone, displayName, listPlaces, NO_HOME, unitsFor, type Place } from './places.js';
 import { describeEvents, severeEvents } from './severe.js';
 import { degrees, speed, type Units } from './units.js';
+import { clockLabel, drawsMoonCloud, hourLabel, ownerTimeFormat } from './time.js';
 
 export const PAGE_CACHE_MS = 10 * 60_000;
 
@@ -33,8 +34,6 @@ export function shortDay(date: string): string {
   return Number.isNaN(at.getTime()) ? date : `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()}`;
 }
 
-/** `2026-09-28T07:42` → `07:42`, or nothing. */
-const clock = (local: string | undefined): string => (local && local.length >= 16 ? local.slice(11, 16) : '');
 
 /** A temperature as the chart reads it: a number in the owner's units. */
 export function inUnits(celsius: number, units: Units): number {
@@ -46,13 +45,17 @@ export function speedInUnits(kmh: number, units: Units): number {
   return Math.round(units === 'imperial' ? kmh / 1.609344 : kmh);
 }
 
-/** One hour as a tile of the strip and as a point of the chart: the same row, so they cannot disagree. */
-export function hourRow(h: Hour, units: Units, label: string) {
+/**
+ * One hour as a tile of the strip and as a point of the chart: the same row,
+ * so they cannot disagree. `moonCloud`: whether this buddi draws a partly
+ * cloudy night (host API 1.22).
+ */
+export function hourRow(h: Hour, units: Units, label: string, moonCloud = true) {
   const chance = h.precipitationChance ?? 0;
   return {
     date: h.local.slice(0, 10),
     time: label,
-    icon: glyphOf(h.code, { ...(h.isDay === undefined ? {} : { isDay: h.isDay }), gustKmh: h.gustKmh }),
+    icon: glyphOf(h.code, { ...(h.isDay === undefined ? {} : { isDay: h.isDay }), gustKmh: h.gustKmh, moonCloud }),
     value: degrees(h.temperatureC, units),
     rain: `Rain ${chance}%`,
     temp: inUnits(h.temperatureC, units),
@@ -95,8 +98,8 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
     const buddi = ctx.buddi!;
     const place = await placeFor(buddi, service, id);
     if (!place) return null;
-    const [{ units }, forecast] = await Promise.all([unitsFor(buddi), forecastOf(buddi, place)]);
-    return { buddi, place, units, forecast };
+    const [{ units }, forecast, time] = await Promise.all([unitsFor(buddi), forecastOf(buddi, place), ownerTimeFormat(buddi)]);
+    return { buddi, place, units, forecast, time, moonCloud: drawsMoonCloud(buddi.version) };
   };
   const placeParam = z.string().max(60).optional();
 
@@ -116,7 +119,7 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
       async produce(params, ctx) {
         const got = await read(ctx, (params as { place?: string }).place);
         if (!got) return { setUp: false, message: NO_HOME, hasSevere: false };
-        const { buddi, place, units, forecast } = got;
+        const { buddi, place, units, forecast, time, moonCloud } = got;
         const c = forecast.current;
         const day = forecast.days[0];
         const events = severeEvents(forecast.hours, buddi.clock.now());
@@ -124,15 +127,15 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
           setUp: true,
           place: place.label,
           name: place.name,
-          icon: c ? glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh }) : 'cloud',
+          icon: c ? glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh, moonCloud }) : 'cloud',
           now: c ? degrees(c.temperatureC, units) : '',
           sky: c ? capital(describeCode(c.code)) : '',
           feels: c ? degrees(c.feelsLikeC, units) : '',
           highLow: day ? `${degrees(day.highC, units)} / ${degrees(day.lowC, units)}` : '',
           wind: c ? speed(c.windKmh, units) : '',
           rain: day?.precipitationChance === null || day === undefined ? '' : `${day.precipitationChance}%`,
-          sunrise: clock(day?.sunrise),
-          sunset: clock(day?.sunset),
+          sunrise: clockLabel(day?.sunrise, time),
+          sunset: clockLabel(day?.sunset, time),
           hasSevere: events.length > 0,
           severe: events.length > 0 ? describeEvents(events, place.label, units).text : '',
         };
@@ -168,15 +171,15 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
         const { place, date } = params as { place?: string; date?: string };
         const got = await read(ctx, place);
         if (!got) return { hours: [] };
-        const { units, forecast } = got;
+        const { units, forecast, time, moonCloud } = got;
         if (date !== undefined) {
-          return { hours: forecast.hours.filter((h) => h.local.startsWith(date)).map((h) => hourRow(h, units, h.local.slice(11, 16))) };
+          return { hours: forecast.hours.filter((h) => h.local.startsWith(date)).map((h) => hourRow(h, units, hourLabel(h.local, time), moonCloud)) };
         }
         // The next 24 hours, from the hour it is now at the place.
         const nowHour = forecast.current?.time.slice(0, 13);
         const from = Math.max(0, nowHour ? forecast.hours.findIndex((h) => h.local.startsWith(nowHour)) : 0);
         return {
-          hours: forecast.hours.slice(from, from + 24).map((h, i) => hourRow(h, units, i === 0 ? 'Now' : h.local.slice(11, 16))),
+          hours: forecast.hours.slice(from, from + 24).map((h, i) => hourRow(h, units, i === 0 ? 'Now' : hourLabel(h.local, time), moonCloud)),
         };
       },
     },

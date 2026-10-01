@@ -47,7 +47,18 @@ A place in the rail. Pick the place at the top (Home, Work, …), then Today
 as a chart with its values written on it, over the hourly strip; hover or pick
 an hour and both mark it), Week (pick a day to see its hours in the same
 panel) or 10 days. A warning sits at the top when something severe is coming
-there in the next 24 hours. Needs buddi with host API 1.18.
+there in the next 24 hours. Needs buddi with host API 1.18. Hours, sunrise
+and sunset read the way your Profile says (12-hour or 24-hour), and a night
+hour wears the moon — the crescent over a cloud when partly cloudy, on a buddi
+with host API 1.22 (the plain cloud before).
+
+## On Home and the lock screen
+
+The Weather widget: small, the temperature, the sky and the place, the next
+twelve hours as a sparkline, today's high and low; medium, the same over a
+strip of the next hours, every other one, the moon at night. Each placement
+picks its place, its units and its Times — Profile (the default), 12-hour
+("6 PM") or 24-hour ("18:00").
 
 ## Settings → Weather
 

@@ -9,7 +9,8 @@
  * otherwise) and its units (the plugin's by default): small, the
  * figure, the sky and the place, the next twelve hours as a sparkline and
  * today's high and low; medium, the same headline over a strip of the next
- * hours. The glance still sends that small panel as its `card`, which is what
+ * hours, each with the moon at night and its hour the owner's way ("6 PM" or
+ * "18:00": the placement's Times, else the Profile). The glance still sends that small panel as its `card`, which is what
  * a buddi from before widgets draws beside the greeting.
  *
  * Read-only, as Home asks: with no place saved there is nothing (home is only
@@ -21,6 +22,7 @@ import { describeCode, glyphOf, type Forecast, type WeatherService } from './ope
 import { listPlaces, unitsFor } from './places.js';
 import { inUnits } from './page.js';
 import { degrees, temperature, type Units } from './units.js';
+import { drawsMoonCloud, hourLabel, ownerTimeFormat, type TimeFormat } from './time.js';
 
 /** How many hours the card's sparkline runs ahead. */
 export const CARD_HOURS = 12;
@@ -44,6 +46,8 @@ interface ReadFor {
   /** A place id from `listPlaces` (`profile-work`, a place of the plugin's own); home when blank or gone. */
   place?: string;
   units?: Units;
+  /** The strip's hours; the owner's when left out. */
+  time?: TimeFormat;
 }
 
 /** The weather now at a place, from a forecast kept for ten minutes per place; null with no place saved. */
@@ -55,6 +59,8 @@ function createHomeReader(service: WeatherService): (ctx: ToolContext, want?: Re
     const home = (want.place ? places.find((p) => p.id === want.place) : undefined) ?? places.find((p) => p.isHome) ?? places[0];
     if (!home) return null;
     const units = want.units ?? (await unitsFor(buddi)).units;
+    const time = want.time ?? (await ownerTimeFormat(buddi));
+    const moonCloud = drawsMoonCloud(buddi.version);
     const key = `${home.latitude},${home.longitude}`;
     const now = buddi.clock.now().getTime();
     let hit = cache.get(key);
@@ -73,7 +79,7 @@ function createHomeReader(service: WeatherService): (ctx: ToolContext, want?: Re
     const points = ahead.map((h) => inUnits(h.temperatureC, units)).filter(Number.isFinite);
     const day = days[0];
     return {
-      icon: glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh }),
+      icon: glyphOf(c.code, { ...(c.isDay === undefined ? {} : { isDay: c.isDay }), gustKmh: c.gustKmh, moonCloud }),
       text: `${temperature(c.temperatureC, units)}, ${describeCode(c.code)} in ${city}`,
       card: {
         value: temperature(c.temperatureC, units),
@@ -86,8 +92,8 @@ function createHomeReader(service: WeatherService): (ctx: ToolContext, want?: Re
         .slice(0, STRIP_TILES)
         .filter((h) => Number.isFinite(h.temperatureC))
         .map((h) => ({
-          label: h.local.slice(11, 16),
-          icon: glyphOf(h.code, { ...(h.isDay === undefined ? {} : { isDay: h.isDay }), gustKmh: h.gustKmh }),
+          label: hourLabel(h.local, time),
+          icon: glyphOf(h.code, { ...(h.isDay === undefined ? {} : { isDay: h.isDay }), gustKmh: h.gustKmh, moonCloud }),
           value: degrees(h.temperatureC, units),
         })),
     };
@@ -133,12 +139,15 @@ export function createWeatherHome(service: WeatherService): { glance: HomeGlance
         default: '',
         options: [{ value: '', label: 'As on Weather' }, { value: 'metric', label: '°C' }, { value: 'imperial', label: '°F' }],
       },
+      // The hours under a medium widget: "6 PM" or "18:00". Handed over resolved: this pick, else the Profile.
+      { key: 'time', kind: 'timeFormat', label: 'Times' },
     ],
     async produce(ctx, request): Promise<WidgetBody | null> {
       const { size } = request;
       const settings = request.settings ?? {};
       const units = settings.units === 'metric' || settings.units === 'imperial' ? settings.units : undefined;
-      const now = await read(ctx, { ...(typeof settings.place === 'string' && settings.place ? { place: settings.place } : {}), ...(units ? { units } : {}) });
+      const time = await ownerTimeFormat(ctx.buddi!, settings.time);
+      const now = await read(ctx, { ...(typeof settings.place === 'string' && settings.place ? { place: settings.place } : {}), ...(units ? { units } : {}), time });
       if (!now) return { kind: 'text', icon: 'sun', text: 'Add your Home on Settings → Profile to see it here.' };
       if (size === 'medium' && now.tiles.length >= 2) {
         return { kind: 'strip', icon: now.icon, value: now.card.value, ...(now.card.caption ? { caption: now.card.caption } : {}), items: now.tiles };
