@@ -1,8 +1,6 @@
 {
-  "name": "@buddi/tool-developer",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
+  "name": "@withbuddi/plugin-developer",
+  "version": "0.1.1",
   "description": "A workspace an agent may read, edit and run code in, bounded to one directory the owner named.",
   "keywords": [
     "buddi-plugin"
@@ -11,6 +9,18 @@
     "name": "withbuddi",
     "url": "https://withbuddi.com"
   },
+  "license": "Apache-2.0",
+  "homepage": "https://withbuddi.com/plugins/developer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/withbuddi/buddi-plugins.git",
+    "directory": "developer"
+  },
+  "bugs": "https://github.com/withbuddi/buddi-plugins/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -20,6 +30,7 @@
     }
   },
   "buddi": {
+    "name": "developer",
     "manifest": "manifest",
     "core": ">=0.1.0",
     "uses": [
@@ -31,7 +42,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --emitDeclarationOnly && tsc -p tsconfig.test.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "pg": "^8.13.1",
@@ -41,8 +53,12 @@
   "peerDependencies": {
     "@buddi/core": ">=0.1.0"
   },
+  "peerDependenciesMeta": {
+    "@buddi/core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@buddi/core": "link:../../buddi/packages/core",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
     "typescript": "^5.6.3",
@@ -50,6 +66,9 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
+    "!dist/**/*.tsbuildinfo",
+    "!dist/.tsbuildinfo",
     "migrations",
     "skills",
     "buddi.md"

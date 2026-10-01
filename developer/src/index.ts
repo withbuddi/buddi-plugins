@@ -1,5 +1,5 @@
 /**
- * @buddi/tool-developer — an agent that works in a workspace.
+ * @withbuddi/plugin-developer — an agent that works in a workspace.
  *
  * `docs/developer.md` is the whole design. What is worth knowing before
  * reading any of the tools:
