@@ -36,6 +36,7 @@ describe('the dashboard', () => {
     expect(manifest.views?.map((v) => [v.tool, v.renderer])).toEqual([['calendar.today', 'tiles'], ['calendar.upcoming', 'tiles']]);
     expect(() => parseViewDescriptors(manifest.views!, { plugin: 'calendar', tools: manifest.tools.map((t) => t.name), pages: ['settings'] })).not.toThrow();
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['calendar.next', 'glance']]);
+    expect(manifest.widgets?.map((w) => w.id)).toEqual(['calendar.today']);
   });
 
   it('puts a Calendar place in the rail: week, month and list, a calendar filter, and Settings when none is linked', () => {

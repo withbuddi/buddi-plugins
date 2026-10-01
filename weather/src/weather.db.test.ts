@@ -82,6 +82,8 @@ suite('weather (postgres)', () => {
     // And Home has no glance, rather than deriving a home it may not write.
     const glance = manifest.home!.find((h) => h.id === 'weather.now')!;
     expect(await glance.produce(ctx({ timezone: 'UTC' }))).toBeNull();
+    // The widget says where to start instead of standing empty.
+    expect(await manifest.widgets![0]!.produce(ctx({ timezone: 'UTC' }), { size: 'small' })).toEqual({ kind: 'text', icon: 'sun', text: 'Add your home on the Weather page to see it here.' });
   });
 
   it('keeps places from the settings page: add, make home, units, remove', async () => {
@@ -146,6 +148,17 @@ suite('weather (postgres)', () => {
       card: { value: '64°F', caption: 'Overcast · Paris', trend: { label: 'Next 12 hours', points: [64, 66, 68] }, foot: 'High 73° · Low 57°' },
     });
     await glance.produce(ctx());
+    expect(asked.forecast.length).toBe(before + 1);
+    // The widget under the same id: the card as a stat when small, a strip of the next hours when medium, from the same cache.
+    const widget = manifest.widgets!.find((w) => w.id === 'weather.now')!;
+    expect(widget).toMatchObject({ title: 'Weather at home', sizes: ['small', 'medium'], refreshSeconds: 600, link: { page: 'weather' } });
+    expect(await widget.produce(ctx(), { size: 'small' })).toEqual({
+      kind: 'stat', icon: 'cloud', value: '64°F', caption: 'Overcast · Paris', trend: { label: 'Next 12 hours', points: [64, 66, 68] }, foot: 'High 73° · Low 57°',
+    });
+    expect(await widget.produce(ctx(), { size: 'medium' })).toEqual({
+      kind: 'strip', icon: 'cloud', value: '64°F', caption: 'Overcast · Paris',
+      items: [{ label: '08:00', icon: 'cloud', value: '64°' }, { label: '10:00', icon: 'cloud', value: '68°' }],
+    });
     expect(asked.forecast.length).toBe(before + 1);
   });
 

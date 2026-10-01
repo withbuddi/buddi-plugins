@@ -25,5 +25,6 @@ describe('weather tiles', () => {
     expect(manifest.views?.map((v) => [v.tool, v.renderer])).toEqual([['weather.forecast', 'tiles'], ['weather.now', 'tiles']]);
     expect(() => parseViewDescriptors(manifest.views!, { plugin: 'weather', tools: manifest.tools.map((t) => t.name), pages: ['settings'] })).not.toThrow();
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['weather.now', 'glance']]);
+    expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['weather.now', ['small', 'medium']]]);
   });
 });

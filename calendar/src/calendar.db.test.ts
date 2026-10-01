@@ -82,6 +82,7 @@ suite('calendar (postgres)', () => {
     expect(await run('calendar.find', { query: 'dentist' })).toEqual(notLinked);
     expect(await run('calendar.free', { date: 'today' })).toEqual(notLinked);
     expect(await manifest.home![0]!.produce(ctx())).toBeNull();
+    expect(await manifest.widgets![0]!.produce(ctx(), { size: 'medium' })).toEqual({ kind: 'text', icon: 'calendar', text: 'Link a calendar on Settings → Calendar to see your day here.' });
     expect(await agendaQuery.produce({}, ctx())).toEqual({
       linked: false, many: false, calendars: [], message: 'No calendar is linked yet. Add one on Settings → Calendar.', events: [], summary: [], problem: '',
     });
@@ -186,6 +187,22 @@ suite('calendar (postgres)', () => {
     expect(await glance.produce(ctx())).toEqual({ icon: 'calendar', text: 'Next: Dentist at 15:00' });
     now = new Date('2026-09-28T21:00:00Z');
     expect(await glance.produce(ctx())).toBeNull();
+    now = new Date('2026-09-28T12:00:00Z');
+
+    // The Today widget: what is left of today and tomorrow, three rows and how many more, opening the Calendar page.
+    const today = manifest.widgets!.find((w) => w.id === 'calendar.today')!;
+    expect(today).toMatchObject({ title: 'Today', sizes: ['medium', 'small'], refreshSeconds: 300, link: { page: 'agenda' } });
+    expect(await today.produce(ctx(), { size: 'medium' })).toEqual({
+      kind: 'list',
+      rows: [
+        { title: 'Company offsite', side: 'All day' },
+        { title: 'Team standup (moved)', sub: 'Room 4', side: '11:00' },
+        { title: 'Call with Paris office', side: '14:00' },
+      ],
+      more: '1 more by tomorrow night',
+    });
+    now = new Date('2026-09-28T21:00:00Z');
+    expect(await today.produce(ctx(), { size: 'small' })).toEqual({ kind: 'list', rows: [{ title: 'Company offsite', side: 'All day' }] });
     now = new Date('2026-09-28T12:00:00Z');
 
     expect(await run('calendar.find', { query: 'dentist' })).toEqual({ found: ['Mon 28 Sep 15:00–16:00 Dentist (12 Main St)'] });

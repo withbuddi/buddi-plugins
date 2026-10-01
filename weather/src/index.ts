@@ -5,7 +5,7 @@
  * Three read tools a model sees (`weather.now`, `weather.forecast`,
  * `weather.places`), the owner's places and units on Settings → Weather
  * through `ownerOnly` tools, the Weather page in the rail (`page.ts`), and
- * one sentinel, `weather.severe`. The service
+ * one sentinel, `weather.severe`; on Home, a glance and a widget (`home.ts`). The service
  * is a parameter (`createWeatherManifest`), so every test runs on a stub.
  */
 import path from 'node:path';
@@ -15,7 +15,7 @@ import { openMeteo, type WeatherService } from './open-meteo.js';
 import { createSevereSentinel } from './sentinel.js';
 import { createAddPlaceTool, removePlaceTool, setHomeTool, setUnitsTool, weatherPages, weatherQueries } from './settings.js';
 import { createForecastTool, createNowTool, createPlacesTool } from './tools.js';
-import { createWeatherGlance } from './home.js';
+import { createWeatherHome } from './home.js';
 import { weatherViews } from './views.js';
 import { createPageQueries, weatherRailPage } from './page.js';
 import { VERSION } from './version.js';
@@ -23,6 +23,7 @@ import { VERSION } from './version.js';
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
 export function createWeatherManifest(service: WeatherService = openMeteo): PluginManifest {
+  const home = createWeatherHome(service);
   return {
     name: 'weather',
     version: VERSION,
@@ -50,7 +51,8 @@ export function createWeatherManifest(service: WeatherService = openMeteo): Plug
     pages: [weatherRailPage, ...weatherPages],
     queries: [...weatherQueries, ...createPageQueries(service)],
     views: weatherViews,
-    home: [createWeatherGlance(service)],
+    home: [home.glance],
+    widgets: [home.widget],
   };
 }
 

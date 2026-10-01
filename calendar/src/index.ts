@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { addCalendarTool, calendarPages, calendarQueries, removeCalendarTool } from './settings.js';
 import { calendarTools } from './tools.js';
-import { nextMeetingGlance } from './home.js';
+import { nextMeetingGlance, todayWidget } from './home.js';
 import { calendarViews } from './views.js';
 import { agendaPage, agendaQuery } from './agenda.js';
 import { VERSION } from './version.js';
@@ -41,6 +41,7 @@ export const manifest: PluginManifest = {
   queries: [...calendarQueries, agendaQuery],
   views: calendarViews,
   home: [nextMeetingGlance],
+  widgets: [todayWidget],
 };
 
 export default manifest;
