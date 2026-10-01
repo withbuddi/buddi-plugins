@@ -19,8 +19,11 @@ import {
   NO_SIGNATURE,
   git,
   gitOut,
+  EMPTY_TREE,
+  commitExists,
   currentBranch,
   defaultBranch,
+  hasCommits,
   requireRepositoryRoot,
 } from './git.js';
 import type { GitOptions } from './git.js';
@@ -127,11 +130,31 @@ export async function summarise(opts: GitOptions & { agentId: string }): Promise
   }
   const branch = await currentBranch(opts);
   const trunk = await defaultBranch(opts);
-  const mergeBase = await git(['merge-base', 'HEAD', trunk], opts);
-  const base = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : null;
-  // `base` when there is one: committed work *and* the working tree, which is
-  // what "everything this agent did" means. Otherwise the working tree alone.
-  const range = base !== null && branch !== trunk ? [base] : [];
+  // What to diff against, and how the card names it.
+  //  - the merge base with the trunk, when the trunk exists and shares history;
+  //  - the empty tree when it does not: a branch started in a brand-new
+  //    repository (the trunk was never created) or an orphan branch beside an
+  //    existing trunk. Every file on the branch then shows as added, instead
+  //    of "(no changes)" for a project that was committed whole.
+  //  - nothing (the working tree against HEAD) on the trunk itself, or before
+  //    the first commit.
+  let range: string[] = [];
+  let base: string = trunk;
+  if (branch !== trunk && (await hasCommits(opts))) {
+    if (!(await commitExists(trunk, opts))) {
+      range = [EMPTY_TREE];
+      base = '(new repository)';
+    } else {
+      const mergeBase = await git(['merge-base', 'HEAD', trunk], opts);
+      if (mergeBase.exitCode === 0 && mergeBase.stdout.trim() !== '') {
+        base = mergeBase.stdout.trim();
+        range = [base];
+      } else {
+        range = [EMPTY_TREE];
+        base = `none — the branch has no shared history with ${trunk}`;
+      }
+    }
+  }
   // `-- .` on every one of them: the workspace is the repository root, and
   // saying so keeps the pathspec rule of `git.ts` true everywhere.
   const diffRaw = await gitOut(['diff', '--no-color', ...NO_EXTERNAL_DIFF, ...range, '--', '.'], opts);
@@ -143,7 +166,7 @@ export async function summarise(opts: GitOptions & { agentId: string }): Promise
   const { text, truncated } = bound(diffRaw);
   return {
     branch,
-    base: base === null ? trunk : base,
+    base,
     diffStat,
     diff: text,
     diffTruncated: truncated,

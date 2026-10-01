@@ -175,7 +175,19 @@ export async function defaultBranch(opts: GitOptions): Promise<string> {
     const exists = await git(['rev-parse', '--verify', '--quiet', candidate], opts);
     if (exists.exitCode === 0) return candidate;
   }
+  // Neither exists yet (a new repository): the name `git init` would have used.
+  const configured = await git(['config', '--get', 'init.defaultBranch'], opts);
+  if (configured.exitCode === 0 && configured.stdout.trim() !== '') return configured.stdout.trim();
   return 'main';
+}
+
+/** The tree with nothing in it: diffing against it shows every file as added. */
+export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/** Whether `ref` names a commit in this repository. */
+export async function commitExists(ref: string, opts: GitOptions): Promise<boolean> {
+  const result = await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], opts);
+  return result.exitCode === 0;
 }
 
 /** `Add a test for the stale-balance flag` → `add-a-test-for-the-stale-balance-flag`. */
