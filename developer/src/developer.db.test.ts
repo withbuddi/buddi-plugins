@@ -624,6 +624,34 @@ suite('the developer plugin (postgres)', () => {
     ).rejects.toThrow('already inside a git repository');
   }, 30_000);
 
+  /** Right after init there is no default branch to protect: the commit starts the agent's own. */
+  it('commits in a brand-new repository on its own branch, with no task and no manual switch', async () => {
+    const fresh = path.join(root, 'fresh-project');
+    const opts = { cwd: fresh, gitPath, toolchainPath };
+    await gitOut(['config', 'user.email', 'test@example.invalid'], opts);
+    await gitOut(['config', 'user.name', 'Test'], opts);
+    await setMode(pool, 'fresh', 'run', new Date());
+    await writeFile(path.join(fresh, 'index.ts'), 'export const a = 1;\n');
+
+    const first = await call('developer.git', { action: 'commit', message: 'feat: scaffold' }, 'fresh');
+    expect(first.branch).toBe('buddi/fresh/feat-scaffold');
+    expect(first.created).toBe(true);
+    expect(first.note).toContain('Started your branch buddi/fresh/feat-scaffold in this new repository');
+    const heads = await gitOut(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], opts);
+    expect(heads).toBe('buddi/fresh/feat-scaffold');
+
+    await writeFile(path.join(fresh, 'more.ts'), 'export const b = 2;\n');
+    const second = await call(
+      'developer.git',
+      { action: 'commit', task: 'feat scaffold', message: 'feat: more' },
+      'fresh',
+    );
+    expect(second.branch).toBe('buddi/fresh/feat-scaffold');
+    expect(second.created).toBe(false);
+    expect(second.note).toMatch(/^Committed /);
+    expect(await gitOut(['rev-list', '--count', 'HEAD'], opts)).toBe('2');
+  }, 30_000);
+
   it('summarises: the branch, the diff, the files and the last test run', async () => {
     rememberTestRun('developer', {
       command: 'pnpm test',

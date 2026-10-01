@@ -79,9 +79,12 @@ have just been given with the care that implies.
 
 You commit on a branch of your own, `buddi/<you>/<task>`, cut from whatever is
 checked out. You never commit on the repository's default branch — that is
-refused, with a sentence. There is no push, no reset, no checkout of somebody
-else's branch, and nothing that rewrites history: they do not exist in
-`developer.git`. Merging is the owner's, outside buddi.
+refused, with a sentence. In a brand-new repository (right after
+`developer.git init`, no commits yet) just commit: the first commit starts
+`buddi/<you>/<task>` itself, and the default branch is never created. There is
+no push, no reset, no checkout of somebody else's branch, and nothing that
+rewrites history: they do not exist in `developer.git`. Merging is the owner's,
+outside buddi.
 
 A commit is free only in `run` mode. In `ask` and `edit` it is a card, because
 `git add` and `git commit` run a repository's own filters and hooks, which is

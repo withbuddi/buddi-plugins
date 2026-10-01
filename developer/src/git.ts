@@ -200,6 +200,15 @@ export async function branchExists(name: string, opts: GitOptions): Promise<bool
 }
 
 /**
+ * Whether HEAD names a commit. False in a brand-new repository, right after
+ * `git init`: HEAD points at a branch (main or master) that does not exist yet.
+ */
+export async function hasCommits(opts: GitOptions): Promise<boolean> {
+  const head = await git(['rev-parse', '--verify', '--quiet', 'HEAD'], opts);
+  return head.exitCode === 0;
+}
+
+/**
  * Put the work on the agent's own branch, creating it from where HEAD is.
  *
  * `switch -c` from HEAD and nothing else: creating a branch moves a ref and
@@ -218,6 +227,13 @@ export async function ensureBranch(
     await gitOut(['switch', name], opts);
     return { branch: name, created: false };
   }
+  if (!(await hasCommits(opts))) {
+    // A new repository: there is no HEAD commit to cut from, so `switch
+    // --create … HEAD` would fail. Point the unborn HEAD at the agent's branch
+    // instead; the first commit creates it, and main/master is never made.
+    await gitOut(['symbolic-ref', 'HEAD', `refs/heads/${name}`], opts);
+    return { branch: name, created: true };
+  }
   // From HEAD explicitly, so "where the branch starts" is not a function of
   // anything in the repository's configuration.
   await gitOut(['switch', '--create', name, 'HEAD'], opts);
@@ -227,6 +243,8 @@ export async function ensureBranch(
 export interface CommitOutcome {
   branch: string;
   created: boolean;
+  /** True when this was the repository's first commit, on a branch HEAD pointed at unborn. */
+  firstCommit: boolean;
   commit: string;
   files: number;
   summary: string;
@@ -242,6 +260,7 @@ export async function commitOnOwnBranch(
   if (status === '') {
     throw new Error('refused: nothing is staged or changed, so there is nothing to commit.');
   }
+  const firstCommit = !(await hasCommits(opts));
   const { branch, created } = await ensureBranch(target, opts);
   await gitOut(['add', '--all', '--', '.'], opts);
   // `--no-verify` is the belt to the `core.hooksPath` brace.
@@ -257,5 +276,5 @@ export async function commitOnOwnBranch(
   ))
     .split('\n')
     .filter((line) => line.trim() !== '').length;
-  return { branch, created, commit, files, summary };
+  return { branch, created, firstCommit, commit, files, summary };
 }

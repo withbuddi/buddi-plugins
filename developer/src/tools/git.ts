@@ -27,6 +27,7 @@ import {
   ensureBranch,
   git,
   gitOut,
+  hasCommits,
   isRepository,
   requireRepositoryRoot,
   NO_EXTERNAL_DIFF,
@@ -74,7 +75,8 @@ export const gitTool: ToolDefinition<GitInput, unknown> = {
     'Git inside your workspace: status, diff, log, branch, commit, stash, and init for a ' +
     'directory that is not a repository yet. Reads are free. A ' +
     'commit goes on a branch of your own, buddi/<you>/<task>, never on the repository default ' +
-    'branch. There is no push, no reset, no checkout of somebody else\'s branch and nothing ' +
+    'branch. In a new repository with no commits yet, the first commit starts that branch ' +
+    'itself; there is nothing to switch first. There is no push, no reset, no checkout of somebody else\'s branch and nothing ' +
     'that rewrites history — they do not exist here, and a stash can be made or listed but never ' +
     'brought back, because that is a merge and a merge runs the repository\'s own drivers.',
   tier: 'session',
@@ -206,7 +208,10 @@ export const gitTool: ToolDefinition<GitInput, unknown> = {
       case 'commit': {
         const message = input.message?.trim();
         if (!message) throw new Error('refused: a commit needs a message.');
-        if (branch === trunk && (input.task === undefined || input.task.trim() === '')) {
+        // A repository with no commits yet has no default branch to protect:
+        // the commit itself starts the agent's own branch.
+        const fresh = !(await hasCommits(opts));
+        if (!fresh && branch === trunk && (input.task === undefined || input.task.trim() === '')) {
           throw new Error(
             `refused: you are on ${trunk}, the repository's default branch, and a developer agent never commits on it. ` +
               'Give a task so the work goes on buddi/<you>/<task>.',
@@ -222,7 +227,9 @@ export const gitTool: ToolDefinition<GitInput, unknown> = {
           created: outcome.created,
           commit: outcome.commit,
           files: outcome.files,
-          note: `Committed ${outcome.commit} on ${outcome.branch} (${outcome.files} file${outcome.files === 1 ? '' : 's'}).`,
+          note: outcome.firstCommit
+            ? `Started your branch ${outcome.branch} in this new repository and committed ${outcome.commit} (${outcome.files} file${outcome.files === 1 ? '' : 's'}).`
+            : `Committed ${outcome.commit} on ${outcome.branch} (${outcome.files} file${outcome.files === 1 ? '' : 's'}).`,
           ...fenced(outcome.summary),
         };
       }
