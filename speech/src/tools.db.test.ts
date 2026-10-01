@@ -125,6 +125,10 @@ suite('speech tools (postgres)', () => {
     expect(await run('speech.say', { text: 'hi' })).toEqual({ ok: false, reason: 'tool-error', message: NOT_SET.speaking });
     const cards = await pool.query(`select count(*)::int as n from core.actions where tool like 'speech.%'`);
     expect(cards.rows[0].n).toBe(0);
+    // The Plugins page says what to do first (host API 1.18).
+    const plugins = new ToolRegistry();
+    plugins.register(manifest);
+    expect(await plugins.readiness('speech', ctx())).toEqual({ ready: false, note: 'Choose how buddi listens and speaks.', page: 'settings' });
     await choose(settingsWith({ listen: { backend: 'whisper-local' } }));
     await expect(execute('speech.transcribe', { artifactId: note.id })).rejects.toThrow(/Whisper on this computer is not installed. The owner installs it on Settings → Speech, or with buddi speech install whisper/);
     await choose(settingsWith({ listen: { backend: 'openai', accountId: 'gone' } }));

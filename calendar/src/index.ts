@@ -17,6 +17,7 @@ import { nextMeetingGlance, todayWidget } from './home.js';
 import { calendarViews } from './views.js';
 import { agendaPage, agendaQuery } from './agenda.js';
 import { VERSION } from './version.js';
+import { listCalendars } from './store.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -42,6 +43,13 @@ export const manifest: PluginManifest = {
   views: calendarViews,
   home: [nextMeetingGlance],
   widgets: [todayWidget],
+  // Nothing to read until a calendar is linked (host API 1.18): the Plugins row says so and opens Settings → Calendar.
+  setup: {
+    async produce(ctx) {
+      const linked = await listCalendars(ctx.buddi!.db);
+      return linked.length > 0 ? { ready: true } : { ready: false, note: 'Link a calendar to start.', page: 'settings' };
+    },
+  },
 };
 
 export default manifest;

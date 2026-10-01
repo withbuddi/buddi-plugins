@@ -132,6 +132,10 @@ suite('image.generate (postgres)', () => {
 
   it('asks the owner to choose when accounts exist but none is chosen, and refuses a kind with no backend', async () => {
     await expect(execute({ prompt: 'a fox' })).rejects.toThrow(/no image account is chosen yet/);
+    // And the Plugins page says so (host API 1.18).
+    const plugins = new ToolRegistry();
+    plugins.register(manifest);
+    expect(await plugins.readiness('image', ctx())).toEqual({ ready: false, note: 'Choose the account it draws with.', page: 'settings' });
     await setSettings(pool, { accountId: CLAUDE.id, model: null, dailyCap: 30 }, new Date());
     await expect(execute({ prompt: 'a fox' })).rejects.toThrow(/anthropic account, and there is no image backend/);
     accounts = [{ ...CODEX, configured: false }];

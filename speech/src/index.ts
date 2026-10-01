@@ -23,6 +23,9 @@ import { sayTool, transcribeTool } from './tools.js';
 import { installTool, removeTool, setSettingsTool, speechPages, speechQueries, telegramVoiceTool, testTool } from './settings.js';
 import { speechSkills } from './skills.js';
 import { previewTool } from './preview.js';
+import { chooseSide, OFF } from './choose.js';
+import { SpeechRefusal } from './backends/types.js';
+import { getSettings } from './store.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -46,6 +49,24 @@ export const manifest: PluginManifest = {
   queries: speechQueries,
   skills: speechSkills,
   uses: ['http', 'accounts', 'files:library'],
+  // Ready once it can listen or speak, or the owner switched both off (host API 1.18).
+  setup: {
+    async produce(ctx) {
+      const settings = await getSettings(ctx.buddi!.db);
+      const sides = ['listening', 'speaking'] as const;
+      if (sides.every((side) => settings[side].backend === OFF)) return { ready: true };
+      for (const side of sides) {
+        try {
+          await chooseSide(ctx, side);
+          return { ready: true };
+        } catch (err) {
+          // This side cannot run yet; the other may.
+          if (!(err instanceof SpeechRefusal)) throw err;
+        }
+      }
+      return { ready: false, note: 'Choose how buddi listens and speaks.', page: 'settings' };
+    },
+  },
 };
 
 export default manifest;

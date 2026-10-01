@@ -16,7 +16,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { VERSION } from './version.js';
-import { generateTool } from './generate.js';
+import { chooseAccount, generateTool } from './generate.js';
+import { ImageRefusal } from './backends/index.js';
 import { imagePages, imageQueries, setSettingsTool } from './settings.js';
 import { imageViews } from './views.js';
 import { imageAgents, imageSkills } from './agents.js';
@@ -44,6 +45,18 @@ export const manifest: PluginManifest = {
   agents: imageAgents,
   skills: imageSkills,
   uses: ['accounts', 'files:library'],
+  // Nothing to draw with until an account is chosen (host API 1.18): the Plugins row says so and opens Settings → Image.
+  setup: {
+    async produce(ctx) {
+      try {
+        await chooseAccount(ctx);
+        return { ready: true };
+      } catch (err) {
+        if (!(err instanceof ImageRefusal)) throw err;
+        return { ready: false, note: 'Choose the account it draws with.', page: 'settings' };
+      }
+    },
+  },
 };
 
 export default manifest;

@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  configurePluginHost, createMemoryVault, createPluginHost, createPool, hostBindingOf, resetPluginHost, runMigrations, testDatabaseUrl,
+  configurePluginHost, createMemoryVault, createPluginHost, createPool, hostBindingOf, resetPluginHost, runMigrations, testDatabaseUrl, ToolRegistry,
   type CoreToolContext,
 } from '@buddi/core/testing';
 import type { ToolDefinition } from '@buddi/core/plugin';
@@ -86,6 +86,10 @@ suite('calendar (postgres)', () => {
     expect(await agendaQuery.produce({}, ctx())).toEqual({
       linked: false, many: false, calendars: [], message: 'No calendar is linked yet. Add one on Settings → Calendar.', events: [], summary: [], problem: '',
     });
+    // And the Plugins page says what to do first (host API 1.18), on the read-only pool.
+    const registry = new ToolRegistry();
+    registry.register(manifest);
+    expect(await registry.readiness('calendar', ctx())).toEqual({ ready: false, note: 'Link a calendar to start.', page: 'settings' });
   });
 
   it('answers the Calendar page: the days it asks for, each event with its calendar, tone and place, filtered by calendar', async () => {
@@ -137,6 +141,11 @@ suite('calendar (postgres)', () => {
       note: 'Linked Work (Google): 6 events read. The link is kept as a secret.',
     });
     expect(fetched).toEqual([LINK]);
+    {
+      const registry = new ToolRegistry();
+      registry.register(manifest);
+      expect(await registry.readiness('calendar', ctx())).toEqual({ ready: true });
+    }
     // The row names the secret, never the link; the secret is bound to http.url for this plugin and host.
     const { rows } = await pool.query(`select * from calendar.calendar`);
     expect(JSON.stringify(rows)).not.toContain('private-5f2c');
