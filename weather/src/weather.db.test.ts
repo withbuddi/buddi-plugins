@@ -4,7 +4,8 @@
  */
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPluginHost, createPool, hostBindingOf, runMigrations, testDatabaseUrl, type CoreToolContext } from '@buddi/core/testing';
+import { createPluginHost, createPool, hostBindingOf, runMigrations, saveOwnerPlace, testDatabaseUrl, ToolRegistry, type CoreToolContext } from '@buddi/core/testing';
+import { listPlaces } from './places.js';
 import type { PluginManifest, ToolDefinition } from '@buddi/core/plugin';
 import { createWeatherManifest } from './index.js';
 import { hoursFrom, LYON, PARIS, stubService } from './testing/stub.js';
@@ -51,7 +52,7 @@ suite('weather (postgres)', () => {
   beforeEach(async () => {
     forecast = undefined;
     asked.geocode.length = 0;
-    await pool.query('delete from weather.place; delete from weather.settings; delete from weather.alert; delete from core.owner_notifications');
+    await pool.query('delete from weather.place; delete from weather.settings; delete from weather.alert; delete from core.owner_notifications; delete from core.owner_places');
   });
 
   it('makes home from the timezone on first use, says so once, and answers in plain words', async () => {
@@ -66,7 +67,7 @@ suite('weather (postgres)', () => {
       place: 'Home (Paris, Île-de-France, France)',
       now: '12°C (feels 11°C), overcast, wind 14 km/h',
       today: 'high 18°C, low 10°C, light rain, 60% chance of rain',
-      note: 'Home is Paris, Île-de-France, France, from your timezone; change it on Settings → Weather.',
+      note: 'Home is Paris, Île-de-France, France, from your timezone; set your own on Settings → Profile.',
       tiles: [{ icon: 'cloud', value: '12°C', label: 'Home', sky: 'Overcast, feels 11°', rain: 'High 18°, low 10°' }],
     });
     expect(asked.geocode).toEqual(['Paris']);
@@ -77,13 +78,13 @@ suite('weather (postgres)', () => {
 
   it('asks for home when the timezone names no city', async () => {
     // Not set up is an answer, not a failure: the canvas draws it as one card.
-    expect(await run('weather.now', {}, { timezone: 'UTC' })).toEqual({ setUp: false, message: expect.stringMatching(/Add your home on Settings → Weather/) });
+    expect(await run('weather.now', {}, { timezone: 'UTC' })).toEqual({ setUp: false, message: expect.stringMatching(/Add your Home on Settings → Profile/) });
     expect((await run('weather.forecast', {}, { timezone: 'UTC' })).setUp).toBe(false);
     // And Home has no glance, rather than deriving a home it may not write.
     const glance = manifest.home!.find((h) => h.id === 'weather.now')!;
     expect(await glance.produce(ctx({ timezone: 'UTC' }))).toBeNull();
     // The widget says where to start instead of standing empty.
-    expect(await manifest.widgets![0]!.produce(ctx({ timezone: 'UTC' }), { size: 'small' })).toEqual({ kind: 'text', icon: 'sun', text: 'Add your home on the Weather page to see it here.' });
+    expect(await manifest.widgets![0]!.produce(ctx({ timezone: 'UTC' }), { size: 'small' })).toEqual({ kind: 'text', icon: 'sun', text: 'Add your Home on Settings → Profile to see it here.' });
   });
 
   it('keeps places from the settings page: add, make home, units, remove', async () => {
@@ -180,5 +181,58 @@ suite('weather (postgres)', () => {
     forecast = { timezone: 'Europe/Paris', days: [], hours: hoursFrom(NOW, 30, (i) => (i === 10 ? { code: 95, gustKmh: 90 } : i === 12 ? { temperatureC: 36 } : {})) };
     await sentinel.run(host());
     expect((await pool.query(`select title from core.owner_notifications where title like 'Extreme heat%'`)).rowCount).toBe(1);
+  });
+
+  describe('the owner\'s places (host API 1.18)', () => {
+    const profileHome = { label: 'Home', address: '12 rue X, Lyon', name: 'Lyon, Auvergne-Rhône-Alpes, France', latitude: 45.75, longitude: 4.85, timezone: 'Europe/Paris' };
+
+    it('reads the profile first, steps its own copy aside, and takes the profile\'s Home', async () => {
+      await run('weather.add_place', { label: 'Lyon', place: 'Lyon', home: true }, { agentId: 'owner' });
+      await run('weather.add_place', { label: 'Paris', place: 'Paris' }, { agentId: 'owner' });
+      await saveOwnerPlace(pool, profileHome);
+      const places = await listPlaces(ctx().buddi!);
+      // Lyon, kept here, is where the profile's Home already is: it steps aside.
+      expect(places.map((p) => [p.label, p.source, p.isHome])).toEqual([['Home', 'profile', true], ['Paris', 'weather', false]]);
+      expect(places[0]!.id).toBe('profile-home');
+      await expect(run('weather.remove_place', { id: 'profile-home' }, { agentId: 'owner' })).rejects.toThrow(/Settings → Profile/);
+      // A question without a place is about the profile's Home, and nothing is derived from the timezone.
+      forecast = { timezone: 'Europe/Paris', days: [], hours: [] };
+      expect((await run('weather.now', {})).place).toBe('Home (Lyon, Auvergne-Rhône-Alpes, France)');
+      expect(asked.geocode).toEqual(['Lyon', 'Paris']);
+    });
+
+    it('says it needs a place until there is one, reading only', async () => {
+      const registry = new ToolRegistry();
+      registry.register(manifest);
+      expect(await registry.readiness('weather', ctx({ timezone: 'UTC' }))).toEqual({ ready: false, note: 'Pick a place for the forecast.', page: 'settings' });
+      await saveOwnerPlace(pool, profileHome);
+      expect(await registry.readiness('weather', ctx())).toEqual({ ready: true });
+    });
+
+    it('exports the forecast for a place, to a plugin that requires it', async () => {
+      await saveOwnerPlace(pool, profileHome);
+      forecast = {
+        timezone: 'Europe/Paris',
+        current: { time: '2026-09-28T08:00', temperatureC: 12.4, feelsLikeC: 10.9, code: 3, windKmh: 14, gustKmh: 22, precipitationMm: 0, humidity: 70 },
+        days: [{ date: '2026-09-28', code: 61, highC: 18.2, lowC: 9.6, precipitationMm: 2, precipitationChance: 60, gustKmh: 30 }],
+        hours: [],
+      };
+      const registry = new ToolRegistry();
+      registry.register(manifest);
+      const commute: PluginManifest = {
+        name: 'commute', version: '0.1.0', schema: 'commute', migrationsDir: '', requires: { weather: '>=0.1.0' },
+        tools: [{ name: 'commute.host', description: 'host', tier: 'auto', inputSchema: { type: 'object', properties: {} }, execute: async (_i: unknown, c: CoreToolContext) => c.buddi } as never],
+      };
+      registry.register(commute);
+      const result = await registry.invoke('commute.host', {}, ctx());
+      if (!result.ok) throw new Error(result.message);
+      const host = result.output as NonNullable<CoreToolContext['buddi']>;
+      const answer = await host.plugins!.call<{ place: { label: string }; current: { temperature: string }; days: Array<{ high: string }> }>('weather', 'forecast', { days: 1 });
+      expect(answer.place.label).toBe('Home');
+      expect(answer.current.temperature).toBe('12°');
+      expect(answer.days[0]!.high).toBe('18°');
+      await expect(host.plugins!.call('weather', 'forecast', { latitude: 1 })).rejects.toThrow(/both latitude and longitude/);
+      await expect(host.plugins!.call('weather', 'now', {})).rejects.toThrow(/exports no "now"; it exports forecast/);
+    });
   });
 });

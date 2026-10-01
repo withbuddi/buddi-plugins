@@ -35,9 +35,10 @@
     "core": ">=0.1.0",
     "uses": [
       "http",
-      "owner:notify"
+      "owner:notify",
+      "owner:places"
     ],
-    "hostApi": "^1.13"
+    "hostApi": "^1.18"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

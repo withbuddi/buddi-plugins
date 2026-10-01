@@ -23,7 +23,7 @@ export function createSevereSentinel(service: WeatherService): Sentinel {
       if (notify === undefined) return [];
       // No saved place is a quiet state: the home from the timezone is a
       // tool's convenience, not something to watch unasked.
-      const places = await listPlaces(buddi.db);
+      const places = await listPlaces(buddi);
       if (places.length === 0) return [];
       const { units } = await unitsFor(buddi);
       const now = buddi.clock.now();

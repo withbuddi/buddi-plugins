@@ -7,10 +7,16 @@ something severe is coming at one of them.
 
 Three tools your agents can read, none of which changes anything:
 `weather.now`, `weather.forecast` (up to 7 days) and `weather.places`. A
-question without a place is about home. With no place saved, home is the city
-your timezone names (Europe/Paris is Paris), found and saved the first time a
-tool needs it; you change it on Settings → Weather, where you also add work
-or anywhere else, and pick metric or imperial.
+question without a place is about home. Your places come from Settings →
+Profile in buddi (Home, Work and any other you name), which this plugin reads
+and never changes; home is your profile's Home. On Settings → Weather you add
+a place for the weather only and pick metric or imperial. With no place at
+all, home is the city your timezone names (Europe/Paris is Paris), found and
+saved the first time a tool needs it, and the Plugins page says "Pick a place
+for the forecast" until then.
+
+Another plugin that requires this one may ask for the forecast at one of your
+places (its `forecast` export), and nothing else of it.
 
 The Weather page in the rail shows one place at a time, picked at the top:
 today (now, the next 24 hours, the temperature over the chance of rain), the
@@ -27,8 +33,8 @@ pick. The same storm seen again later is not a second message.
 
 ## What it stores
 
-`weather.place` (each place's name, coordinates and zone, and which one is
-home), `weather.settings` (your units) and `weather.alert` (the severe
+`weather.place` (the places you added here, each with its name,
+coordinates and zone), `weather.settings` (your units) and `weather.alert` (the severe
 weather it already told you about, kept a week).
 
 ## What leaves the machine

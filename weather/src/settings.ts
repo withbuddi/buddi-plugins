@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { PageDescriptor, PageQuery, ToolDefinition } from '@buddi/core/plugin';
 import type { WeatherService } from './open-meteo.js';
-import { cityOfZone, listPlaces, removePlace, savePlace, setHome, setUnits, unitsFor } from './places.js';
+import { cityOfZone, listPlaces, PROFILE_PREFIX, removePlace, savePlace, setHome, setUnits, unitsFor } from './places.js';
 
 export const WEATHER_NOTICE =
   'Forecasts come from Open-Meteo, which needs no account or key. Only a place name you type and the latitude ' +
@@ -18,24 +18,29 @@ export const weatherQueries: PageQuery[] = [
     params: z.object({}),
     async produce(_params, ctx) {
       const buddi = ctx.buddi!;
-      const places = await listPlaces(buddi.db);
+      const places = await listPlaces(buddi);
       const { units, chosen } = await unitsFor(buddi);
       const city = cityOfZone(buddi.owner.timezone);
+      const profileHome = places.some((p) => p.source === 'profile' && p.isHome);
       return {
         units,
         unitsNote: chosen ? '' : 'Not chosen yet: this is what your language and timezone suggest.',
         empty: places.length === 0,
         suggestion:
           city === undefined
-            ? 'No place yet, and your timezone names no city: add your home below.'
-            : `No place yet. Until you add one, home is ${city}, from your timezone.`,
+            ? 'No place yet, and your timezone names no city. Add your Home on Settings → Profile, or a place for the weather only below.'
+            : `No place yet. Until you add your Home on Settings → Profile, home is ${city}, from your timezone.`,
         places: places.map((p) => ({
           id: p.id,
           label: p.label,
           name: p.name,
           coordinates: `${p.latitude.toFixed(2)}, ${p.longitude.toFixed(2)}`,
           home: p.isHome ? [{ value: 'home', tone: 'accent' }] : [],
+          from: p.source === 'profile' ? 'Your profile' : 'Weather only',
           isHome: p.isHome,
+          // Profile places are changed on Settings → Profile; only the plugin's own are changed here.
+          own: p.source === 'weather',
+          canMakeHome: p.source === 'weather' && !p.isHome && !profileHome,
         })),
       };
     },
@@ -76,6 +81,7 @@ export const removePlaceTool: ToolDefinition<z.infer<typeof idInput>, { note: st
   ownerOnly: true,
   input: idInput,
   async execute(input, ctx) {
+    if (input.id.startsWith(PROFILE_PREFIX)) throw new Error('That place is on your profile: change it on Settings → Profile.');
     const removed = await removePlace(ctx.buddi!.db, input.id);
     if (!removed) throw new Error('That place is not saved.');
     return { note: `Removed ${removed.label}.` };
@@ -89,6 +95,7 @@ export const setHomeTool: ToolDefinition<z.infer<typeof idInput>, { note: string
   ownerOnly: true,
   input: idInput,
   async execute(input, ctx) {
+    if (input.id.startsWith(PROFILE_PREFIX)) throw new Error('Home is set on Settings → Profile.');
     const place = await setHome(ctx.buddi!.db, input.id);
     if (!place) throw new Error('That place is not saved.');
     return { note: `${place.label} is home now.` };
@@ -121,7 +128,7 @@ export const weatherPages: PageDescriptor[] = [
       {
         kind: 'section',
         title: 'Places',
-        note: 'Home is what a question without a place is about, and what the morning brief reads.',
+        note: 'Your places from Settings → Profile come first, and Home there is home here. Add a place below to watch its weather only.',
         body: [
           { kind: 'notice', text: { path: 'suggestion' }, when: { path: 'empty', equals: true } },
           {
@@ -132,6 +139,7 @@ export const weatherPages: PageDescriptor[] = [
               { key: 'label', label: 'Name' },
               { key: 'name', label: 'Place', fit: 'wrap' },
               { key: 'coordinates', label: 'Coordinates' },
+              { key: 'from', label: 'From' },
               { key: 'home', label: 'Home', pill: {} },
             ],
             actions: [
@@ -140,7 +148,7 @@ export const weatherPages: PageDescriptor[] = [
                 label: 'Make home',
                 done: { path: 'note' },
                 args: { id: { row: 'id' } },
-                when: { path: 'isHome', equals: false },
+                when: { path: 'canMakeHome', equals: true },
               },
               {
                 tool: 'weather.remove_place',
@@ -149,15 +157,16 @@ export const weatherPages: PageDescriptor[] = [
                 confirm: 'Remove {label}? buddi stops watching its weather.',
                 done: { path: 'note' },
                 args: { id: { row: 'id' } },
+                when: { path: 'own', equals: true },
               },
             ],
             empty: 'No place saved.',
           },
           {
             kind: 'form',
-            drawer: { title: 'Add a place', button: 'Add a place' },
+            drawer: { title: 'Add a place for the weather', button: 'Add a place' },
             fields: [
-              { name: 'label', label: 'Name', type: 'text', required: true, hint: 'What you call it: Home, Work.' },
+              { name: 'label', label: 'Name', type: 'text', required: true, hint: 'What you call it. Home and Work belong on Settings → Profile.' },
               { name: 'place', label: 'City or town', type: 'text', required: true, hint: 'With its country if the name is common, e.g. Portland, Maine.' },
               { name: 'home', label: 'This is home', type: 'checkbox' },
             ],

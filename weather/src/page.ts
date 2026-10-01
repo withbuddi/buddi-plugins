@@ -63,7 +63,7 @@ export function hourRow(h: Hour, units: Units, label: string) {
 
 /** The place the page is about: the one picked, else home, else the timezone's city, found but not saved. */
 async function placeFor(buddi: Host, service: WeatherService, id: string | undefined): Promise<PagePlace | null> {
-  const places = await listPlaces(buddi.db);
+  const places = await listPlaces(buddi);
   const picked = (id && places.find((p) => p.id === id)) || places.find((p) => p.isHome) || places[0];
   if (picked) return picked;
   const city = cityOfZone(buddi.owner.timezone);
@@ -105,7 +105,7 @@ export function createPageQueries(service: WeatherService): PageQuery[] {
       name: 'places',
       params: z.object({}),
       async produce(_params, ctx) {
-        const places = await listPlaces(ctx.buddi!.db);
+        const places = await listPlaces(ctx.buddi!);
         if (places.length > 0) return { places: places.map((p) => ({ id: p.id, label: p.label })) };
         return { places: cityOfZone(ctx.buddi!.owner.timezone) === undefined ? [] : [{ id: 'home', label: 'Home' }] };
       },

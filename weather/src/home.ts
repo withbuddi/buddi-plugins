@@ -42,7 +42,7 @@ function createHomeReader(service: WeatherService): (ctx: ToolContext) => Promis
   const cache = new Map<string, { at: number; forecast: Forecast }>();
   return async (ctx) => {
     const buddi = ctx.buddi!;
-    const places = await listPlaces(buddi.db);
+    const places = await listPlaces(buddi);
     const home = places.find((p) => p.isHome) ?? places[0];
     if (!home) return null;
     const { units } = await unitsFor(buddi);
@@ -105,7 +105,7 @@ export function createWeatherHome(service: WeatherService): { glance: HomeGlance
     link: { page: 'weather' },
     async produce(ctx, { size }): Promise<WidgetBody | null> {
       const now = await read(ctx);
-      if (!now) return { kind: 'text', icon: 'sun', text: 'Add your home on the Weather page to see it here.' };
+      if (!now) return { kind: 'text', icon: 'sun', text: 'Add your Home on Settings → Profile to see it here.' };
       if (size === 'medium' && now.tiles.length >= 2) {
         return { kind: 'strip', icon: now.icon, value: now.card.value, ...(now.card.caption ? { caption: now.card.caption } : {}), items: now.tiles };
       }

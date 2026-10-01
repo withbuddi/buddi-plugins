@@ -24,8 +24,21 @@ installed.
 - `weather.forecast { place?, days? }`: day by day, up to 7 days.
 - `weather.places`: the places you saved, which one is home, and your units.
 
-All three only read. A place is one you saved (home, work) or any city by
+All three only read. A place is one of yours (Home, Work…) or any city by
 name; left out, it is home.
+
+## Your places
+
+Since buddi's host API 1.18 your places live in buddi, on Settings → Profile,
+and this plugin reads them (it asks for "reads your places" on its install
+card): Home there is home here, and Work and the rest are offered on the
+Weather page. A Home and Work kept by an older version of this plugin moved to
+your profile once, when buddi first started on 1.18. Until there is a place,
+the Plugins page says "Pick a place for the forecast".
+
+Another plugin that requires weather may call its one export, `forecast {
+place?, latitude?, longitude?, days? }`: the forecast at one of your places
+(home when none is named) or at coordinates, in your units, read-only.
 
 ## The Weather page
 
@@ -34,13 +47,14 @@ A place in the rail. Pick the place at the top (Home, Work, …), then Today
 as a chart with its values written on it, over the hourly strip; hover or pick
 an hour and both mark it), Week (pick a day to see its hours in the same
 panel) or 10 days. A warning sits at the top when something severe is coming
-there in the next 24 hours. Needs buddi with host API 1.13.
+there in the next 24 hours. Needs buddi with host API 1.18.
 
 ## Settings → Weather
 
-Your places and your units. Home starts as the city your timezone names, so a
-fresh install answers "what's the weather?" without a question; add or change
-it, add work or anywhere else, and pick metric or imperial. Units start from
+Your places — those from your profile first, marked as such, then any you add
+here for the weather only — and your units. With no place at all, home is the
+city your timezone names, so a fresh install answers "what's the weather?"
+without a question. Units start from
 the language you answer in and your timezone.
 
 ## Severe weather

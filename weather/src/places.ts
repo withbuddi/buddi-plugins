@@ -1,10 +1,19 @@
 /**
- * The owner's places and units. One place is home: the first one saved, or
- * the one the owner marks. With none saved, home is the city in the owner's
- * timezone (`Europe/Paris` is Paris), found and saved on first use and said
- * so; a zone that names no city (`UTC`, `Etc/GMT+5`) is asked for instead.
+ * The places the weather is about, and the units.
+ *
+ * Since host API 1.18 the owner's places live in buddi itself, on Settings →
+ * Profile (Home, Work, and any other they name), and this plugin reads them
+ * first through `ctx.buddi.owner.places()` (declared `owner:places`). It may
+ * still keep places of its own — a city the owner asked to watch here only —
+ * in `weather.place`; one with a profile place's name, or where a profile
+ * place already is, steps aside. Home is the profile's Home, else the one of
+ * its own marked home, else the first. With nothing at all, home is the city
+ * in the owner's timezone (`Europe/Paris` is Paris), found and saved by a tool
+ * on first use and said so; a zone that names no city is asked for instead.
+ * The plugin's own Home and Work moved into the profile once, when buddi 1.18
+ * first started.
  */
-import type { BuddiHost, DbArea } from '@buddi/core/plugin';
+import type { BuddiHost, DbArea, OwnerPlace } from '@buddi/core/plugin';
 import type { GeocodedPlace, WeatherService } from './open-meteo.js';
 import { defaultUnits, type Units } from './units.js';
 
@@ -16,9 +25,14 @@ export interface Place {
   longitude: number;
   timezone: string | null;
   isHome: boolean;
+  /** `profile`: the owner's, from Settings → Profile; `weather`: kept by this plugin. */
+  source: 'profile' | 'weather';
 }
 
 type Db = Pick<DbArea, 'query'>;
+
+/** A profile place's id here: `profile-home`, apart from this plugin's own ids. */
+export const PROFILE_PREFIX = 'profile-';
 
 function toPlace(row: Record<string, unknown>): Place {
   return {
@@ -29,10 +43,12 @@ function toPlace(row: Record<string, unknown>): Place {
     longitude: Number(row.longitude),
     timezone: row.timezone === null || row.timezone === undefined ? null : String(row.timezone),
     isHome: row.is_home === true,
+    source: 'weather',
   };
 }
 
-export async function listPlaces(db: Db): Promise<Place[]> {
+/** This plugin's own places, the way it keeps them. */
+export async function listOwnPlaces(db: Db): Promise<Place[]> {
   const { rows } = await db.query(
     `select id, label, name, latitude, longitude, timezone, is_home from weather.place order by is_home desc, created_at, label`,
   );
@@ -57,7 +73,7 @@ export async function savePlace(
   found: GeocodedPlace,
   opts: { home?: boolean } = {},
 ): Promise<Place> {
-  const existing = await listPlaces(db);
+  const existing = await listOwnPlaces(db);
   const clean = label.trim().replace(/\s+/g, ' ').slice(0, 40);
   if (clean === '') throw new Error('Give the place a name, like Home or Work.');
   let id = slugOf(clean);
@@ -76,7 +92,7 @@ export async function savePlace(
        longitude = excluded.longitude, timezone = excluded.timezone, is_home = excluded.is_home`,
     [id, clean, displayName(found), found.latitude, found.longitude, found.timezone ?? null, home],
   );
-  return { id, label: clean, name: displayName(found), latitude: found.latitude, longitude: found.longitude, timezone: found.timezone ?? null, isHome: home };
+  return { id, label: clean, name: displayName(found), latitude: found.latitude, longitude: found.longitude, timezone: found.timezone ?? null, isHome: home, source: 'weather' };
 }
 
 export async function removePlace(db: Db, id: string): Promise<Place | null> {
@@ -96,11 +112,51 @@ export async function removePlace(db: Db, id: string): Promise<Place | null> {
 }
 
 export async function setHome(db: Db, id: string): Promise<Place | null> {
-  const places = await listPlaces(db);
+  const places = await listOwnPlaces(db);
   const place = places.find((p) => p.id === id);
   if (!place) return null;
   await db.query(`update weather.place set is_home = (id = $1)`, [id]);
   return { ...place, isHome: true };
+}
+
+/** The owner's places from their profile; none on a host without them or without the grant. */
+export async function profilePlaces(buddi: Pick<BuddiHost, 'owner'>): Promise<OwnerPlace[]> {
+  try {
+    return (await buddi.owner.places?.()) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+const near = (a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }): boolean =>
+  Math.abs(a.latitude - b.latitude) < 0.01 && Math.abs(a.longitude - b.longitude) < 0.01;
+
+/**
+ * Every place the weather is about: the owner's profile places first, in
+ * their order, then this plugin's own that do not repeat one. Exactly one is
+ * home when there is any.
+ */
+export async function listPlaces(buddi: Pick<BuddiHost, 'db' | 'owner'>): Promise<Place[]> {
+  const [profile, own] = await Promise.all([profilePlaces(buddi), listOwnPlaces(buddi.db)]);
+  const fromProfile: Place[] = profile.map((p) => ({
+    id: `${PROFILE_PREFIX}${p.id}`,
+    label: p.label,
+    name: p.name,
+    latitude: p.latitude,
+    longitude: p.longitude,
+    timezone: p.timezone,
+    isHome: false,
+    source: 'profile',
+  }));
+  const kept = own.filter(
+    (p) => !fromProfile.some((q) => q.label.toLowerCase() === p.label.toLowerCase() || near(p, q)),
+  );
+  const all = [...fromProfile, ...kept.map((p) => ({ ...p, isHome: false }))];
+  const home =
+    fromProfile.find((p) => p.label.toLowerCase() === 'home') ??
+    all.find((p) => p.source === 'weather' && own.find((o) => o.id === p.id)?.isHome) ??
+    all[0];
+  return all.map((p) => (p === home ? { ...p, isHome: true } : p));
 }
 
 /** The city a zone names, or undefined: `America/New_York` → `New York`. */
@@ -132,7 +188,7 @@ export async function setUnits(db: Db, units: Units): Promise<void> {
 }
 
 export const NO_HOME =
-  'No place is saved yet and your timezone names no city. Add your home on Settings → Weather, or name a place.';
+  'No place is saved yet and your timezone names no city. Add your Home on Settings → Profile, or name a place.';
 
 /**
  * The saved places, with home found from the owner's timezone when there are
@@ -142,7 +198,7 @@ export async function ensurePlaces(
   buddi: Pick<BuddiHost, 'db' | 'owner' | 'http'>,
   service: WeatherService,
 ): Promise<{ places: Place[]; derived?: Place }> {
-  const places = await listPlaces(buddi.db);
+  const places = await listPlaces(buddi);
   if (places.length > 0) return { places };
   const city = cityOfZone(buddi.owner.timezone);
   if (city === undefined) return { places };
@@ -168,7 +224,7 @@ export async function resolvePlace(
     if (!home) throw new Error(NO_HOME);
     return {
       place: home,
-      ...(derived ? { note: `Home is ${derived.name}, from your timezone; change it on Settings → Weather.` } : {}),
+      ...(derived ? { note: `Home is ${derived.name}, from your timezone; set your own on Settings → Profile.` } : {}),
     };
   }
   const saved = places.find((p) => p.label.toLowerCase() === wanted || p.id === wanted)

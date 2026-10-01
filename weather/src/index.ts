@@ -19,6 +19,7 @@ import { createWeatherHome } from './home.js';
 import { weatherViews } from './views.js';
 import { createPageQueries, weatherRailPage } from './page.js';
 import { VERSION } from './version.js';
+import { createForecastExport, weatherSetup } from './setup.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -37,7 +38,9 @@ export function createWeatherManifest(service: WeatherService = openMeteo): Plug
       { host: 'geocoding-api.open-meteo.com', why: 'Finding a place you name: the name goes, its coordinates come back.' },
       { host: 'api.open-meteo.com', why: 'The forecast: a latitude and longitude go, no key and nothing else.' },
     ],
-    uses: ['http', 'owner:notify'],
+    uses: ['http', 'owner:notify', 'owner:places'],
+    setup: weatherSetup,
+    exports: { forecast: createForecastExport(service) },
     tools: [
       createNowTool(service),
       createForecastTool(service),
@@ -70,3 +73,4 @@ export * from './sentinel.js';
 export * from './views.js';
 export * from './home.js';
 export * from './page.js';
+export * from './setup.js';
