@@ -11,7 +11,7 @@ import {
   unmatchedReceiptsFinding,
   type UnmatchedReceipt,
 } from './helpers.js';
-import { DAILY, type Finding } from './types.js';
+import { DAILY, type Finding, WAKE_COALESCE } from './types.js';
 import {
   ADVISOR_ROLES,
   agentIdForRoles,
@@ -24,6 +24,7 @@ export const unmatchedReceipts: RoleAwareSentinel = {
   description:
     'Reports receipts that have gone more than a week without a matching transaction, as one digest line.',
   every: DAILY,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
     const { rows } = await ctx.buddi!.db.query(

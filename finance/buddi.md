@@ -85,6 +85,12 @@ the wake mission's agent, which exists by construction; the plugin says so once
 per process rather than on every tick. An unaddressed finding still reaches the
 owner. A finding addressed to a deleted agent does not.
 
+The watchers' wakes are gathered: when several findings for the same agent
+arrive together (three cards due the same week), the first waits two minutes
+for the rest, and one run reads them all and sends one message — never more than
+ten minutes after the first. A buddi older than host API 1.20 wakes once per
+finding instead.
+
 Two missions belong to the `credit` role: `monthly-score` asks the owner on the
 1st for their latest score(s) and records them, and `pre-statement-review` runs
 weekly over the cards closing inside seven days. **The `credit` role is not a

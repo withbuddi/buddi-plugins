@@ -10,7 +10,7 @@
  */
 import { localDateString, type FileRow } from '@buddi/core/plugin';
 import { unprocessedArtifactsFinding, UNPROCESSED_ARTIFACT_HOURS, type UnprocessedArtifact } from './helpers.js';
-import { EVERY_6H, type Finding } from './types.js';
+import { EVERY_6H, type Finding, WAKE_COALESCE } from './types.js';
 import {
   ADVISOR_ROLES,
   agentIdForRoles,
@@ -23,6 +23,7 @@ export const unprocessedArtifacts: RoleAwareSentinel = {
   description:
     'Reports files handed in more than a day ago that no transaction, receipt or staged import references.',
   every: EVERY_6H,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const now = ctx.buddi!.clock.now();
     // Every file handed in before the cutoff, from the Files library (this

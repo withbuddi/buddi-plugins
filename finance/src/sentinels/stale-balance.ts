@@ -7,7 +7,7 @@
  */
 import { num, loadPreferences, today, toDateString } from '../tools/shared.js';
 import { STALE_BALANCE_DAYS, staleBalanceFindings, type StaleAccount } from './helpers.js';
-import { DAILY, type Finding } from './types.js';
+import { DAILY, type Finding, WAKE_COALESCE } from './types.js';
 import {
   ADVISOR_ROLES,
   agentIdForRoles,
@@ -20,6 +20,7 @@ export const staleBalance: RoleAwareSentinel = {
   description:
     'Reports cash-flow accounts whose balance has not been confirmed for more than two weeks.',
   every: DAILY,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
     const prefs = await loadPreferences(ctx.buddi!.db);

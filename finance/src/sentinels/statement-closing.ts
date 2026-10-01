@@ -10,7 +10,7 @@
 import { loadStatementForecast } from '../tools/cards.js';
 import { num, loadPreferences, today } from '../tools/shared.js';
 import { statementClosingFindings, type ClosingCard } from './helpers.js';
-import { EVERY_12H, type Finding } from './types.js';
+import { EVERY_12H, type Finding, WAKE_COALESCE } from './types.js';
 import {
   CREDIT_ROLES,
   agentIdForRoles,
@@ -23,6 +23,7 @@ export const statementClosing: RoleAwareSentinel = {
   description:
     "Reports credit cards whose statement closes within three days while utilization is still above the target that card is held to — its own, or the installation's default of 30%. Scored on the balance the card is on course to REPORT, charges billed to it included, not on the balance as it stands today. One finding per card per cycle, carrying the whole recommendation as a sentence.",
   every: EVERY_12H,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
     const prefs = await loadPreferences(ctx.buddi!.db);

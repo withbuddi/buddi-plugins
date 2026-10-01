@@ -19,3 +19,13 @@ export type { Finding, Sentinel, SentinelContext, Severity } from '@buddi/core/p
 export const EVERY_6H = 6 * 60 * 60;
 export const EVERY_12H = 12 * 60 * 60;
 export const DAILY = 24 * 60 * 60;
+
+/**
+ * How the finance watchers' wakes are gathered (host API 1.20): the six run on
+ * the same tick and address the same agent, so a bad week used to wake Ledger
+ * once per card, per bill and per receipt, one notification each. The first
+ * wake now waits two minutes for company, each that follows pushes the run
+ * back by two more, and none waits past ten: one run reads every finding and
+ * sends one message. An older buddi ignores the field and wakes once each.
+ */
+export const WAKE_COALESCE = { windowSeconds: 120, maxWaitSeconds: 600 };

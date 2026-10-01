@@ -11,7 +11,7 @@
 import { projectCashflow } from '../tools/cashflow.js';
 import { loadPreferences, today } from '../tools/shared.js';
 import { floorBreachFinding } from './helpers.js';
-import { EVERY_6H, type Finding } from './types.js';
+import { EVERY_6H, type Finding, WAKE_COALESCE } from './types.js';
 import {
   ADVISOR_ROLES,
   agentIdForRoles,
@@ -36,6 +36,7 @@ export const floorBreach: RoleAwareSentinel = {
   description:
     'Projects 30 days of cash and reports the first day the balance falls below the safety floor (or below zero when no floor is set).',
   every: EVERY_6H,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const toolCtx = { buddi: ctx.buddi! };
     const prefs = await loadPreferences(ctx.buddi!.db);

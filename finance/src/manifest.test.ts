@@ -64,6 +64,13 @@ describe('the finance manifest', () => {
     expect(manifest.skills?.map((s) => s.name)).toContain('coaching-a-credit-score');
   });
 
+  it('gathers every watcher\'s wakes into one run per two minutes, ten at most', () => {
+    expect(manifest.sentinels.length).toBeGreaterThan(0);
+    for (const sentinel of manifest.sentinels) {
+      expect(sentinel.coalesce, sentinel.id).toEqual({ windowSeconds: 120, maxWaitSeconds: 600 });
+    }
+  });
+
   it('proposes one agent, Ledger, and it also holds the credit role — the advisor wearing a hat', () => {
     expect(manifest.agents?.map((a) => a.id)).toEqual(['ledger']);
     const ledger = manifest.agents![0]!;

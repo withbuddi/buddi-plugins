@@ -10,7 +10,7 @@
 import { nextDayOfMonth } from '../credit.js';
 import { num, loadPreferences, today } from '../tools/shared.js';
 import { minimumDueFindings, type LiabilityDue, type RecurringCharge } from './helpers.js';
-import { EVERY_6H, type Finding } from './types.js';
+import { EVERY_6H, type Finding, WAKE_COALESCE } from './types.js';
 import {
   CREDIT_ROLES,
   agentIdForRoles,
@@ -23,6 +23,7 @@ export const minimumDue: RoleAwareSentinel = {
   description:
     'Reports every active liability whose minimum payment falls due within three days with no payment recorded and no modelled autopay.',
   every: EVERY_6H,
+  coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
     const prefs = await loadPreferences(ctx.buddi!.db);
