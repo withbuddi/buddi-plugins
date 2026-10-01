@@ -58,6 +58,10 @@ export const developerAgents: SuggestedAgent[] = [
       'Works in one directory you grant it: reads the code, edits it, runs the tests, and shows ' +
       'you the diff.',
     roles: ['developer'],
+    // Coding takes many tool steps per reply: read, edit, run, read the failure,
+    // again. The built-in 40 is sized for chat; a reply that spends these stops
+    // and offers Continue.
+    maxTurns: 150,
     // Named one by one rather than `developer.*`: the three `ownerOnly` tools
     // are the owner's own and a proposal that reached for them would be
     // refused at install — rightly. This is the list a model is shown.

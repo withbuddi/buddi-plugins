@@ -184,4 +184,7 @@ the agent edits, which is the point: files inside the workspace you granted.
 
 One agent, `developer` (handle `@dev`), granted this plugin's tools and nothing
 else, with one skill — the loop it works in, what the mode decides, and the
-branch rule. Accepting it is yours; installing the plugin creates nothing.
+branch rule. It asks for 150 steps per reply (`maxTurns: 150`) rather than the
+built-in 40, because coding spends many tool calls on one answer; a reply that
+uses them all stops and offers Continue. Change it on the agent's Setup → Brain.
+Accepting it is yours; installing the plugin creates nothing.

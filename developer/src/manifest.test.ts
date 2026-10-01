@@ -135,6 +135,10 @@ describe('the developer manifest', () => {
     expect(agent?.skills?.length).toBe(1);
   });
 
+  it('proposes 150 steps per reply, sized for coding rather than the chat default', () => {
+    expect(manifest.agents?.[0]?.maxTurns).toBe(150);
+  });
+
   it('tells the agent to keep how a project runs as a private note named for the project', () => {
     const body = manifest.agents?.[0]?.skills?.[0]?.body ?? '';
     expect(body).toContain('memory.note');
