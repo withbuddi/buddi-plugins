@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-speech",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Listens to an audio file and answers with a voice, through a speech account the owner chose, with daily caps.",
   "keywords": [
     "buddi-plugin"

@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-weather",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "The weather for the places you save, from Open-Meteo with no key, and a word when something severe is coming.",
   "keywords": [
     "buddi-plugin"
