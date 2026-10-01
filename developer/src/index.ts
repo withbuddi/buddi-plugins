@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { developerMetrics } from './metrics.js';
 import { envDestination } from './secrets.js';
+import { VERSION } from './version.js';
 import { developerFiles, developerPages, developerQueries } from './pages.js';
 import { developerAgents, developerSkills } from './skills.js';
 import { developerViews } from './views.js';
@@ -54,7 +55,7 @@ export const MIGRATIONS_DIR = path.resolve(
 
 export const manifest: PluginManifest = {
   name: 'developer',
-  version: '0.1.0',
+  version: VERSION,
   schema: 'developer',
   migrationsDir: MIGRATIONS_DIR,
   author: { name: 'withbuddi', url: 'https://withbuddi.com' },
