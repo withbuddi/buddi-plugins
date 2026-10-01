@@ -152,7 +152,7 @@ suite('weather (postgres)', () => {
     expect(asked.forecast.length).toBe(before + 1);
     // The widget under the same id: the card as a stat when small, a strip of the next hours when medium, from the same cache.
     const widget = manifest.widgets!.find((w) => w.id === 'weather.now')!;
-    expect(widget).toMatchObject({ title: 'Weather at home', sizes: ['small', 'medium'], refreshSeconds: 600, link: { page: 'weather' } });
+    expect(widget).toMatchObject({ title: 'Weather', sizes: ['small', 'medium'], refreshSeconds: 600, link: { page: 'weather' } });
     expect(await widget.produce(ctx(), { size: 'small' })).toEqual({
       kind: 'stat', icon: 'cloud', value: '64°F', caption: 'Overcast · Paris', trend: { label: 'Next 12 hours', points: [64, 66, 68] }, foot: 'High 73° · Low 57°',
     });
@@ -161,6 +161,20 @@ suite('weather (postgres)', () => {
       items: [{ label: '08:00', icon: 'cloud', value: '64°' }, { label: '10:00', icon: 'cloud', value: '68°' }],
     });
     expect(asked.forecast.length).toBe(before + 1);
+
+    // Each placement picks its place and units (host API 1.19): home in the plugin's units by default.
+    expect(widget.settings!.map((f) => [f.key, f.kind])).toEqual([['place', 'select'], ['units', 'select']]);
+    await run('weather.add_place', { label: 'Work', place: 'Lyon' }, { agentId: 'owner' });
+    const place = widget.settings![0]! as { options: (ctx: unknown) => Promise<Array<{ value: string; label: string }>> };
+    const choices = await place.options(ctx());
+    expect(choices[0]).toEqual({ value: '', label: 'Home' });
+    const work = choices.find((c) => c.label === 'Work')!;
+    expect(work.value).not.toBe('');
+    expect(await widget.produce(ctx(), { size: 'small', settings: { place: work.value, units: 'metric' } })).toMatchObject({
+      kind: 'stat', value: '18°C', caption: 'Overcast · Lyon',
+    });
+    // A place since removed is no choice: home again.
+    expect(await widget.produce(ctx(), { size: 'small', settings: { place: 'gone', units: '' } })).toMatchObject({ caption: 'Overcast · Paris', value: '64°F' });
   });
 
   it('tells the owner once per severe event, and nothing without saved places', async () => {

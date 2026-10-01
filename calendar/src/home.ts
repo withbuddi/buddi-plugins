@@ -6,7 +6,8 @@
  */
 import type { HomeGlance, HomeGlanceContribution, WidgetBody, WidgetDefinition } from '@buddi/core/plugin';
 import { HOME_GLANCE_MAX_TEXT, gather } from './tools.js';
-import { addDays, dateIn, timeIn, zonedTime } from './time.js';
+import { listCalendars } from './store.js';
+import { addDays, dateIn, dayLabel, timeIn, zonedTime } from './time.js';
 
 export const nextMeetingGlance: HomeGlanceContribution = {
   id: 'calendar.next',
@@ -30,41 +31,89 @@ export const nextMeetingGlance: HomeGlanceContribution = {
 /** How many minutes Home keeps the day before asking again; the calendars themselves are cached for ten. */
 export const TODAY_REFRESH_S = 300;
 
+/** How far ahead an empty window looks for the next thing, to say when it is. */
+export const NEXT_LOOKAHEAD_DAYS = 14;
+
+/** "14:00", or "2:00 PM" when the placement (or the owner's Profile) reads 12-hour. */
+export function clockIn(d: Date, timezone: string, format: unknown): string {
+  if (format !== '12h') return timeIn(d, timezone);
+  return new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(d);
+}
+
+const WINDOW_WORDS: Record<string, { empty: string; more: string }> = {
+  '1': { empty: 'Free for the rest of today.', more: 'later today' },
+  '2': { empty: 'Nothing else today or tomorrow.', more: 'by tomorrow night' },
+  '7': { empty: 'A free week ahead.', more: 'this week' },
+};
+
 /**
- * The Today widget (host API 1.17): what is left of today, then tomorrow, as
- * rows — the title, where (and "Tomorrow" for tomorrow's), the time or "All
- * day" — and how many more. Read through the same cache as the tools; with no
- * calendar linked it says where to link one.
+ * Coming up (host API 1.17; settings since 1.19): what is left of the window
+ * — today, two days or a week — as rows: the title, the day when it is not
+ * today and where, the time or "All day", and how many more. Each placement
+ * picks its calendars (none: all), how far ahead and its time format (the
+ * owner's Profile by default). Read through the same cache as the tools; an
+ * empty window says when the next thing is; with no calendar linked it says
+ * where to link one.
  */
 export const todayWidget: WidgetDefinition = {
   id: 'calendar.today',
-  title: 'Today',
+  title: 'Coming up',
   sizes: ['medium', 'small'],
   refreshSeconds: TODAY_REFRESH_S,
   link: { page: 'agenda' },
-  async produce(ctx): Promise<WidgetBody | null> {
+  settings: [
+    {
+      key: 'calendars',
+      kind: 'multiselect',
+      label: 'Calendars',
+      hint: 'None ticked: all of them.',
+      options: async (ctx) => (await listCalendars(ctx.buddi!.db)).map((row) => ({ value: row.id, label: row.name })),
+    },
+    {
+      key: 'days',
+      kind: 'select',
+      label: 'How far ahead',
+      default: '2',
+      options: [{ value: '1', label: 'Today' }, { value: '2', label: 'Two days' }, { value: '7', label: 'A week' }],
+    },
+    { key: 'time', kind: 'timeFormat', label: 'Times' },
+  ],
+  async produce(ctx, request): Promise<WidgetBody | null> {
     const buddi = ctx.buddi!;
+    const settings = request.settings ?? {};
     const tz = buddi.owner.timezone;
     const now = buddi.clock.now();
     const today = dateIn(now, tz);
-    const tomorrow = addDays(today, 1);
-    const found = await gather(buddi, zonedTime(today, '00:00', tz), zonedTime(addDays(today, 2), '00:00', tz));
+    const days = settings.days === '1' || settings.days === '7' ? Number(settings.days) : 2;
+    const end = addDays(today, days);
+    const linked = await listCalendars(buddi.db);
+    const picked = Array.isArray(settings.calendars) ? new Set(settings.calendars as string[]) : new Set<string>();
+    // Calendars since unlinked are no choice at all: every calendar, rather than an empty card.
+    const only = [...picked].some((id) => linked.some((row) => row.id === id)) ? picked : undefined;
+    const found = await gather(buddi, zonedTime(today, '00:00', tz), zonedTime(end, '00:00', tz), only);
     if (!found) return { kind: 'text', icon: 'calendar', text: 'Link a calendar on Settings → Calendar to see your day here.' };
     const dayOf = (o: (typeof found.items)[number]): string => (o.allDay ? o.startDate! : dateIn(o.start, tz));
     const ahead = found.items.filter((o) => {
       const day = dayOf(o);
-      if (o.allDay) return day === today || day === tomorrow || (o.startDate! < today && o.endDate! > today);
-      return o.end.getTime() > now.getTime() && (day === today || day === tomorrow);
+      if (o.allDay) return (day >= today && day < end) || (o.startDate! < today && o.endDate! > today);
+      return o.end.getTime() > now.getTime() && day >= today && day < end;
     });
+    const words = WINDOW_WORDS[String(days)]!;
     if (ahead.length === 0) {
-      return { kind: 'text', icon: 'calendar', text: 'Nothing else today or tomorrow.' };
+      // Say when the next thing is, so an empty card still answers "when am I busy?".
+      const later = await gather(buddi, zonedTime(end, '00:00', tz), zonedTime(addDays(end, NEXT_LOOKAHEAD_DAYS), '00:00', tz), only);
+      const next = later?.items[0];
+      const when = next ? `${dayLabel(dayOf(next))}${next.allDay ? '' : ` ${clockIn(next.start, tz, settings.time)}`}` : '';
+      return { kind: 'text', icon: 'calendar', text: words.empty, ...(next ? { sub: `Next: ${next.summary}, ${when}` } : {}) };
     }
+    const tomorrow = addDays(today, 1);
     const rows = ahead.slice(0, 3).map((o) => {
-      const later = dayOf(o) === tomorrow;
-      const sub = [later ? 'Tomorrow' : undefined, o.location].filter(Boolean).join(' · ');
-      return { title: o.summary, ...(sub ? { sub } : {}), side: o.allDay ? 'All day' : timeIn(o.start, tz) };
+      const day = dayOf(o);
+      const label = day === today || (o.allDay && o.startDate! < today) ? undefined : day === tomorrow ? 'Tomorrow' : dayLabel(day).split(' ')[0];
+      const sub = [label, o.location].filter(Boolean).join(' · ');
+      return { title: o.summary, ...(sub ? { sub } : {}), side: o.allDay ? 'All day' : clockIn(o.start, tz, settings.time) };
     });
     const more = ahead.length - rows.length;
-    return { kind: 'list', rows, ...(more > 0 ? { more: `${more} more by tomorrow night` } : {}) };
+    return { kind: 'list', rows, ...(more > 0 ? { more: `${more} more ${words.more}` } : {}) };
   },
 };

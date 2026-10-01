@@ -198,9 +198,11 @@ suite('calendar (postgres)', () => {
     expect(await glance.produce(ctx())).toBeNull();
     now = new Date('2026-09-28T12:00:00Z');
 
-    // The Today widget: what is left of today and tomorrow, three rows and how many more, opening the Calendar page.
+    // Coming up: what is left of today and tomorrow by default, three rows and how many more, opening the Calendar page.
     const today = manifest.widgets!.find((w) => w.id === 'calendar.today')!;
-    expect(today).toMatchObject({ title: 'Today', sizes: ['medium', 'small'], refreshSeconds: 300, link: { page: 'agenda' } });
+    expect(today).toMatchObject({ title: 'Coming up', sizes: ['medium', 'small'], refreshSeconds: 300, link: { page: 'agenda' } });
+    expect(today.settings!.map((f) => [f.key, f.kind])).toEqual([['calendars', 'multiselect'], ['days', 'select'], ['time', 'timeFormat']]);
+    expect(await (today.settings![0] as { options: (c: unknown) => Promise<unknown> }).options(ctx())).toEqual([{ value: 'work', label: 'Work' }]);
     expect(await today.produce(ctx(), { size: 'medium' })).toEqual({
       kind: 'list',
       rows: [
@@ -210,8 +212,18 @@ suite('calendar (postgres)', () => {
       ],
       more: '1 more by tomorrow night',
     });
+    // Each placement's own: 12-hour times, a week ahead, a calendar since unlinked read as all of them.
+    expect(await today.produce(ctx(), { size: 'medium', settings: { time: '12h', calendars: ['gone'], days: '2' } })).toMatchObject({
+      rows: [{ title: 'Company offsite', side: 'All day' }, { side: '11:00 AM' }, { side: '2:00 PM' }],
+    });
+    expect(await today.produce(ctx(), { size: 'medium', settings: { days: '7' } })).toMatchObject({ kind: 'list', more: expect.stringMatching(/ more this week$/) });
     now = new Date('2026-09-28T21:00:00Z');
     expect(await today.produce(ctx(), { size: 'small' })).toEqual({ kind: 'list', rows: [{ title: 'Company offsite', side: 'All day' }] });
+    // An empty window says so, and when the next thing is.
+    now = new Date('2026-10-04T12:00:00Z');
+    expect(await today.produce(ctx(), { size: 'medium', settings: { days: '1' } })).toEqual({
+      kind: 'text', icon: 'calendar', text: 'Free for the rest of today.', sub: 'Next: Team standup, Mon 5 Oct 09:30',
+    });
     now = new Date('2026-09-28T12:00:00Z');
 
     expect(await run('calendar.find', { query: 'dentist' })).toEqual({ found: ['Mon 28 Sep 15:00–16:00 Dentist (12 Main St)'] });

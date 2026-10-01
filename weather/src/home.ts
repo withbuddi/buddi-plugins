@@ -4,7 +4,9 @@
  *
  * The glance is the line beside the date — "18°C, overcast in Lyon". The
  * widget (host API 1.17) is the panel in Home's Widgets section, under the
- * same id, so the line steps aside while the widget is on Home: small, the
+ * same id, so the line steps aside while the widget is on Home; since 1.19
+ * each placement picks its place (home by default, "Weather · Work"
+ * otherwise) and its units (the plugin's by default): small, the
  * figure, the sky and the place, the next twelve hours as a sparkline and
  * today's high and low; medium, the same headline over a strip of the next
  * hours. The glance still sends that small panel as its `card`, which is what
@@ -18,7 +20,7 @@ import type { HomeGlance, HomeGlanceContribution, ToolContext, WidgetBody, Widge
 import { describeCode, glyphOf, type Forecast, type WeatherService } from './open-meteo.js';
 import { listPlaces, unitsFor } from './places.js';
 import { inUnits } from './page.js';
-import { degrees, temperature } from './units.js';
+import { degrees, temperature, type Units } from './units.js';
 
 /** How many hours the card's sparkline runs ahead. */
 export const CARD_HOURS = 12;
@@ -37,15 +39,22 @@ interface HomeNow {
   tiles: Array<{ label: string; icon: HomeGlance['icon']; value: string }>;
 }
 
-/** The weather at home now, from a forecast kept for ten minutes per place; null with no place saved. */
-function createHomeReader(service: WeatherService): (ctx: ToolContext) => Promise<HomeNow | null> {
+/** Which place and units a reading is for: a placement's settings, or home in the plugin's units. */
+interface ReadFor {
+  /** A place id from `listPlaces` (`profile-work`, a place of the plugin's own); home when blank or gone. */
+  place?: string;
+  units?: Units;
+}
+
+/** The weather now at a place, from a forecast kept for ten minutes per place; null with no place saved. */
+function createHomeReader(service: WeatherService): (ctx: ToolContext, want?: ReadFor) => Promise<HomeNow | null> {
   const cache = new Map<string, { at: number; forecast: Forecast }>();
-  return async (ctx) => {
+  return async (ctx, want = {}) => {
     const buddi = ctx.buddi!;
     const places = await listPlaces(buddi);
-    const home = places.find((p) => p.isHome) ?? places[0];
+    const home = (want.place ? places.find((p) => p.id === want.place) : undefined) ?? places.find((p) => p.isHome) ?? places[0];
     if (!home) return null;
-    const { units } = await unitsFor(buddi);
+    const units = want.units ?? (await unitsFor(buddi)).units;
     const key = `${home.latitude},${home.longitude}`;
     const now = buddi.clock.now().getTime();
     let hit = cache.get(key);
@@ -99,12 +108,37 @@ export function createWeatherHome(service: WeatherService): { glance: HomeGlance
   };
   const widget: WidgetDefinition = {
     id: 'weather.now',
-    title: 'Weather at home',
+    title: 'Weather',
     sizes: ['small', 'medium'],
     refreshSeconds: GLANCE_CACHE_MS / 1000,
     link: { page: 'weather' },
-    async produce(ctx, { size }): Promise<WidgetBody | null> {
-      const now = await read(ctx);
+    // Since host API 1.19: each placement picks its place and units ("Weather · Work").
+    settings: [
+      {
+        key: 'place',
+        kind: 'select',
+        label: 'Place',
+        inTitle: true,
+        default: '',
+        hint: 'Your places from Settings → Profile, and those you keep on the Weather page.',
+        options: async (ctx) => {
+          const places = await listPlaces(ctx.buddi!);
+          return [{ value: '', label: 'Home' }, ...places.filter((p) => !p.isHome).map((p) => ({ value: p.id, label: p.label }))];
+        },
+      },
+      {
+        key: 'units',
+        kind: 'select',
+        label: 'Units',
+        default: '',
+        options: [{ value: '', label: 'As on Weather' }, { value: 'metric', label: '°C' }, { value: 'imperial', label: '°F' }],
+      },
+    ],
+    async produce(ctx, request): Promise<WidgetBody | null> {
+      const { size } = request;
+      const settings = request.settings ?? {};
+      const units = settings.units === 'metric' || settings.units === 'imperial' ? settings.units : undefined;
+      const now = await read(ctx, { ...(typeof settings.place === 'string' && settings.place ? { place: settings.place } : {}), ...(units ? { units } : {}) });
       if (!now) return { kind: 'text', icon: 'sun', text: 'Add your Home on Settings → Profile to see it here.' };
       if (size === 'medium' && now.tiles.length >= 2) {
         return { kind: 'strip', icon: now.icon, value: now.card.value, ...(now.card.caption ? { caption: now.card.caption } : {}), items: now.tiles };
