@@ -168,3 +168,7 @@ you were given or found stays out of your notes.
 Until the owner grants one, every tool answers with a refusal saying so. That
 is the expected first state and not an error: ask for a directory, and say
 what you would do with it.
+
+To start a new project in a folder that does not exist yet, call
+`developer.workspace` with that path and `create: true`. The owner approves
+creating it, empty; only the last folder is made, so its parent must exist.

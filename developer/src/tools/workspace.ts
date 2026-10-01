@@ -7,7 +7,7 @@
  * toggle — and are never listed to any model (`ToolRegistry.list` leaves them
  * out, and `invoke` refuses them for anybody but the owner's own path).
  */
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { EffectDescription, ToolContext } from '@buddi/core/plugin';
 import { z } from 'zod';
@@ -39,7 +39,95 @@ const workspaceInput = z.object({
     .min(1)
     .max(4096)
     .describe('The absolute path of the directory to work in, on the machine buddi runs on.'),
+  create: z
+    .boolean()
+    .optional()
+    .describe(
+      'true to start a new project: if the directory does not exist yet, the owner approves creating ' +
+        'it (empty, the last folder only; its parent must exist). An existing directory is used as it is.',
+    ),
 });
+
+/** A folder name the create path accepts: a plain name, not hidden, not a path. */
+const FOLDER_NAME = /^[\p{L}\p{N}_][\p{L}\p{N}._ -]*$/u;
+const FOLDER_NAME_MAX = 100;
+
+/** What the card says the new folder will be. Read-only; throws on a refusal. */
+export interface NewFolderPlan {
+  dir: string;
+  parent: string;
+  name: string;
+}
+
+/**
+ * The create path's checks, run at describe time and again just before the
+ * `mkdir`.
+ *
+ * Only the last segment is ever created: the parent must already exist and be
+ * a directory, and its realpath is what the new folder is placed under, so a
+ * symlinked parent is followed once, here, and the target the owner sees is
+ * the real one. That target then goes through `resolveWorkspaceDir` — the
+ * same deny list, protected paths, home and root checks an existing workspace
+ * gets — and must not exist yet.
+ *
+ * The name is a plain folder name: no `.` or `..` segment anywhere in the
+ * path, no leading dot (a project is not a hidden folder, and every dotfolder
+ * worth refusing — `.ssh`, `.config`, `.git` — starts with one), and at most
+ * 100 characters.
+ */
+export async function planNewFolder(dir: string, protectedPaths?: readonly string[]): Promise<NewFolderPlan> {
+  if (!path.isAbsolute(dir)) {
+    throw new PathRefused(
+      `refused: ${dir} is not an absolute path. A workspace is one absolute directory on this machine.`,
+      'absolute',
+    );
+  }
+  const segments = dir.split('/').filter((part) => part !== '');
+  if (segments.some((part) => part === '.' || part === '..') || dir.includes('\\')) {
+    throw new PathRefused(
+      `refused: ${dir} contains "." or ".." or a backslash. Name the new folder by its plain absolute path.`,
+      'dotdot',
+    );
+  }
+  const name = segments.at(-1) ?? '';
+  if (name === '' || name.length > FOLDER_NAME_MAX || !FOLDER_NAME.test(name) || name.trim() !== name) {
+    throw new PathRefused(
+      `refused: "${name}" is not a folder name a new project can have. Use letters, digits, ` +
+        `"-", "_", "." or spaces, not starting with a dot, at most ${FOLDER_NAME_MAX} characters.`,
+      'outside',
+    );
+  }
+  const rawParent = path.dirname(path.resolve(dir));
+  const parentInfo = await stat(rawParent).catch(() => undefined);
+  if (parentInfo === undefined) {
+    throw new PathRefused(
+      `refused: ${rawParent} does not exist. Only the last folder is created; its parent must already be there.`,
+      'outside',
+    );
+  }
+  if (!parentInfo.isDirectory()) {
+    throw new PathRefused(`refused: ${rawParent} is not a directory.`, 'outside');
+  }
+  const parent = await realpath(rawParent);
+  const target = path.join(parent, name);
+  const resolved = await resolveWorkspaceDir(target, { protectedPaths });
+  if (resolved !== target) {
+    throw new PathRefused(`refused: ${target} resolves to ${resolved}; name the folder by its real path.`, 'symlink');
+  }
+  if ((await lstat(target).catch(() => undefined)) !== undefined) {
+    throw new PathRefused(
+      `refused: ${target} already exists, and the owner approved a new, empty folder. ` +
+        'Call developer.workspace again so they see what is in it.',
+      'outside',
+    );
+  }
+  return { dir: target, parent, name };
+}
+
+/** Does anything — a directory, a file, a dangling link — answer to this path? */
+async function exists(dir: string): Promise<boolean> {
+  return (await lstat(path.resolve(dir)).catch(() => undefined)) !== undefined;
+}
 
 /**
  * What the card says the directory is. Read-only, and it throws on a refusal.
@@ -63,7 +151,13 @@ export async function describeDirectory(dir: string, protectedPaths?: readonly s
   // approve.
   const resolved = await resolveWorkspaceDir(dir, { protectedPaths });
   const info = await stat(resolved).catch(() => undefined);
-  if (info === undefined) throw new PathRefused(`refused: ${resolved} does not exist.`, 'outside');
+  if (info === undefined) {
+    throw new PathRefused(
+      `refused: ${resolved} does not exist. To start a new project there, call developer.workspace again ` +
+        'with create: true; the owner approves the new folder.',
+      'outside',
+    );
+  }
   if (!info.isDirectory()) {
     throw new PathRefused(`refused: ${resolved} is not a directory.`, 'outside');
   }
@@ -93,10 +187,38 @@ export const workspaceTool: ToolDefinition<z.infer<typeof workspaceInput>, unkno
   description:
     'Set or change the directory you work in. Everything else you can do happens inside it, so ' +
     'this is the one thing the owner grants: they see the directory and what is in it before ' +
-    'saying yes. Changing it stops every process you started.',
+    'saying yes. Changing it stops every process you started. To start a new project in a folder ' +
+    'that does not exist yet, pass create: true and the owner approves creating it, empty.',
   tier: 'gated',
   input: workspaceInput,
   async describe(input, ctx): Promise<EffectDescription> {
+    if (input.create === true && !(await exists(input.dir))) {
+      const plan = await planNewFolder(input.dir, ctx.buddi!.owner.protectedPaths);
+      const toolchainPath = await captureToolchainPath();
+      const gitPath = (await resolveProgram('git', toolchainPath)) ?? '';
+      const agentId = requireAgent(ctx);
+      const mode = (await getWorkspace(ctx.buddi!.db, agentId))?.mode ?? 'run';
+      return {
+        envelope: {
+          tool: 'developer.workspace',
+          dir: plan.dir,
+          parent: plan.parent,
+          create: true,
+          entries: [],
+          gitRemote: null,
+          isRepo: false,
+          toolchainPath,
+          gitPath,
+        },
+        preview:
+          `Create a new, empty folder ${plan.name} in ${plan.parent} and work there in ${mode} mode. ` +
+          `This agent will read, edit and run code in ${plan.dir}.\n` +
+          `Commands there run with this PATH and no shell: ${toolchainPath}\n` +
+          `git is ${gitPath || '(not on that PATH; git actions will be refused)'}.\n` +
+          'In run mode a short list of programs runs without asking you — including this project\'s ' +
+          'own scripts (npm test, make), which run as you.',
+      };
+    }
     const summary = await describeDirectory(input.dir, ctx.buddi!.owner.protectedPaths);
     const contents = summary.entries.length === 0 ? '(empty)' : summary.entries.join(', ');
     return {
@@ -127,7 +249,42 @@ export const workspaceTool: ToolDefinition<z.infer<typeof workspaceInput>, unkno
       throw new Error('developer.workspace: no approved action id in the tool context; refusing.');
     }
     const agentId = requireAgent(ctx);
-    const summary = await describeDirectory(input.dir, ctx.buddi!.owner.protectedPaths);
+    const protectedPaths = ctx.buddi!.owner.protectedPaths;
+    // What the owner approved decides whether a folder is made, not what is
+    // on disk now: a card that said "new, empty folder" never adopts one that
+    // appeared since, and a card that showed a directory never creates one.
+    // Without an approved effect (a direct call), the disk decides.
+    const approved = ctx.approvedEffect?.envelope as { create?: unknown; dir?: unknown } | undefined;
+    const createNew =
+      input.create === true && (approved !== undefined ? approved.create === true : !(await exists(input.dir)));
+    let target = input.dir;
+    if (createNew) {
+      const plan = await planNewFolder(input.dir, protectedPaths);
+      if (approved !== undefined && approved.dir !== plan.dir) {
+        throw new PathRefused(
+          `refused: the new folder now resolves to ${plan.dir}, not the ${String(approved.dir)} the owner approved.`,
+          'outside',
+        );
+      }
+      try {
+        await mkdir(plan.dir, { mode: 0o755 });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new PathRefused(
+            `refused: ${plan.dir} appeared after the owner approved a new, empty folder. ` +
+              'Call developer.workspace again so they see what is in it.',
+            'outside',
+          );
+        }
+        throw err;
+      }
+      const made = await lstat(plan.dir);
+      if (!made.isDirectory() || (await realpath(plan.dir)) !== plan.dir) {
+        throw new PathRefused(`refused: ${plan.dir} is not the folder that was just created.`, 'symlink');
+      }
+      target = plan.dir;
+    }
+    const summary = await describeDirectory(target, protectedPaths);
     const previous = await getWorkspace(ctx.buddi!.db, agentId);
     // §4: processes are "killed when the workspace changes". A dev server for
     // the old directory is a process about nothing.

@@ -14,6 +14,19 @@ rc files, `~/Library/Keychains`, `~/.buddi`, buddi's own data directory and the
 vault are refused even when the workspace sits above them. Nothing under
 `.git/` is ever written. Give it a directory you would let a colleague use.
 
+## Starting a new project
+
+An agent asked to start a project in a folder that does not exist yet calls
+`developer.workspace` with `create: true`. The card says so plainly — "Create a
+new, empty folder `<name>` in `<parent>` and work there in `<mode>` mode" — and
+on approval that one folder is made and becomes the workspace. Only the last
+folder is created: its parent must already exist. The name is a plain folder
+name (no `..`, no slashes, not starting with a dot, at most 100 characters),
+and the new folder passes the same checks as any workspace, so nothing is
+created inside a refused place. If a folder by that name appears between the
+card and your approval, the call is refused rather than adopting it; a folder
+that already exists is shown as it is, and never emptied or changed.
+
 ## How a command runs
 
 There is no shell. A command is split into words and the program is spawned

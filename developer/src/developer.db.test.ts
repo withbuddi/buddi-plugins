@@ -13,7 +13,7 @@
  * this suite green against both cores while the branch is unmerged.
  */
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Pool } from 'pg';
@@ -1138,5 +1138,109 @@ suite('the developer plugin (postgres)', () => {
     expect(env.GIT_CONFIG_GLOBAL).toBe('/dev/null');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.DATABASE_URL).toBeUndefined();
+  });
+
+  /* ---------------------------------------------------------------- *
+   * create: true — one card, a new empty folder, and the workspace
+   * ---------------------------------------------------------------- */
+
+  describe('starting a new project with create: true', () => {
+    const tool = (): ToolDefinition<any, any> => toolNamed('developer.workspace');
+    const approve = async (input: { dir: string; create?: boolean }, actionId: string, agentId = 'developer') => {
+      const ctx = contextFor(agentId);
+      const described = await tool().describe?.(input, ctx);
+      return {
+        described,
+        run: () => tool().execute(input, { ...ctx, actionId, approvedEffect: { envelope: described?.envelope } }),
+      };
+    };
+    const restore = () => setWorkspaceDir(pool, 'developer', workspace, new Date(), { toolchainPath, gitPath });
+
+    it('creates the folder in an existing parent and makes it the workspace, after a card that says so', async () => {
+      const parent = path.join(root, 'projects');
+      await mkdir(parent, { recursive: true });
+      const target = path.join(parent, 'new-app');
+      const { described, run } = await approve({ dir: target, create: true }, 'create-1');
+      expect(described?.preview).toContain(`Create a new, empty folder new-app in ${parent} and work there in`);
+      expect(described?.envelope).toMatchObject({ dir: target, parent, create: true, entries: [] });
+      // Describing creates nothing.
+      await expect(stat(target)).rejects.toThrow();
+      const result = (await run()) as { workspace: { dir: string } };
+      expect(result.workspace.dir).toBe(target);
+      expect((await stat(target)).isDirectory()).toBe(true);
+      expect(await readdir(target)).toEqual([]);
+      expect((await workspaceRow()).dir).toBe(target);
+      await restore();
+    }, 30_000);
+
+    it('refuses when the parent does not exist: only the last folder is ever made', async () => {
+      const target = path.join(root, 'missing-parent', 'app');
+      await expect(tool().describe?.({ dir: target, create: true }, contextFor('developer'))).rejects.toThrow(
+        /does not exist\. Only the last folder is created/,
+      );
+      await expect(stat(path.join(root, 'missing-parent'))).rejects.toThrow();
+    });
+
+    it('describes an existing folder as it is, and changes nothing in it', async () => {
+      const existing = path.join(root, 'existing-app');
+      await mkdir(existing, { recursive: true });
+      await writeFile(path.join(existing, 'keep.txt'), 'keep\n');
+      const { described, run } = await approve({ dir: existing, create: true }, 'create-2');
+      expect(described?.preview).toContain('keep.txt');
+      expect((described?.envelope as { create?: boolean }).create).toBeUndefined();
+      await run();
+      expect(await readdir(existing)).toEqual(['keep.txt']);
+      expect(await readFile(path.join(existing, 'keep.txt'), 'utf8')).toBe('keep\n');
+      await restore();
+    }, 30_000);
+
+    it('refuses a new folder in a deny-listed or protected parent', async () => {
+      await expect(
+        tool().describe?.({ dir: path.join(dataDir, 'app'), create: true }, contextFor('developer')),
+      ).rejects.toThrow(/never a workspace/);
+      const guarded = path.join(root, 'agents');
+      await mkdir(guarded, { recursive: true });
+      const ctx = { ...contextFor('developer') };
+      const facts = { ...ctx, protectedPaths: [guarded] } as CoreToolContext;
+      const guardedCtx = { ...facts, buddi: createPluginHost(hostBindingOf(manifest), facts) };
+      await expect(tool().describe?.({ dir: path.join(guarded, 'app'), create: true }, guardedCtx)).rejects.toThrow(
+        /never a workspace/,
+      );
+      await expect(stat(path.join(guarded, 'app'))).rejects.toThrow();
+    });
+
+    it('refuses a name with "..", a hidden name, or a path that is not plain', async () => {
+      const ctx = contextFor('developer');
+      for (const dir of [
+        path.join(root, 'projects') + '/../escape',
+        path.join(root, 'projects', '.hidden'),
+        path.join(root, 'projects') + '/./app',
+        path.join(root, 'projects', 'a'.repeat(101)),
+        'relative/app',
+      ]) {
+        await expect(tool().describe?.({ dir, create: true }, ctx)).rejects.toThrow(/refused/);
+      }
+      await expect(stat(path.join(root, 'escape'))).rejects.toThrow();
+    });
+
+    it('refuses rather than adopts a folder that appeared between the card and the approval', async () => {
+      const target = path.join(root, 'projects', 'raced');
+      const { described, run } = await approve({ dir: target, create: true }, 'create-3');
+      expect((described?.envelope as { create: boolean }).create).toBe(true);
+      await mkdir(target);
+      await writeFile(path.join(target, 'planted.sh'), 'echo hi\n');
+      await expect(run()).rejects.toThrow(/already exists|appeared/);
+      expect((await workspaceRow()).dir).toBe(workspace);
+      expect(await readdir(target)).toEqual(['planted.sh']);
+    }, 30_000);
+
+    it('teaches create: true when the folder is missing and create was not asked', async () => {
+      await expect(
+        tool().describe?.({ dir: path.join(root, 'projects', 'not-yet') }, contextFor('developer')),
+      ).rejects.toThrow(
+        'does not exist. To start a new project there, call developer.workspace again with create: true; ' +
+          'the owner approves the new folder.',
+      );
+    });
   });
 });
