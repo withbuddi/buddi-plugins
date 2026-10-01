@@ -43,6 +43,7 @@ import { outputTool, runTool, startTool, stopTool } from './tools/run.js';
 import { gitTool } from './tools/git.js';
 import { previewTool, resolvePreview, summariseTool } from './tools/review.js';
 import { screenshotTool } from './tools/screenshot.js';
+import { developerCarryOver } from './carryover.js';
 
 /** Absolute, resolved from the *built* file so it is right from `dist`. */
 export const MIGRATIONS_DIR = path.resolve(
@@ -94,6 +95,9 @@ export const manifest: PluginManifest = {
   previews: {
     resolve: resolvePreview,
   },
+  // Workspace, branch, last commit and uncommitted files, in the note a
+  // rolled-over chat opens with (host API 1.16; older hosts ignore it).
+  carryOver: developerCarryOver,
   uses: ['files', 'secrets'],
   // `developer.env` (owner-secrets §3): one variable of one workspace's child
   // environment. `start` and `run` deliver the bindings for the workspace they
@@ -124,6 +128,7 @@ export * from './browse.js';
 export * from './archive.js';
 export * from './skills.js';
 export * from './screenshot.js';
+export * from './carryover.js';
 export {
   workspaceTool,
   setModeTool,

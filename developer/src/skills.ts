@@ -62,6 +62,9 @@ export const developerAgents: SuggestedAgent[] = [
     // again. The built-in 40 is sized for chat; a reply that spends these stops
     // and offers Continue.
     maxTurns: 150,
+    // A piece of work outlives an afternoon: the chat carries on for a day of
+    // silence before a fresh one starts (with a carried-over note).
+    idleRollover: '1d',
     // Named one by one rather than `developer.*`: the three `ownerOnly` tools
     // are the owner's own and a proposal that reached for them would be
     // refused at install — rightly. This is the list a model is shown.

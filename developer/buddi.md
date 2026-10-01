@@ -201,3 +201,15 @@ branch rule. It asks for 150 steps per reply (`maxTurns: 150`) rather than the
 built-in 40, because coding spends many tool calls on one answer; a reply that
 uses them all stops and offers Continue. Change it on the agent's Setup → Brain.
 Accepting it is yours; installing the plugin creates nothing.
+
+Its chats wait a day of silence before a fresh one starts (`idleRollover:
+1d`) rather than buddi's three hours, because a piece of work outlives an
+afternoon; change it on Setup → Brain ("New chat after").
+
+## What it adds when a chat rolls over
+
+When a conversation with an agent that has a workspace rolls over, the note
+the fresh one opens with gets this plugin's lines: the workspace and its mode,
+the branch, the last commit (short hash and subject), and how many files are
+uncommitted with up to five of their names. Read from git at that moment; no
+file contents and no diff. An agent with no workspace adds nothing.
