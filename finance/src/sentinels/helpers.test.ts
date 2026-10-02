@@ -338,3 +338,28 @@ describe('unprocessedArtifactsFinding', () => {
     expect(unprocessedArtifactsFinding([])).toBeNull();
   });
 });
+
+describe('every finance watcher speaks to the owner in an owner line (host API 1.23)', () => {
+  it('stale balances group into one quick form of set_balance, a field per account', () => {
+    const [f] = staleBalanceFindings([{ name: 'Checking', balance: 2340, balanceAsOf: '2026-09-14' }], { today: '2026-10-01', currency: 'USD' });
+    expect(f?.ownerLine).toMatch(/Checking hasn't been updated in 17 days/);
+    expect(f?.ownerLine).not.toBe(f?.detail);
+    expect(f).toMatchObject({ kind: 'stale-balance', subject: { id: 'Checking', label: 'Checking' }, group: { title: '{count} balances not updated in 2+ weeks' } });
+    expect(f?.actions?.[0]).toMatchObject({ kind: 'fill', groupLabel: 'Update them', tool: 'finance.set_balance', args: { account: 'Checking' }, field: { name: 'balance', type: 'number', value: 2340 } });
+  });
+
+  it('files never used offer Review (Files) and Not needed', () => {
+    const f = unprocessedArtifactsFinding([{ id: 'a', filename: 'statement.pdf', kind: 'document', mime: 'application/pdf', createdOn: '2026-09-19', ageHours: 300 }]);
+    expect(f?.ownerLine).toMatch(/never used/);
+    expect(f?.actions?.slice(0, 2)).toEqual([{ kind: 'open', label: 'Review', place: 'files' }, { kind: 'dismiss', label: 'Not needed' }]);
+  });
+
+  it('the rest carry an owner line too', () => {
+    const lines = [
+      floorBreachFinding({ firstBreachDate: '2026-10-05', minBalance: -20, minBalanceDate: '2026-10-06', safetyFloor: 0, currency: 'USD', startDate: '2026-10-01', horizonDays: 60 })?.ownerLine,
+      minimumDueFindings([{ name: 'Amex', minimumPayment: 35, dueDay: 3, balance: 900, paid: false }], { today: '2026-10-01', currency: 'USD', items: [] })[0]?.ownerLine,
+      unmatchedReceiptsFinding([{ id: 'r', merchant: 'Shop', occurredOn: '2026-09-01', total: 12, currency: 'USD' }], { today: '2026-10-01' })?.ownerLine,
+    ];
+    for (const line of lines) expect(line ?? '').not.toBe('');
+  });
+});

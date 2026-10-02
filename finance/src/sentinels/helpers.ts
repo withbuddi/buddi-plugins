@@ -40,6 +40,15 @@ function money(amount: number, currency: string): string {
   return `${amount.toFixed(2)} ${currency}`;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** `2026-09-14` → `14 Sep`: how an owner line names a day. The brief keeps the ISO date. */
+export function shortDay(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
+}
+
 /* ------------------------------------------------------------------ *
  * floor-breach
  * ------------------------------------------------------------------ */
@@ -95,6 +104,11 @@ export function floorBreachFinding(input: FloorBreachInput): Finding | null {
       severity === 'urgent'
         ? `Cash drops below ${floorPhrase} on ${firstBreachDate}`
         : `Cash is projected below ${floorPhrase} on ${firstBreachDate}`,
+    ownerLine:
+      `Your cash is on course to drop below ${floorPhrase} on ${shortDay(firstBreachDate)}, ` +
+      `${daysAway === 0 ? 'today' : `in ${daysAway} day${daysAway === 1 ? '' : 's'}`}: something needs moving before then.`,
+    kind: 'floor-breach',
+    actions: [{ kind: 'ask' }],
     detail:
       `The projection crosses ${floorPhrase} on ${firstBreachDate}, ` +
       `${daysAway} day${daysAway === 1 ? '' : 's'} from ${input.startDate}. ` +
@@ -186,6 +200,30 @@ export function minimumDueFindings(
       key: `minimum-due:${liability.name}:${dueDate}`,
       severity: 'urgent',
       title: `${liability.name}: ${money(liability.minimumPayment, opts.currency)} minimum due ${dueDate}`,
+      ownerLine:
+        `The ${money(liability.minimumPayment, opts.currency)} minimum on ${liability.name} is due ` +
+        `${daysAway === 0 ? 'today' : `in ${daysAway} day${daysAway === 1 ? '' : 's'}`}, and no payment is recorded.`,
+      kind: 'minimum-due',
+      subject: { id: liability.name, label: liability.name },
+      group: { title: '{count} minimum payments are due in the next few days' },
+      actions: [
+        {
+          kind: 'fill',
+          label: 'I paid it',
+          groupLabel: 'Record payments',
+          title: 'Record payments',
+          tool: 'finance.record_payment',
+          args: { liability: liability.name, dueOn: dueDate, status: 'paid_on_time' },
+          field: {
+            name: 'amount',
+            label: liability.name,
+            type: 'number',
+            value: liability.minimumPayment,
+            hint: `minimum due ${shortDay(dueDate)}`,
+          },
+        },
+        { kind: 'ask' },
+      ],
       detail:
         `The minimum payment on ${liability.name} is due on ${dueDate} ` +
         `(${daysAway === 0 ? 'today' : `in ${daysAway} day${daysAway === 1 ? '' : 's'}`}). ` +
@@ -272,6 +310,11 @@ export function statementClosingFindings(
       key: `statement:${card.name}:${closeDate}`,
       severity: 'info',
       title: sentence,
+      ownerLine: `${sentence}.`,
+      kind: 'statement',
+      subject: { id: card.name, label: card.name },
+      group: { title: '{count} cards close soon over their target' },
+      actions: [{ kind: 'ask' }],
       detail:
         `${card.name} closes on ${closeDate}, ` +
         `${view.daysUntilClosing === 0 ? 'today' : `in ${view.daysUntilClosing} day${view.daysUntilClosing === 1 ? '' : 's'}`}` +
@@ -335,6 +378,33 @@ export function staleBalanceFindings(
       key: `stale:${account.name}:${account.balanceAsOf}`,
       severity: 'info',
       title: `${account.name} balance is ${age} days old`,
+      ownerLine:
+        `${account.name} hasn't been updated in ${age} days (last ${money(account.balance, opts.currency)}), ` +
+        'so the cash forecast starts from a guess.',
+      kind: 'stale-balance',
+      subject: { id: account.name, label: account.name },
+      group: {
+        title: `{count} balances not updated in ${Math.floor(maxAge / 7)}+ weeks`,
+        ownerLine: 'The cash forecast starts from these numbers. Type what each holds today.',
+      },
+      actions: [
+        {
+          kind: 'fill',
+          label: 'Update',
+          groupLabel: 'Update them',
+          title: 'Update balances',
+          tool: 'finance.set_balance',
+          args: { account: account.name },
+          field: {
+            name: 'balance',
+            label: account.name,
+            type: 'number',
+            value: account.balance,
+            hint: `${money(account.balance, opts.currency)} on ${shortDay(account.balanceAsOf)}`,
+          },
+        },
+        { kind: 'ask' },
+      ],
       detail:
         `${account.name} was last confirmed at ${money(account.balance, opts.currency)} ` +
         `on ${account.balanceAsOf}, ${age} days ago. Every projection starts from that number.`,
@@ -385,6 +455,11 @@ export function unmatchedReceiptsFinding(
     key: `unmatched-receipts:${oldest.occurredOn}:${stale.length}`,
     severity: 'info',
     title: `${stale.length} receipt${stale.length === 1 ? '' : 's'} still unmatched after ${maxAge} days`,
+    ownerLine:
+      `${stale.length === 1 ? 'A receipt has' : `${stale.length} receipts have`} no matching charge after ${maxAge} days, ` +
+      `the oldest from ${shortDay(oldest.occurredOn)}: the charge never posted, or the ledger is missing it.`,
+    kind: 'unmatched-receipts',
+    actions: [{ kind: 'ask', label: 'Match them' }, { kind: 'dismiss', label: 'Not needed' }],
     detail: [
       `These receipts have no transaction behind them, the oldest from ${oldest.occurredOn}:`,
       ...lines,
@@ -428,6 +503,15 @@ export function unprocessedArtifactsFinding(
     key: `unprocessed-artifacts:${oldest.createdOn}:${sorted.length}`,
     severity: 'info',
     title: `${sorted.length} file${sorted.length === 1 ? '' : 's'} handed in and never used`,
+    ownerLine:
+      `${sorted.length === 1 ? 'A file you handed in was' : `${sorted.length} files you handed in were`} never used, ` +
+      `the oldest from ${shortDay(oldest.createdOn)}: the ledger may be missing what's in them.`,
+    kind: 'unprocessed-artifacts',
+    actions: [
+      { kind: 'open', label: 'Review', place: 'files' },
+      { kind: 'dismiss', label: 'Not needed' },
+      { kind: 'ask' },
+    ],
     detail: [
       `Nothing in the ledger references these, the oldest from ${oldest.createdOn}:`,
       ...lines,
