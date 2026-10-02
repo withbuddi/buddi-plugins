@@ -7,8 +7,10 @@ weeks, which card to pay first. It projects your cash flow against a floor you
 set, and warns you before a balance dips under it, a minimum payment comes due
 or a card closes its statement high.
 
-It also proposes an agent, **Ledger** (`@ledger`), a cash-flow advisor with a
-daily check and a Friday recap. Accepting it is yours.
+To have someone use it, add the **CFO** from buddi's agent catalogue: a
+cash-flow advisor with a daily check and a Friday recap. If you accepted
+**Ledger** (`@ledger`) from an earlier version, it keeps working as it is, and
+buddi offers it the CFO's updates while you have not edited it.
 
 ## What it needs
 
@@ -45,8 +47,8 @@ buddi plugins install @withbuddi/plugin-finance
 
 or find it in buddi's plugin market on Settings → Plugins. buddi stages it and
 shows what it claims (what it reaches in buddi, the hosts it talks to: none);
-nothing runs until you approve it. Then accept Ledger, or give `finance.*` to an
-agent of your own.
+nothing runs until you approve it. Then add the CFO from the catalogue, or give
+`finance.*` to an agent of your own.
 
 ## Remove
 

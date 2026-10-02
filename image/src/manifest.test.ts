@@ -24,23 +24,10 @@ describe('image manifest', () => {
     expect(() => parseViewDescriptors(manifest.views!, { plugin: 'image', tools: manifest.tools.map((t) => t.name) })).not.toThrow();
   });
 
-  it('proposes the Illustrator with image.generate, memory and one skill, model unset', () => {
-    const [agent] = manifest.agents!;
-    expect(agent).toMatchObject({ id: 'illustrator', handle: 'art', name: 'Illustrator' });
-    expect(agent!.tools).toEqual(['image.generate', 'memory.note', 'memory.recall', 'memory.forget', 'memory.remember_preference', 'memory.get_preferences']);
-    expect(agent!.model).toBeUndefined();
-    expect(agent!.skills?.map((s) => s.name)).toEqual(['writing-an-image-prompt']);
-    expect(agent!.persona).toMatch(/cannot see what you made/);
-    expect(agent!.persona).toMatch(/Never invent a brand's assets/);
-    // It reports what it asked for, never what the picture looks like.
-    expect(agent!.persona).toMatch(/describe what you\s+ASKED FOR, never what the image looks like/);
-    expect(agent!.persona).toMatch(/"I asked for a flat-vector/);
-    expect(agent!.persona).toMatch(/the first words are "I asked for"/);
-    expect(agent!.persona).toMatch(/Never "I generated…"/);
-    // The requested style leads the prompt and closes it.
-    expect(agent!.persona).toMatch(/1\. The style words the request gave, verbatim, first/);
-    expect(agent!.persona).toMatch(/4\. The same style words once more, at the very end/);
-    const skill = agent!.skills![0]!.body;
+  it('proposes no agent: the Illustrator comes from the catalogue; the prompt skill stays', () => {
+    expect(manifest.agents ?? []).toEqual([]);
+    expect(manifest.skills?.map((s) => s.name)).toEqual(['writing-an-image-prompt']);
+    const skill = manifest.skills![0]!.body;
     expect(skill).toMatch(/"I asked for a flat-vector\s+fox…", never "I generated/);
     // A style that matters is said twice, with what to avoid.
     expect(skill).toMatch(/State the style at the start \*and\* again at the end/);

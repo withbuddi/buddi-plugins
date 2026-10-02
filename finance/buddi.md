@@ -11,25 +11,19 @@ pre-statement review and a disabled weekly consolidation. It also tidies the
 account list itself: the same real account recorded twice can be merged into
 one, and an account recorded by mistake and holding nothing can be deleted.
 
-## Ledger, the agent it proposes
+## Who uses it
 
-Installing the plugin gives tools; it also proposes someone to use them.
-**Ledger** (`@ledger`) is a cash-flow advisor: balances, recurring items,
-liabilities, and a projection before any purchase. It is a proposal, never an
-install: the owner accepts it through the gated `platform.accept_plugin_agent`
-(the Add-a-teammate card, Home, or the Plugins page), and the file is theirs
-from then on.
+Installing the plugin gives tools and proposes no agent. The advisor is the
+**CFO** in buddi's agent catalogue (withbuddi.com), added with one approval:
+roles `overview`, `recap` and `credit`, the ones the sentinels and missions
+address, with `finance.*`, its own memory, reminders and schedules.
 
-- Roles `overview`, `recap` and `credit`, the ones the sentinels and missions
-  address, so every finding lands on it.
-- Tools `finance.*`, `memory.*`, `artifacts.*`, `reminder.*`, `schedule.*`. No
-  browser, no host, no mail; the owner adds those by hand if they want them.
-- The plugin's two skills, written into its own `skills/`.
-- It arrives with two missions, created by the same approval and run as it in
-  the owner's timezone: the daily check at 08:00 and the Friday recap at 08:00
-  on Fridays (`agent:ledger:daily-check`, `agent:ledger:friday-recap`).
-- The offer is made while no agent holds `overview` (page query
-  `ledger_offer`), so an owner who wrote their own advisor is not asked twice.
+- An owner who accepted **Ledger** (`@ledger`) from an earlier version keeps
+  it: its file, handle, roles, missions (`agent:ledger:daily-check`,
+  `agent:ledger:friday-recap`) and data are untouched. The catalogue counts it
+  as the CFO and offers the CFO's updates while its file is unedited.
+- Any agent the owner gives these roles to, hand-made or not, receives the
+  findings and the role missions instead.
 
 ## Imports
 
@@ -94,10 +88,10 @@ finding instead.
 Two missions belong to the `credit` role: `monthly-score` asks the owner on the
 1st for their latest score(s) and records them, and `pre-statement-review` runs
 weekly over the cards closing inside seven days. **The `credit` role is not a
-new agent — the advisor (Ledger, or your own) should hold it.** Coaching a score is reading
+new agent — the advisor (the CFO, Ledger, or your own) should hold it.** Coaching a score is reading
 the same cards, balances and cash flow the advisor already reads, and a second
-principal would need the same grant for no extra reach. Ledger, the agent this
-plugin proposes, holds all three roles.
+principal would need the same grant for no extra reach. The catalogue's CFO
+holds all three roles, as Ledger did.
 
 It ships one skill, `an-observed-balance-is-recorded`: a balance read from a
 live source — the browser, a statement, the owner saying so — is recorded with

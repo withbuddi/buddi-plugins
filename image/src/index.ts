@@ -20,7 +20,7 @@ import { chooseAccount, generateTool } from './generate.js';
 import { ImageRefusal } from './backends/index.js';
 import { imagePages, imageQueries, setSettingsTool } from './settings.js';
 import { imageViews } from './views.js';
-import { imageAgents, imageSkills } from './agents.js';
+import { imageSkills } from './skills.js';
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -32,7 +32,7 @@ export const manifest: PluginManifest = {
   author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
     'Makes one image from a prompt with the provider account you choose (ChatGPT subscription, OpenAI, ' +
-    'Gemini, or an OpenAI-compatible server) and keeps it in the Files library. Proposes an Illustrator agent.',
+    'Gemini, or an OpenAI-compatible server) and keeps it in the Files library.',
   network: [
     { host: 'chatgpt.com', why: 'ChatGPT subscription accounts: buddi sends the prompt and references to ChatGPT\'s image tool and gets the picture back.' },
     { host: 'api.openai.com', why: 'OpenAI accounts: the prompt and references go to the Images API; the picture comes back.' },
@@ -42,7 +42,6 @@ export const manifest: PluginManifest = {
   views: imageViews,
   pages: imagePages,
   queries: imageQueries,
-  agents: imageAgents,
   skills: imageSkills,
   uses: ['accounts', 'files:library'],
   // Nothing to draw with until an account is chosen (host API 1.18): the Plugins row says so and opens Settings → Image.
@@ -67,4 +66,4 @@ export * from './store.js';
 export * from './generate.js';
 export * from './settings.js';
 export * from './views.js';
-export * from './agents.js';
+export * from './skills.js';

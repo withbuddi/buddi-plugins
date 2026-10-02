@@ -77,11 +77,11 @@ When the owner says they want their debt down by a number in a stretch of months
 
 The whole shape, from the spec:
 
-> "@ledger help me cut my debt by 40k in six months." The advisor reads the
+> "@cfo help me cut my debt by 40k in six months." The advisor reads the
 > accounts, proposes: metric \`finance.total_debt\`, delta −40,000, deadline in
 > 26 weeks, weekly cadence, milestones at −10k, −20k, −30k. The card says
 > "From $87,400 today to $47,400 by 22 March: $1,540 a week, checked weekly,
-> held by @ledger". The owner approves. Every week core measures; in week 6
+> held by @cfo". The owner approves. Every week core measures; in week 6
 > the projection lands short, the second miss wakes the advisor, which reads
 > the cards and the statement dates, and answers with what changed and one
 > recommendation, or proposes \`goal.update\`. At −10k the advisor says so, once.

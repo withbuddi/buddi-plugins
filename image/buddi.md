@@ -46,10 +46,12 @@ The prompt and any reference images, to the service of the account you chose:
 - OpenAI-compatible: the base URL of that account, and nowhere else (an
   answer pointing at another host is not fetched).
 
-## What it proposes
+## What it ships
 
-One agent, `illustrator` (handle `@art`), with `image.generate` and its own
-memory, and one skill, writing-an-image-prompt. Accepting it is yours.
+One skill, writing-an-image-prompt, for any agent given `image.generate`. It
+proposes no agent: the Illustrator is in buddi's agent catalogue. An
+Illustrator (`@art`) accepted from an earlier version keeps working, its file,
+role and data untouched.
 
 Schema: image
 Hosts: chatgpt.com, api.openai.com, generativelanguage.googleapis.com

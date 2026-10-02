@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-finance",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Accounts, recurring charges, receipts and a cashflow projection, for buddi.",
   "keywords": [
     "buddi-plugin"

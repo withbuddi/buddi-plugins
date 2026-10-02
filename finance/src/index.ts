@@ -15,7 +15,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { VERSION } from './version.js';
-import { financeAgents, ledgerOfferQuery } from './agents.js';
 import { financeMissions } from './missions.js';
 import { financeSentinels } from './sentinels/index.js';
 import { financeSkills } from './skills.js';
@@ -126,9 +125,9 @@ export const manifest: PluginManifest & { sentinels: NonNullable<PluginManifest[
   sentinels: financeSentinels,
   skills: financeSkills,
   missions: financeMissions,
-  // Ledger, proposed and never installed: the owner accepts it (`agents.ts`).
-  agents: financeAgents,
-  queries: [ledgerOfferQuery()],
+  // No agent of its own: the CFO is a catalogue agent (withbuddi.com), and an
+  // owner who accepted Ledger from an earlier version keeps it. Watchers and
+  // missions address roles, so they reach whoever holds them.
   views: financeViews,
   home: [financeHome],
   uses: ['files:library'],
@@ -182,7 +181,6 @@ export {
 
 export { financeSentinels } from './sentinels/index.js';
 export { financeSkills } from './skills.js';
-export * from './agents.js';
 export * from './missions.js';
 export * from './sentinels/helpers.js';
 

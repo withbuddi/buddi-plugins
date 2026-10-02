@@ -4,7 +4,6 @@
  */
 import { describe, expect, it } from 'vitest';
 import { manifest } from './index.js';
-import { LEDGER_OFFER_QUERY } from './agents.js';
 import { ADVISOR_ROLES, CREDIT_ROLES } from './sentinels/roles.js';
 
 const names = manifest.tools.map((t) => t.name);
@@ -71,52 +70,14 @@ describe('the finance manifest', () => {
     }
   });
 
-  it('proposes one agent, Ledger, and it also holds the credit role — the advisor wearing a hat', () => {
-    expect(manifest.agents?.map((a) => a.id)).toEqual(['ledger']);
-    const ledger = manifest.agents![0]!;
-    expect(ledger).toMatchObject({ id: 'ledger', handle: 'ledger', name: 'Ledger' });
-    expect(ledger.description).toBe(
-      'Cash-flow advisor: balances, recurring items, liabilities, and a projection before any purchase.',
-    );
-    // Every role a mission or a sentinel asks for is one Ledger holds.
+  it('proposes no agent and makes no offer: the CFO comes from the catalogue', () => {
+    expect(manifest.agents ?? []).toEqual([]);
+    expect((manifest.queries ?? []).map((q) => q.name)).not.toContain('ledger_offer');
+  });
+
+  it('asks only for the roles the catalogue CFO (and an earlier Ledger) holds', () => {
     const asked = new Set([...(manifest.missions ?? []).map((m) => m.agentRole), ...CREDIT_ROLES, ...ADVISOR_ROLES]);
-    for (const role of asked) expect(ledger.roles).toContain(role);
-    expect(ledger.persona).toContain('{{today}}');
-    expect(ledger.skills?.map((s) => s.name)).toEqual(manifest.skills?.map((s) => s.name));
-  });
-
-  it("grants Ledger this plugin's own tools and the four families it reads and writes, nothing else", () => {
-    const ledger = manifest.agents![0]!;
-    expect(ledger.tools).toEqual(['finance.*', 'memory.*', 'artifacts.*', 'reminder.*', 'schedule.*']);
-    // The finance glob reaches exactly this plugin's tool table.
-    const finance = ledger.tools.filter((t) => t.startsWith('finance.'));
-    expect(finance).toEqual(['finance.*']);
-    expect(names.length).toBeGreaterThan(0);
-    expect(names.every((n) => n.startsWith('finance.'))).toBe(true);
-    for (const tool of ledger.tools) expect(tool).not.toMatch(/^(browser|host|email|mail|platform)\./);
-  });
-
-  it('declares the daily check and the Friday recap as they ship', () => {
-    const ledger = manifest.agents![0]!;
-    expect(ledger.missions?.map((m) => m.id)).toEqual(['daily-check', 'friday-recap']);
-    for (const mission of ledger.missions ?? []) {
-      const shipped = manifest.missions?.find((m) => m.id === mission.id);
-      expect(mission).toMatchObject({
-        name: shipped?.name,
-        cron: shipped?.cron,
-        prompt: shipped?.prompt,
-        alwaysDeliver: shipped?.alwaysDeliver,
-        misfirePolicy: shipped?.misfirePolicy,
-      });
-    }
-    expect(ledger.missions?.find((m) => m.id === 'daily-check')?.cron).toBe('0 8 * * *');
-    expect(ledger.missions?.find((m) => m.id === 'friday-recap')?.cron).toBe('0 8 * * FRI');
-  });
-
-  it('offers Ledger through a query the manifest carries', () => {
-    const ledger = manifest.agents![0]!;
-    expect(ledger.offer?.query).toBe(LEDGER_OFFER_QUERY);
-    expect(manifest.queries?.map((q) => q.name)).toContain(LEDGER_OFFER_QUERY);
+    for (const role of asked) expect(['overview', 'recap', 'credit']).toContain(role);
   });
 
   it('names no agent by id anywhere — sentinels and missions address a role', () => {

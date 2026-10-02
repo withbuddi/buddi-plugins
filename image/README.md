@@ -4,8 +4,10 @@ Pictures for [buddi](https://withbuddi.com). An agent makes one image from a
 prompt, optionally from pictures you hand it, and keeps it in your Files
 library, where the canvas shows it.
 
-It also proposes an agent, **Illustrator** (`@art`), that your other agents can
-ask for pictures. Accepting it is yours.
+For an agent your other agents can ask for pictures, add the **Illustrator**
+from buddi's agent catalogue. If you accepted it (`@art`) from an earlier
+version, it keeps working as it is, and buddi offers it the catalogue's
+updates while you have not edited it.
 
 ## What it needs
 
@@ -41,7 +43,8 @@ buddi plugins install @withbuddi/plugin-image
 or find it in buddi's plugin market on Settings → Plugins. buddi stages it and
 shows what it claims (what it reaches in buddi, the hosts it talks to); nothing
 runs until you approve it. Then choose an account on Settings → Image, and
-accept Illustrator or give `image.generate` to an agent of your own.
+add the Illustrator from the catalogue or give `image.generate` to an agent of
+your own.
 
 ## Remove
 
