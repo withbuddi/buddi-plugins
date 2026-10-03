@@ -52,7 +52,9 @@ registry.npmjs.org (eSpeak NG), and sends nothing.
 ## What it asks before doing
 
 The first transcription and the first spoken reply in a conversation are each
-an approval card; later ones in that conversation run. Your own voice notes on
+an approval card; later ones in that conversation run. A spoken reply's card
+also offers "Always: this agent" (buddi's standing approval, kept per agent and
+plugin version), so an agent that speaks every morning asks once. Your own voice notes on
 Telegram ask nothing, and still count against the limits.
 
 ## Install

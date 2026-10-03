@@ -223,12 +223,29 @@ async function oncePerConversation(tool: string, ctx: ToolContext, side: 'listen
   if (ctx.conversationId && UUID.test(ctx.conversationId) && (await ctx.buddi!.approvals.approvedInConversation(tool, ctx.conversationId))) {
     return { tier: 'auto' as const };
   }
+  // The owner's standing yes for this agent ("Always: this agent" on a card,
+  // core's `tool_permissions`): a morning edition is a new conversation every
+  // day, and must not wait on a card each time. Only `speech.say` offers it.
+  if (side === 'speaking' && (await standingYes(tool, ctx))) return { tier: 'auto' as const };
   return {
     tier: 'gated' as const,
     reason: side === 'listening'
       ? 'The first recording in a conversation is yours to approve; later ones in the same conversation then run.'
       : 'The first spoken reply in a conversation is yours to approve; later ones in the same conversation then run.',
   };
+}
+
+/**
+ * Whether the owner said "always" to this tool for the calling agent. Core
+ * keys the row on the agent, the tool and its version, and answers nothing
+ * for a delegate; an older buddi without `standing` simply never says yes.
+ */
+async function standingYes(tool: string, ctx: ToolContext): Promise<boolean> {
+  try {
+    return (await ctx.buddi?.approvals.standing?.(tool)) != null;
+  } catch {
+    return false;
+  }
 }
 
 function requireAgent(ctx: ToolContext): string {
@@ -348,6 +365,9 @@ export function createSayTool(options: ToolOptions = {}): ToolDefinition<SayInpu
     timeoutMs: timeoutMs + 20_000,
     input: sayInput,
     tierFor: (_input, ctx) => oncePerConversation('speech.say', ctx, 'speaking'),
+    // The card offers "Always: this agent" (core's standing permission), which
+    // `tierFor` honours above: an agent that speaks every morning asks once.
+    reusableApproval: true,
     async describe(input, ctx): Promise<EffectDescription> {
       const chosen = await chooseSide(ctx, 'speaking');
       const picked = await pickVoice(ctx, chosen, input.voice);

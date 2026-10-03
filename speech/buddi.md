@@ -28,7 +28,9 @@ on disk.
 ## What it asks, and how much
 
 The first transcription and the first spoken reply in a conversation are
-each an approval card; later ones in the same conversation run. Your own
+each an approval card; later ones in the same conversation run. A spoken
+reply's card also offers "Always: this agent": an agent that speaks every
+morning (Anchor's voice edition) then asks once, not every day. Your own
 voice notes on Telegram ask nothing (you are not an agent), and still count. At most 200
 transcriptions and 200 spoken replies a day by default; you change both on
 the page.

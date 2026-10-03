@@ -287,6 +287,28 @@ suite('speech tools (postgres)', () => {
     expect(owned.rows).toEqual([{ side: 'listen' }, { side: 'speak' }]);
   });
 
+  it('say: "Always: this agent" once, and that agent\'s next conversations speak without a card; another agent still asks', async () => {
+    await choose(settingsWith({ speak: { backend: 'openai', accountId: OPENAI.id } }));
+    const fresh = async (agent: string): Promise<string> =>
+      ((await pool.query(`insert into core.conversations (agent_id) values ($1) returning id::text as id`, [agent])).rows[0] as { id: string }).id;
+    const anchorFirst = await fresh('anchor');
+    const first = await run('speech.say', { text: 'Good morning.' }, { agentId: 'anchor', conversationId: anchorFirst });
+    expect(first).toMatchObject({ ok: false, reason: 'approval-required' });
+    const actionId = (first as { actionId: string }).actionId;
+    // The card offers the standing yes because the tool allows remembering it.
+    expect(tool('speech.say').reusableApproval).toBe(true);
+    expect(await decideApproval(pool, { actionId, decision: 'approved', by: 'owner', via: 'web', permissionScope: 'always', registry })).toMatchObject({ ok: true });
+    await executeApproved(pool, { actionId, registry, ctx: ctx({ agentId: 'anchor', conversationId: anchorFirst }), worker: 'test' });
+    // Tomorrow's edition: a new conversation, no card.
+    expect(await run('speech.say', { text: 'Good morning again.' }, { agentId: 'anchor', conversationId: await fresh('anchor') })).toMatchObject({ ok: true });
+    // Another agent was not given it.
+    expect(await run('speech.say', { text: 'Hello.' }, { agentId: 'buddy', conversationId: await fresh('buddy') })).toMatchObject({ reason: 'approval-required' });
+    // Transcribing never takes a standing yes.
+    const note = await voiceNote();
+    await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id }, speak: { backend: 'openai', accountId: OPENAI.id } }));
+    expect(await run('speech.transcribe', { artifactId: note.id }, { agentId: 'anchor', conversationId: await fresh('anchor') })).toMatchObject({ reason: 'approval-required' });
+  });
+
   it('transcribe refuses what is not audio, what is too large to send, and an unknown id', async () => {
     await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id } }));
     const pdf = await saveArtifact(pool, { bytes: Buffer.from('%PDF-1.4'), mime: 'application/pdf', filename: 'x.pdf', createdBy: 'owner' });
