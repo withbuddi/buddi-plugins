@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-computer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agents work in the apps on your Mac that you allow, through a small native helper: macOS accessibility, the app's own window, your sign-ins.",
   "keywords": [
     "buddi-plugin"

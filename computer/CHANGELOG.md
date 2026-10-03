@@ -2,7 +2,11 @@
 
 What changes in @withbuddi/plugin-computer from one release to the next, newest first.
 
-## 0.1.0 — unreleased
+## 0.1.1 — 2026-10-03
+
+- Same as 0.1.0, published from the workflow with provenance.
+
+## 0.1.0 — 2026-10-03
 
 ### Added
 
