@@ -106,7 +106,7 @@ export async function topicChips(db: Db, now: Date): Promise<{ topics: Array<{ i
  * The stories
  * ------------------------------------------------------------------ */
 
-export const FILTERS = ['all', 'untold', 'today'] as const;
+export const FILTERS = ['all', 'untold', 'today', 'deals'] as const;
 export type Filter = (typeof FILTERS)[number];
 
 /** What the page is handed for a story: the kit's card and sheet, in words. */
@@ -264,7 +264,7 @@ export async function storiesFor(buddi: BuddiHost, params: { topic?: string; fil
   const language = ((await buddi.owner.language().catch(() => undefined)) ?? 'en').slice(0, 2);
   const ranked = await rankedStories(db, now, {
     ...(topic ? { topicId: topic.id } : {}), n: topic ? TOPIC_MAX : 200, since, untold: filter === 'untold', ownerLanguage: language,
-    ...(topic ? {} : { perTopic: PER_TOPIC_ALL }),
+    ...(topic ? {} : { perTopic: PER_TOPIC_ALL }), ...(filter === 'deals' ? { kind: 'deal' as const } : {}),
   });
   const position = new Map(topics.map((t) => [t.id, t.position]));
   // Grouped by topic in the owner's order; within a topic, rank order.
@@ -275,6 +275,9 @@ export async function storiesFor(buddi: BuddiHost, params: { topic?: string; fil
   if (stories.length > 0) return { stories, state: 'ok' };
   if (filter === 'untold') {
     return { stories, state: 'told', emptyTitle: ctx.anchor ? 'Anchor has told you all of this' : 'You’re up to date', note: 'Anything new lands here first.' };
+  }
+  if (filter === 'deals') {
+    return { stories, state: 'quiet', emptyTitle: 'No deals right now', note: 'Deals and buying guides land here, and never in an edition or the widget.' };
   }
   return { stories, state: 'quiet', emptyTitle: filter === 'today' ? 'Nothing here today' : `Nothing new${topic ? ` in ${topic.name}` : ''}`, note: 'Try another topic, or show everything.' };
 }
@@ -535,7 +538,7 @@ export const storiesPage: PageDescriptor = {
       },
       tabs: FILTERS.map((filter) => ({
         id: filter,
-        label: filter === 'all' ? 'All' : filter === 'untold' ? 'Not yet told' : 'Today',
+        label: filter === 'all' ? 'All' : filter === 'untold' ? 'Not yet told' : filter === 'today' ? 'Today' : 'Deals',
         body: [...FETCH_LINE, STORIES(filter)],
       })),
     },

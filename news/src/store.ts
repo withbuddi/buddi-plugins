@@ -10,7 +10,7 @@ import type { BuddiHost } from '@buddi/core/plugin';
 import { canonicalUrl, outletHost } from './canonical.js';
 import { assignStories, likeness, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
 import type { FetchedItem } from './fetch.js';
-import { articleSequence, featuresOf, isNews, isOpinion, LEAD_MARK, normalise, stripOutletSuffix } from './text.js';
+import { articleSequence, featuresOf, isDeal, isNews, isOpinion, LEAD_MARK, normalise, stripOutletSuffix } from './text.js';
 import { EVERY_SECONDS, STARTER_OUTLETS, STARTER_SOURCES, STARTER_TOPICS, starterSources, type Language, type SourceKind } from './starter.js';
 
 type Db = BuddiHost['db'];
@@ -235,13 +235,14 @@ export async function ingest(db: Db, source: SourceRow, links: TopicLink[], item
     if (!articleRow) {
       const sequence = articleSequence(title, lead);
       await db.query(
-        `insert into news.articles (id, source_id, outlet_id, url_canonical, url, guid, title, lead, language, opinion, published_at, fetched_at, tokens, entities, title_hash, search)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        `insert into news.articles (id, source_id, outlet_id, url_canonical, url, guid, title, lead, language, opinion, published_at, fetched_at, tokens, entities, title_hash, search, kind)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          on conflict (url_canonical) do nothing`,
         [
           id, source.id, outletId, url, url, item.guid ?? null, title.slice(0, 500), lead, item.language,
           source.opinion || isOpinion(url, title, item.categories), published, now, sequence,
           [...new Set(sequence.filter((t) => t.startsWith('!')).map((t) => t.slice(1)))], titleHash, normalise(`${title} ${lead}`),
+          isDeal(title, url, item.categories) ? 'deal' : 'news',
         ],
       );
       articleRow = id;
@@ -257,6 +258,21 @@ export async function ingest(db: Db, source: SourceRow, links: TopicLink[], item
   return added;
 }
 
+/** Read the articles from before 0.2.1 for deals, at most `limit` a call. Answers how many were read. */
+export async function classifyPending(db: Query, limit = 2000): Promise<number> {
+  const { rows } = await db.query<{ id: string; title: string; url: string }>(
+    `select id, title, url from news.articles where kind is null order by published_at desc limit $1`,
+    [limit],
+  );
+  if (rows.length === 0) return 0;
+  const deals = rows.filter((r) => isDeal(r.title, r.url)).map((r) => r.id);
+  await db.query(
+    `update news.articles set kind = case when id = any($2) then 'deal' else 'news' end where id = any($1)`,
+    [rows.map((r) => r.id), deals],
+  );
+  return rows.length;
+}
+
 /* ------------------------------------------------------------------ *
  * Stories
  * ------------------------------------------------------------------ */
@@ -270,15 +286,15 @@ export async function ingest(db: Db, source: SourceRow, links: TopicLink[], item
 export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: string): Promise<{ assigned: number; created: number }> {
   return db.transaction(async (tx) => {
     await tx.query(`select pg_advisory_xact_lock(hashtext('news.cluster:' || $1))`, [topicId]);
-    const { rows: fresh } = await tx.query<{ id: string; published_at: Date; tokens: string[] }>(
-      `select a.id, a.published_at, a.tokens from news.article_topics at join news.articles a on a.id = at.article_id
+    const { rows: fresh } = await tx.query<{ id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
+      `select a.id, a.published_at, a.tokens, a.language, a.kind from news.article_topics at join news.articles a on a.id = at.article_id
         where at.topic_id = $1 and at.story_id is null order by a.published_at limit 3000`,
       [topicId],
     );
     if (fresh.length === 0) return { assigned: 0, created: 0 };
     const earliest = Math.min(...fresh.map((a) => a.published_at.getTime()));
-    const { rows: members } = await tx.query<{ story_id: string; id: string; published_at: Date; tokens: string[] }>(
-      `select at.story_id, a.id, a.published_at, a.tokens
+    const { rows: members } = await tx.query<{ story_id: string; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
+      `select at.story_id, a.id, a.published_at, a.tokens, a.language, a.kind
          from news.stories s join news.article_topics at on at.story_id = s.id and at.topic_id = s.topic_id join news.articles a on a.id = at.article_id
         where s.topic_id = $1 and s.updated_at >= $2`,
       [topicId, new Date(earliest - WINDOW_MS)],
@@ -286,11 +302,11 @@ export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: stri
     const open = new Map<string, OpenStory>();
     for (const m of members) {
       const story = open.get(m.story_id) ?? { id: m.story_id, updatedAt: m.published_at, members: [] };
-      story.members.push({ id: m.id, publishedAt: m.published_at, sequence: m.tokens });
+      story.members.push({ id: m.id, publishedAt: m.published_at, sequence: m.tokens, language: m.language, deal: m.kind === 'deal' });
       if (m.published_at > story.updatedAt) story.updatedAt = m.published_at;
       open.set(m.story_id, story);
     }
-    const incoming: ClusterArticle[] = fresh.map((a) => ({ id: a.id, publishedAt: a.published_at, sequence: a.tokens }));
+    const incoming: ClusterArticle[] = fresh.map((a) => ({ id: a.id, publishedAt: a.published_at, sequence: a.tokens, language: a.language, deal: a.kind === 'deal' }));
     const { assignments, created } = assignStories(incoming, [...open.values()], () => newId('s'));
     for (const id of created) {
       const first = incoming.find((a) => assignments.get(a.id) === id)!;

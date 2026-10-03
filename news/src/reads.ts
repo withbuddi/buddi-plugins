@@ -102,6 +102,8 @@ export interface ArticleRow {
   story_id: string; id: string; title: string; lead: string; url: string; language: string; published_at: Date; fetched_at: Date;
   opinion: boolean; outlet_id: string | null; outlet: string; outlet_kind: string | null; paywall: boolean; logo: string | null;
   lean: string | null; source_id: string; source_kind: SourceKind;
+  /** `news`, or `deal` for a deal or buying guide. */
+  kind: 'news' | 'deal';
 }
 
 /** The visible articles of these stories: sources and outlets not muted. */
@@ -111,7 +113,7 @@ export async function visibleArticles(db: Db, storyIds: string[]): Promise<Map<s
   const { rows } = await db.query<ArticleRow>(
     `select at.story_id, a.id, a.title, a.lead, a.url, a.language, a.published_at, a.fetched_at, a.opinion, a.outlet_id,
             coalesce(o.name, src.name) as outlet, o.kind as outlet_kind, coalesce(o.paywall, false) as paywall,
-            o.logo_key as logo, o.lean, a.source_id, src.kind as source_kind
+            o.logo_key as logo, o.lean, a.source_id, src.kind as source_kind, coalesce(a.kind, 'news') as kind
        from news.article_topics at
        join news.stories s on s.id = at.story_id and s.topic_id = at.topic_id
        join news.articles a on a.id = at.article_id
@@ -214,6 +216,11 @@ export interface HeadlinesQuery {
   since?: Date;
   untold?: boolean;
   ownerLanguage?: string;
+  /**
+   * `news` (the default) leaves deals and buying guides out, and a story made
+   * only of them; `deal` keeps only them (the News page's Deals).
+   */
+  kind?: 'news' | 'deal';
 }
 
 const CANDIDATES = `
@@ -252,7 +259,9 @@ export async function rankedStories(db: Db, now: Date, q: HeadlinesQuery & { per
     [now, since, q.topicId ?? null],
   );
   const ids = rows.map((r) => r.id);
-  const [articles, told] = await Promise.all([visibleArticles(db, ids), lastToldCounts(db, ids)]);
+  const [visible, told] = await Promise.all([visibleArticles(db, ids), lastToldCounts(db, ids)]);
+  const kind = q.kind ?? 'news';
+  const articles = new Map([...visible].map(([id, list]) => [id, list.filter((a) => a.kind === kind)] as const));
   const shown = new Set<string>();
   const perTopic = new Map<string, number>();
   const out: RankedStory[] = [];

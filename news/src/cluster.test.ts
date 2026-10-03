@@ -5,16 +5,17 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assignStories, likeness, MERGE_THRESHOLD, WINDOW_MS, type ClusterArticle } from './cluster.js';
-import { articleSequence, featuresOf, isNews, isOpinion, stripOutletSuffix, terms } from './text.js';
+import { assignStories, commonNames, likeness, MERGE_THRESHOLD, WINDOW_MS, type ClusterArticle } from './cluster.js';
+import { articleSequence, featuresOf, isDeal, isNews, isOpinion, stripOutletSuffix, terms } from './text.js';
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
 const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as {
   fedCut: Fixture[]; togoVote: Fixture[]; similarButDifferent: Array<[Fixture, Fixture]>;
+  crossLanguage: Array<[Fixture, Fixture]>; crossLanguageApart: Array<[Fixture, Fixture]>;
 };
 
 const article = (f: Fixture, i: number, prefix: string): ClusterArticle => ({
-  id: `${prefix}${i}`, publishedAt: new Date(f.at), sequence: articleSequence(f.title, f.lead),
+  id: `${prefix}${i}`, publishedAt: new Date(f.at), sequence: articleSequence(f.title, f.lead), language: f.lang,
 });
 
 let counter = 0;
@@ -59,6 +60,33 @@ describe('clustering', () => {
   });
 });
 
+describe('across English and French', () => {
+  // Pairs from the first live editions (2026-10-03): the same report in both
+  // languages, which used to stay two stories (the flydubai pair first).
+  it.each(fx.crossLanguage.map((pair) => [pair[0].title, pair[1].title, pair] as const))('puts "%s" and "%s" together', (_a, _b, pair) => {
+    const [a, b] = pair.map((f, i) => article(f, i, 'x'));
+    expect(a!.language).not.toBe(b!.language);
+    expect(likeness(featuresOf(a!.sequence), featuresOf(b!.sequence), true)).toBeGreaterThanOrEqual(MERGE_THRESHOLD);
+    expect(assignStories([a!, b!], [], newId).created).toHaveLength(1);
+  });
+
+  it.each(fx.crossLanguageApart.map((pair) => [pair[0].title, pair[1].title, pair] as const))('keeps "%s" and "%s" apart', (_a, _b, pair) => {
+    const [a, b] = pair.map((f, i) => article(f, i, 'y'));
+    expect(likeness(featuresOf(a!.sequence), featuresOf(b!.sequence), true)).toBeLessThan(MERGE_THRESHOLD);
+    expect(assignStories([a!, b!], [], newId).created).toHaveLength(2);
+  });
+
+  it('does not count a name common to much of the topic towards a cross-language match', () => {
+    const [en, fr] = fx.crossLanguage[0]!.map((f, i) => article(f, i, 'c'));
+    const fa = featuresOf(en!.sequence);
+    const fb = featuresOf(fr!.sequence);
+    expect(likeness(fa, fb, true, new Set(['flydubai', 'uae']))).toBeLessThan(MERGE_THRESHOLD);
+    // Twelve other stories this hour that all name flydubai make it common.
+    const busy = Array.from({ length: 12 }, (_, i) => ({ id: `b${i}`, updatedAt: en!.publishedAt, members: [{ ...en!, id: `bm${i}`, sequence: articleSequence(`Report ${i} on the Flydubai flight`, '') }] }));
+    expect(commonNames(busy, [en!, fr!]).has('flydubai')).toBe(true);
+  });
+});
+
 describe('text features', () => {
   it('maps French and English news words onto one concept and marks names', () => {
     expect(terms('La Fed abaisse ses taux directeurs')).toEqual(['!fed', 'cut', 'rate']);
@@ -80,6 +108,42 @@ describe('text features', () => {
     expect(isNews('Modification du capital social - Paris', 'Les Echos - Annonces légales')).toBe(false);
     expect(isNews('Ukraine')).toBe(false);
     expect(isNews('Tariffs and global trade')).toBe(true);
+  });
+
+  it('tells deals and buying guides, in English and French, from news that mentions a deal or a price', () => {
+    for (const title of [
+      'Google Pixel 11 Pro à -100 € : le nouveau photophone premium de Google se rend déjà plus accessible',
+      'Amazon fait déjà passer le nouveau Google Pixel 11 sous les 750 €',
+      'Bon plan : le Galaxy S26 à 699 € chez Boulanger',
+      'Soldes : les meilleures offres sur les casques',
+      'Quel aspirateur robot acheter en 2026 ?',
+      'The Best Early Prime Day Deals Ahead of Amazon’s Second Sale (2026)',
+      'Best Smart Cat Trackers of 2026: Fi Mini vs. Tractive',
+      'Sony WH-1000XM6 drop to their lowest price yet',
+      'Get 40% off a year of Proton VPN',
+      'Don’t miss this $75 deal for your Disrupt 2026 pass',
+      'The Steam Autumn Sale Has Deals On Resident Evil Requiem',
+    ]) expect(isDeal(title), title).toBe(true);
+    for (const title of [
+      'Big Pharma’s China deal spree grows with latest tie-up worth up to $7.8 billion',
+      'JD.com set to win EU approval for Ceconomy deal, source says',
+      'US and EU reach a trade deal on steel',
+      'The 7-year-old Nvidia Shield TV is now $100 more expensive due to AI',
+      'Togo : l’enquête s’est bloquée après la promotion de l’officier',
+      'FAO : le mécanisme Forêts et Paysans a mobilisé environ 2,7 milliards FCFA en 7 ans au Togo',
+      'Sept ans après sa sortie, la Nvidia Shield TV Pro voit son prix exploser',
+    ]) expect(isDeal(title), title).toBe(false);
+    expect(isDeal('Un casque à découvrir', 'https://www.frandroid.com/bons-plans/3270863_casque')).toBe(true);
+    expect(isDeal('Headphones worth a look', 'https://www.theverge.com/deals/123/headphones')).toBe(true);
+    expect(isDeal('Headphones worth a look', 'https://example.com/a', ['Deals'])).toBe(true);
+    expect(isDeal('Headphones worth a look', 'https://www.theverge.com/tech/123/headphones')).toBe(false);
+  });
+
+  it('keeps a deal out of a news story, and news out of a deal', () => {
+    const news = { id: 'n', publishedAt: new Date('2026-10-02T10:00:00Z'), sequence: articleSequence('Google Pixel 11 Pro review: the best Pixel camera yet', 'Google Pixel 11 Pro has a new camera.') };
+    const deal = { id: 'd', publishedAt: new Date('2026-10-02T11:00:00Z'), deal: true, sequence: articleSequence('Google Pixel 11 Pro camera deal: the best Pixel yet for less', 'Google Pixel 11 Pro has a new camera.') };
+    expect(likeness(featuresOf(news.sequence), featuresOf(deal.sequence))).toBeGreaterThanOrEqual(MERGE_THRESHOLD);
+    expect(assignStories([news, deal], [], newId).created).toHaveLength(2);
   });
 
   it('reads opinion from the address, the title label or the category', () => {

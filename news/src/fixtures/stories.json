@@ -64,5 +64,65 @@
         "title": "Trump fires FBI director in surprise move",
         "lead": "President Trump fired the director of the FBI on Monday, a surprise move that drew criticism from lawmakers." }
     ]
+  ],
+  "crossLanguage": [
+    [
+      { "outlet": "France 24", "lang": "en", "at": "2026-10-03T06:17:45Z",
+        "title": "UAE investigators say Omani Flydubai co-pilot was planning 'terrorist act'",
+        "lead": "The Omani co-pilot accused of attacking the captain aboard a Flydubai flight on September 30 attempted to carry out a \"terrorist\" attack, the United Arab Emirates prosecutor general said ​on Saturday. He had been barred from flying in his country for security reasons. Several media outlets reported that Omani authorities suspected him of holding radical ideological views." },
+      { "outlet": "Libération", "lang": "fr", "at": "2026-10-03T06:56:20Z",
+        "title": "Vol Flydubai : le copilote à l’origine de l’attaque planifiait un «acte terroriste» et était interdit de vol par les autorités d’Oman",
+        "lead": "Le procureur général des Emirats arabes unis a annoncé ce samedi 3 octobre qu’Hammam Al-Hammami préparait un acte terroriste. D’après plusieurs médias, les autorités de son pays l’avaient interdit de vol après un séjour en Syrie où il se serait radicalisé." }
+    ],
+    [
+      { "outlet": "Africanews", "lang": "en", "at": "2026-10-02T14:53:41Z",
+        "title": "Ebola goes after Congo's children, killing seven daily on average, NGO says",
+        "lead": "Since 15 May, at least 2,071 children aged under 18 have contracted Ebola, with 961 of these children dying from the disease, Save the Children said." },
+      { "outlet": "Africanews", "lang": "fr", "at": "2026-10-02T15:55:00Z",
+        "title": "RDC : Ebola frappe durement les enfants, près de sept morts chaque jour",
+        "lead": "Depuis la déclaration de l’épidémie le 15 mai, au moins 961 enfants sont morts du virus Ebola en République démocratique du Congo, dont près des deux tiers avaient moins de cinq ans, selon une analyse de Save the Children fondée sur les données du ministère de la Santé." }
+    ],
+    [
+      { "outlet": "Africanews", "lang": "en", "at": "2026-10-02T07:52:03Z",
+        "title": "Guinea-Bissau junta blocks Embaló’s planned return, citing security concerns",
+        "lead": "Earlier this week, former president Umaro Sissoco Embaló said he would come back to Guinea-Bissau. But on Thursday, the military high command said it refused his return, citing national security, public order and the need to preserve social stability." },
+      { "outlet": "Africanews", "lang": "fr", "at": "2026-10-02T08:08:54Z",
+        "title": "Guinée-Bissau : le retour du président déchu Sissoco Embalo compromis",
+        "lead": "En Guinée-Bissau, le retour annoncé de l’ancien président Umaro Sissoco Embalo est compromis. Les militaires au pouvoir estiment que les conditions de sécurité ne sont pas réunies pour permettre son retour dans le pays." }
+    ]
+  ],
+  "crossLanguageApart": [
+    [
+      { "outlet": "France 24", "lang": "en", "at": "2026-10-03T06:17:45Z",
+        "title": "UAE investigators say Omani Flydubai co-pilot was planning 'terrorist act'",
+        "lead": "The Omani co-pilot accused of attacking the captain aboard a Flydubai flight on September 30 attempted to carry out a \"terrorist\" attack, the United Arab Emirates prosecutor general said ​on Saturday. He had been barred from flying in his country for security reasons. Several media outlets reported that Omani authorities suspected him of holding radical ideological views." },
+      { "outlet": "Le Monde", "lang": "fr", "at": "2026-10-02T22:16:46Z",
+        "title": "Royaume-Uni : deux Iraniens inculpés pour un projet d’acte terroriste contre la communauté juive à Manchester",
+        "lead": "Les suspects sont soupçonnés par la police britannique d’avoir « communiqué avec d’autres personnes par des applications chiffrées afin d’obtenir les composants nécessaires à l’assemblage d’un engin explosif artisanal »." }
+    ],
+    [
+      { "outlet": "Africanews", "lang": "en", "at": "2026-10-02T11:06:18Z",
+        "title": "Mobile labs speed up Ebola testing in eastern DR Congo",
+        "lead": "In the eastern Democratic Republic of Congo, a mobile lab has been operating for two weeks, a welcome relief to staff at the nearby Ebola treatment centre who said that getting a test result used to take 72 hours." },
+      { "outlet": "Africanews", "lang": "fr", "at": "2026-10-02T15:55:00Z",
+        "title": "RDC : Ebola frappe durement les enfants, près de sept morts chaque jour",
+        "lead": "Depuis la déclaration de l’épidémie le 15 mai, au moins 961 enfants sont morts du virus Ebola en République démocratique du Congo, dont près des deux tiers avaient moins de cinq ans, selon une analyse de Save the Children fondée sur les données du ministère de la Santé." }
+    ],
+    [
+      { "outlet": "Africanews", "lang": "en", "at": "2026-10-01T06:05:12Z",
+        "title": "DRC: Death of local official highlights tensions around Ebola response",
+        "lead": "Karondwa was buried in his native Lubero, as calls grow for an investigation into his death and for greater trust between communities and health workers fighting the Ebola outbreak." },
+      { "outlet": "Africanews", "lang": "fr", "at": "2026-10-02T15:55:00Z",
+        "title": "RDC : Ebola frappe durement les enfants, près de sept morts chaque jour",
+        "lead": "Depuis la déclaration de l’épidémie le 15 mai, au moins 961 enfants sont morts du virus Ebola en République démocratique du Congo, dont près des deux tiers avaient moins de cinq ans, selon une analyse de Save the Children fondée sur les données du ministère de la Santé." }
+    ],
+    [
+      { "outlet": "Africanews", "lang": "en", "at": "2026-10-02T08:26:54Z",
+        "title": "Guinea's exiled former PM Sidya Touré to be buried in Ivory Coast",
+        "lead": "Sidya Touré died in Paris last week. His family said the former Guinean prime minister will be buried in Ivory Coast." },
+      { "outlet": "Africanews", "lang": "fr", "at": "2026-10-02T08:08:54Z",
+        "title": "Guinée-Bissau : le retour du président déchu Sissoco Embalo compromis",
+        "lead": "En Guinée-Bissau, le retour annoncé de l’ancien président Umaro Sissoco Embalo est compromis. Les militaires au pouvoir estiment que les conditions de sécurité ne sont pas réunies pour permettre son retour dans le pays." }
+    ]
   ]
 }

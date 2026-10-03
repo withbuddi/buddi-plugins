@@ -102,6 +102,8 @@ export interface GetOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Whether a redirect may go to this host; same site always may. Absent, any host may. */
   allowHost?: (host: string) => boolean;
+  /** A redirect to an address this answers true for is not followed: the answer is the redirect, at that address. */
+  stopAt?: (next: URL) => boolean;
 }
 
 /** GET with a deadline, the host's turn, and redirects followed by hand. `permanent` is where a 301 or 308 led. */
@@ -127,6 +129,7 @@ export async function politeGet(http: HttpArea, url: string, options: GetOptions
       if (!location) throw new FetchError(`answered ${response.status} without saying where`, response.status);
       const next = new URL(location, at);
       if (next.protocol !== 'https:' && next.protocol !== 'http:') throw new FetchError('redirected somewhere that is not the web');
+      if (options.stopAt?.(next)) return { response, url: next.toString() };
       if (siteOf(next.hostname) !== siteOf(host) && options.allowHost && !options.allowHost(next.hostname)) {
         throw new FetchError(`redirected to ${next.hostname}, which this plugin has not declared`);
       }
@@ -138,6 +141,23 @@ export async function politeGet(http: HttpArea, url: string, options: GetOptions
     return { response, url: at, ...(permanent ? { permanent } : {}) };
   }
   throw new FetchError(`redirected more than ${MAX_REDIRECTS} times`);
+}
+
+/** POST a form with a deadline and the host's turn; no redirect is followed. */
+export async function politePost(http: HttpArea, url: string, body: string, options: { headers?: Record<string, string>; maxBytes?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<HttpResponse> {
+  const host = new URL(url).hostname;
+  return oneAtATime(host, async () => {
+    await politeWait(host, Date.now, options.sleep);
+    return http.request({
+      url,
+      method: 'POST',
+      headers: { 'user-agent': USER_AGENT, 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8', ...options.headers },
+      body,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+      maxBytes: options.maxBytes ?? 256 * 1024,
+    });
+  });
 }
 
 /** Milliseconds a Retry-After asks for: seconds or an HTTP date; undefined when absent or unreadable. */

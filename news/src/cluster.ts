@@ -17,7 +17,7 @@
  * by six outlets in English and French, and pairs of different stories told
  * in the same words.
  */
-import { featuresOf, jaccard, weightedJaccard, type Features, type TermSet } from './text.js';
+import { featuresOf, isTranslatable, jaccard, weightedJaccard, type Features, type TermSet } from './text.js';
 
 export const WINDOW_MS = 48 * 3600_000;
 export const MERGE_THRESHOLD = 0.3;
@@ -25,11 +25,25 @@ export const MERGE_THRESHOLD = 0.3;
 export const SAME_WORDING = 0.5;
 /** At most this many of a story's articles are compared, the newest. */
 export const COMPARE_MAX = 24;
+/** Names two articles in different languages must share before their likeness counts. */
+export const CROSS_NAMES = 3;
+/**
+ * The cross-language likeness an article pair must reach: higher than
+ * `MERGE_THRESHOLD`, because a vocabulary cut down to names and concepts is
+ * small, and two stories about one famous person share a good part of it.
+ */
+export const CROSS_MERGE = 0.4;
+export const COMMON_SHARE = 0.1;
+export const COMMON_MIN = 6;
 
 export interface ClusterArticle {
   id: string;
   publishedAt: Date;
   sequence: string[];
+  /** `en` or `fr`; two articles in different languages are compared on what both languages share. */
+  language?: string;
+  /** A deal or buying guide: it only ever joins other deals, and news never joins it. */
+  deal?: boolean;
 }
 
 export interface OpenStory {
@@ -50,24 +64,71 @@ function alike(a: TermSet, b: TermSet): number {
   return Math.max(weightedJaccard(a.weights, b.weights), shingle);
 }
 
+/** A term set cut down to what reads the same in both languages: names, numbers and lexicon concepts. */
+function translatable(t: TermSet): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [k, w] of t.weights) if (t.entities.has(k) || isTranslatable(k)) out.set(k, w);
+  return out;
+}
+
+/**
+ * How alike two stretches in different languages are. Their shingles and
+ * their untranslated words can never match, so they are compared on the
+ * vocabulary both languages share, and only when they name at least
+ * `CROSS_NAMES` things in common (one shared country is a topic, not a
+ * story), not counting the names `common` to much of the topic right now
+ * (Trump, in US politics), and only past `CROSS_MERGE`.
+ */
+function alikeAcross(a: TermSet, b: TermSet, common: ReadonlySet<string>): number {
+  let shared = 0;
+  for (const e of a.entities) if (b.entities.has(e) && !common.has(e)) shared += 1;
+  if (shared < CROSS_NAMES) return 0;
+  const score = weightedJaccard(translatable(a), translatable(b));
+  return score >= CROSS_MERGE ? score : 0;
+}
+
 /**
  * How alike two articles are, 0 to 1: title and lead against title and lead,
  * or title against title when either has no lead (a Google News item is a
- * title alone, and a lead would only dilute what it shares).
+ * title alone, and a lead would only dilute what it shares). Across languages
+ * the same-language measure still counts (a name-heavy title can clear it on
+ * its own), and the cross-language one is added beside it.
  */
-export function likeness(a: Features, b: Features): number {
-  return a.hasLead && b.hasLead ? alike(a, b) : alike(a.title, b.title);
+export function likeness(a: Features, b: Features, across = false, common: ReadonlySet<string> = NONE): number {
+  const [x, y] = a.hasLead && b.hasLead ? [a, b] as const : [a.title, b.title] as const;
+  const same = alike(x, y);
+  return across ? Math.max(same, alikeAcross(x, y, common)) : same;
+}
+
+const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * The names too common in a topic right now to say two articles tell one
+ * story: in at least `COMMON_SHARE` of the open stories and new articles, and
+ * at least `COMMON_MIN` of them.
+ */
+export function commonNames(stories: OpenStory[], incoming: ClusterArticle[]): Set<string> {
+  const units: Array<Set<string>> = [
+    ...stories.map((s) => new Set(s.members.flatMap((m) => [...featuresOf(m.sequence).entities]))),
+    ...incoming.map((a) => featuresOf(a.sequence).entities),
+  ];
+  const count = new Map<string, number>();
+  for (const unit of units) for (const e of unit) count.set(e, (count.get(e) ?? 0) + 1);
+  const floor = Math.max(COMMON_MIN, units.length * COMMON_SHARE);
+  return new Set([...count].filter(([, n]) => n >= floor).map(([e]) => e));
 }
 
 /** The best open story for an article, or null when it starts one. */
-export function bestStory(article: ClusterArticle, stories: OpenStory[]): { id: string; score: number } | null {
+export function bestStory(article: ClusterArticle, stories: OpenStory[], common: ReadonlySet<string> = NONE): { id: string; score: number } | null {
   const mine = featuresOf(article.sequence);
   let best: { id: string; score: number } | null = null;
   for (const story of stories) {
     if (Math.abs(article.publishedAt.getTime() - story.updatedAt.getTime()) > WINDOW_MS) continue;
     const members = [...story.members].sort((x, y) => y.publishedAt.getTime() - x.publishedAt.getTime()).slice(0, COMPARE_MAX);
     for (const member of members) {
-      const score = likeness(mine, featuresOf(member.sequence));
+      if (!!member.deal !== !!article.deal) continue;
+      const across = !!article.language && !!member.language && article.language !== member.language;
+      const score = likeness(mine, featuresOf(member.sequence), across, common);
       if (score >= MERGE_THRESHOLD && (!best || score > best.score)) best = { id: story.id, score };
     }
   }
@@ -87,8 +148,9 @@ export function assignStories(
   const stories = open.map((s) => ({ ...s, members: [...s.members] }));
   const assignments = new Map<string, string>();
   const created: string[] = [];
+  const common = commonNames(stories, incoming);
   for (const article of [...incoming].sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime())) {
-    const best = bestStory(article, stories);
+    const best = bestStory(article, stories, common);
     if (best) {
       const story = stories.find((s) => s.id === best.id)!;
       story.members.push(article);

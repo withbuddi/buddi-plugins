@@ -47,7 +47,8 @@ small images (its assets area) and removed with the plugin.
 
 Only feed fetches: a request to each source's address for its latest items,
 to Google News with a topic's keywords as the search (an owner topic's name
-and keywords are visible to Google), to Hacker News's Algolia front page,
+and keywords are visible to Google) and, once per item, for an item's own
+outlet link, to Hacker News's Algolia front page,
 to an outlet's site for its icon when it is first seen and once a week
 after, and to an article's outlet when Anchor reads it (once, after its
 robots.txt). No cookies, no

@@ -118,6 +118,48 @@ million: million millions
 record: record records
 first: first premiere
 second: second deuxieme seconde
+terror: terror terrorist terrorists terrorism terroriste terroristes terrorisme
+pilot: pilot pilots pilote pilotes
+copilot: copilot copilots copilote copilotes
+flight: flight flights vol vols
+plane: plane planes aircraft airplane airliner avion avions
+passenger: passenger passengers passager passagers
+crash: crash crashes crashed ecrasement accident accidents
+hijack: hijack hijacks hijacked hijacking hijacker detournement detourne
+investigate: investigation investigations investigator investigators probe probes probing inquiry enquete enquetes enqueteur enqueteurs
+prosecutor: prosecutor prosecutors procureur procureurs parquet
+plan: plan plans planned planning planifiait planifie planifier
+stab: stab stabs stabbed stabbing poignarde poignarder poignardee
+radical: radical radicalised radicalized radicalisation radicalization radicalise radicalisee extremism extremist extremists extremisme extremiste
+hero: hero heroes heroic heroism heros heroique heroisme
+child: child children enfant enfants
+epidemic: epidemic epidemics outbreak outbreaks epidemie epidemies flambee
+virus: virus
+disease: disease diseases maladie maladies
+case: cases cas
+test: test tests testing depistage
+lab: lab labs laboratory laboratories laboratoire laboratoires
+return: return returns returned returning retour rentrer revenir
+junta: junta junte
+military: military army armee militaire militaires soldiers soldats
+former: former ancien ancienne
+exile: exile exiled exil exile
+bury: buried burial bury enterre enterree inhume inhumee inhumation funeral funerailles obseques
+helicopter: helicopter helicopters helicoptere helicopteres
+wife: wife epouse
+businessman: businessman businessmen tycoon magnat
+execution: execution executions executed
+debate: debate debates debat debats
+independence: independence independance
+reform: reform reforms reforme reformes
+forest: forest forests foret forets
+farmer: farmer farmers farm farms paysan paysans agriculteur agriculteurs
+programme: program programs programme programmes
+health: health sante
+crisis: crisis crises crise
+deposed: deposed toppled dechu renverse
+axe: axe ax hache
+toll: toll bilan
 !usa: us usa u.s united states etats unis americain americaine americains americaines american americans
 !france: france francais francaise french
 !uk: uk britain british royaume uni britannique
@@ -139,6 +181,33 @@ second: second deuxieme seconde
 !ivory_coast: ivory coast ivoire ivoirien ivorian
 !ecowas: ecowas cedeao
 !africa: africa african afrique africain africaine
+!drc: drc rdc congo congolese congolais congolaise
+!uae: uae u.a.e emirats emirati emirien emirienne emiratie emirati
+!oman: oman omani omanais omanaise
+!india: india indian indien indienne inde
+!saudi: saudi saoudite saoudien saoudienne
+!brazil: brazil brazilian bresil bresilien bresilienne
+!morocco: morocco moroccan maroc marocain marocaine
+!guinea: guinea guinean guinee guineen guineenne
+!bissau: bissau
+!zimbabwe: zimbabwe zimbabwean zimbabween zimbabweenne
+!syria: syria syrian syrie syrien syrienne
+!egypt: egypt egyptian egypte egyptien egyptienne
+!germany: germany german allemagne allemand allemande
+!italy: italy italian italie italien italienne
+!spain: spain spanish espagne espagnol espagnole
+!japan: japan japanese japon japonais japonaise
+!lebanon: lebanon lebanese liban libanais libanaise
+!algeria: algeria algerian algerie algerien algerienne
+!tunisia: tunisia tunisian tunisie tunisien tunisienne
+!cameroon: cameroon cameroonian cameroun camerounais camerounaise
+!mexico: mexico mexican mexique mexicain mexicaine
+!turkey: turkey turkish turquie turc turque
+!korea: korea korean coree coreen coreenne
+!poland: poland polish pologne polonais polonaise
+!greece: greece greek grece grec grecque
+!imf: imf fmi
+!who: oms
 !fed: fed
 !ecb: ecb bce
 !un: un onu nations unies
@@ -147,9 +216,12 @@ second: second deuxieme seconde
 `;
 
 const LEXICON = new Map<string, string>();
+/** Every concept the lexicon maps words onto: terms that read the same in English and French. */
+const CONCEPTS = new Set<string>();
 const PHRASES: Array<[string[], string]> = [];
 for (const line of LEXICON_SOURCE.trim().split('\n')) {
   const [concept, words] = line.split(':').map((s) => s.trim()) as [string, string];
+  CONCEPTS.add(concept.replace(/^!/, ''));
   for (const word of words.split(/\s+/)) {
     if (!LEXICON.has(word)) LEXICON.set(word, concept);
   }
@@ -164,8 +236,18 @@ const PHRASE_SOURCE: Array<[string, string]> = [
   ['interest rates', 'rate'], ['interest rate', 'rate'], ['taux d interet', 'rate'], ['taux directeurs', 'rate'], ['taux directeur', 'rate'],
   ['quarter point', 'quarter_point'], ['quart de point', 'quarter_point'], ['0.25 point', 'quarter_point'], ['0.25 percentage point', 'quarter_point'],
   ['prime minister', 'prime_minister'], ['premier ministre', 'prime_minister'],
+  ['co pilot', 'copilot'], ['co pilote', 'copilot'], ['democratic republic of congo', '!drc'], ['democratic republic of the congo', '!drc'],
+  ['republique democratique du congo', '!drc'], ['dr congo', '!drc'], ['united arab emirates', '!uae'], ['emirats arabes unis', '!uae'],
+  ['saudi arabia', '!saudi'], ['arabie saoudite', '!saudi'], ['south africa', '!south_africa'], ['afrique du sud', '!south_africa'],
+  ['north korea', '!north_korea'], ['coree du nord', '!north_korea'], ['south korea', '!south_korea'], ['coree du sud', '!south_korea'],
+  ['world bank', '!world_bank'], ['banque mondiale', '!world_bank'], ['world health organization', '!who'], ['organisation mondiale de la sante', '!who'],
+  ['death penalty', 'death_penalty'], ['peine de mort', 'death_penalty'], ['homme d affaires', 'businessman'], ['hommes d affaires', 'businessman'],
+  ['death toll', 'toll'],
 ];
-for (const [phrase, concept] of PHRASE_SOURCE) PHRASES.push([phrase.split(' '), concept]);
+for (const [phrase, concept] of PHRASE_SOURCE) {
+  PHRASES.push([phrase.split(' '), concept]);
+  CONCEPTS.add(concept.replace(/^!/, ''));
+}
 PHRASES.sort((a, b) => b[0].length - a[0].length);
 
 /** Lower case, accents gone, apostrophes and punctuation as spaces, decimal commas as points. */
@@ -254,6 +336,15 @@ export function terms(text: string, names: Set<string> = capitalisedWords(text))
     out.push(names.has(word) && !NOT_NAMES.has(word) ? `!${s}` : s);
   }
   return out;
+}
+
+/**
+ * Whether a term reads the same in English and French: a lexicon concept or a
+ * number. Names (entities) read the same too; every other word belongs to one
+ * language and can never be shared across the two.
+ */
+export function isTranslatable(term: string): boolean {
+  return CONCEPTS.has(term) || /^\d/.test(term);
 }
 
 /** The terms of one stretch of text, compared. */
@@ -365,4 +456,44 @@ export function isOpinion(url: string, title: string, categories: string[] = [])
     path = '';
   }
   return OPINION_PATH.test(path) || OPINION_TITLE.test(title.trim()) || categories.some((c) => OPINION_CATEGORY.test(c.trim()));
+}
+
+/*
+ * Deals and buying guides: shopping, not news. Tagged at ingest so editions
+ * and the widget leave them out, and the News page shows them under Deals.
+ */
+const DEAL_PATH = /\/(deals?|deal-of-the-day|bons?-plans?|bonplans?|promos?|promotions?|soldes|shopping|coupons?|buying-guides?|best-buys?|guides?-d-achat|guide-achat|achat-malin)(\/|$|-)/i;
+const DEAL_CATEGORY = /^(deals?|bons? plans?|bon plan|promos?|promotions?|soldes|shopping|buying guides?|guides? d[’']achat|meilleures? offres?)$/i;
+const DEAL_TITLE = [
+  // English: "deal" alone is as often a merger or a treaty, so only its shopping uses.
+  /^deals?( alert)?\s*[:|-]/i,
+  /\bdeals? of the (day|week)\b/i,
+  /[$£€]\s?\d+(?:[.,]\d{2})?\s+deals?\b/i,
+  /\b(early|best|top|biggest|cheapest)\b.{0,40}\bdeals\b/i,
+  /\bdeals (on|for)\b(?!.{0,30}\b(tariffs?|trade|nuclear|gaza|ukraine|russia|hostages?|ceasefire|peace|budget|debt|shares?|stake)\b)/i,
+  /\b\d{1,2}\s?% off\b/i,
+  /\b(price drop|lowest price|all-time low|record low price|on sale|sale price|discounted|coupon|promo code|black friday|cyber monday|prime day|prime big deal days?)\b/i,
+  /\bsave (up to )?[$£€]\s?\d/i,
+  /\b(?:just|only)\s+[$£€]\s?\d+(?:[.,]\d{2})?\b(?!\s?(?:bn|billion|million|m|k)\b)/i,
+  /\bbest\b.{1,60}\b(to buy|you can buy|to get|for \d{4}|right now|of \d{4})\b/i,
+  // French
+  /\b(bons? plans?|promo|promos|en promotion|soldes|code promo|french days|vente flash|prix cass[ée]s?|chute de prix|baisse de prix|prix en baisse|meilleur prix|à prix réduit|grosse remise|remise de \d)(?![a-z])/i,
+  /(?:^|\s)-\s?\d{1,4}(?:[.,]\d{1,2})?\s?(?:€|%|euros?)(?=\s|$|[,.:!])/i,
+  /\b(?:à|sous les|sous la barre des) (?:seulement |moins de |)\d{1,4}(?:[.,]\d{2})?\s?€/i,
+  /\b(meilleur|meilleure|meilleurs|meilleures)\b.{1,60}\b(à acheter|du moment|en \d{4})\b/i,
+  /\b(quel|quelle|quels|quelles)\b.{1,40}\bacheter\b/i,
+  /\bguide d[’']achat\b/i,
+];
+
+/** Whether an item is a deal or a buying guide: by its address's section, its category or its title. */
+export function isDeal(title: string, url = '', categories: string[] = []): boolean {
+  let path = '';
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    path = '';
+  }
+  if (DEAL_PATH.test(path)) return true;
+  if (categories.some((c) => DEAL_CATEGORY.test(c.trim()))) return true;
+  return DEAL_TITLE.some((re) => re.test(title));
 }

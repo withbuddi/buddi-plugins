@@ -20,7 +20,7 @@ const NOW = new Date('2026-10-03T08:15:00Z'); // 10:15 in Paris, a Saturday
 const article = (over: Partial<ArticleRow>): ArticleRow => ({
   story_id: 's1', id: 'a1', title: 'Title', lead: '', url: 'https://www.rfi.fr/x', language: 'fr', published_at: new Date('2026-10-03T04:10:00Z'),
   fetched_at: new Date('2026-10-03T04:12:00Z'), opinion: false, outlet_id: 'rfi.fr', outlet: 'RFI Afrique', outlet_kind: 'international', paywall: false,
-  logo: 'rfi.fr', lean: null, source_id: 'rfi-afrique', source_kind: 'rss', ...over,
+  logo: 'rfi.fr', lean: null, source_id: 'rfi-afrique', source_kind: 'rss', kind: 'news', ...over,
 });
 
 const ranked = (id: string, topicId: string, status: 'new' | 'update' | 'told', score: number, articles: ArticleRow[] = [article({ story_id: id })]): RankedStory => ({

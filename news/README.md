@@ -104,8 +104,17 @@ catches up in one round.
 New articles join a story when they tell the same thing: their words, with
 names (people, places, numbers) counting most, compared within a topic over 48
 hours. A small lexicon maps French and English news words onto one another,
-so "La Fed abaisse ses taux" and "Fed cuts rates" are one story. Two stories
-that share words but name different things stay two. A story ranks higher with
+so "La Fed abaisse ses taux" and "Fed cuts rates" are one story. An English
+and a French article are compared on what both languages share (names,
+numbers, the lexicon's words) once they name at least three things in common,
+not counting a name all over the topic that day. Two stories that share words
+but name different things stay two. Deals and buying guides ("% off", "best …
+to buy", "bon plan", a price with its currency, an outlet's deals section) are
+marked as they arrive and form stories of their own: editions and the widget
+leave them out, and the News page shows them only under Deals. A Google News
+item's link is swapped for the outlet's own address shortly after it arrives
+(the item's Google page, then Google's decoder, once); when that fails the
+Google link stays. A story ranks higher with
 more outlets, both languages and different kinds of outlet, and fades with
 age.
 
@@ -161,8 +170,9 @@ assets area, removed with the plugin.
 Only feed fetches: each source's address is asked for its latest items;
 Google News is sent a topic's keywords as the search (so an owner topic's name
 and keywords are visible to Google); Hacker News's front page comes from
-Algolia; an outlet's site is asked for its icon when it is first seen and once
-a week after; and an article Anchor reads is fetched from its outlet, once,
+Algolia; a Google News item's Google page and Google's decoder are asked once
+for the outlet's own link (nothing about you goes with it); an outlet's site is
+asked for its icon when it is first seen and once a week after; and an article Anchor reads is fetched from its outlet, once,
 after checking its `robots.txt`. No
 cookies, no referrer, no account, tracking parameters stripped from stored
 links. Nothing about you, your agents or your conversations is sent. Hosts the

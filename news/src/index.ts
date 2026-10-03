@@ -26,7 +26,7 @@ export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.met
 
 /** Why each declared host is reached, for the install card. */
 export function whyHost(host: string): string {
-  if (host === 'news.google.com') return 'Google News searches for your topics: the topic\'s keywords go, headlines come back.';
+  if (host === 'news.google.com') return 'Google News searches for your topics: the topic\'s keywords go, headlines come back; each headline\'s Google page is asked once for the outlet\'s own link.';
   if (host === 'hn.algolia.com') return 'Hacker News\'s front page, through Algolia: nothing goes, the list comes back.';
   if (host === 'api.gdeltproject.org') return 'GDELT\'s article index: a topic\'s query goes, headlines come back.';
   if (host.startsWith('*.')) return 'An outlet\'s site: asked for its icon, once a month at most.';

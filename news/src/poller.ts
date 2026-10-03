@@ -2,8 +2,8 @@
  * The timer: `news.fetch`, a source in core's sense with no agent in the loop
  * (spec §4.1). Every minute it takes the sources that are due — at most
  * `SOURCES_PER_TICK`, four at a time, one request at a time per host — writes
- * what came, groups the new articles into stories, fetches a couple of
- * missing outlet logos, and once a day forgets what is past the retention.
+ * what came, groups the new articles into stories, swaps a few Google News
+ * redirects for the outlet's own link, fetches a couple of missing outlet logos, and once a day forgets what is past the retention.
  *
  * The offline contract: feeds keep only their latest items, so a machine that
  * slept a week catches up in one round and keeps the last 72 hours; a feed is
@@ -11,7 +11,8 @@
  */
 import type { BuddiHost, Source } from '@buddi/core/plugin';
 import { fetchLogo, fetchSource, FetchError, hostDeclared } from './fetch.js';
-import { clusterTopic, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
+import { classifyPending, clusterTopic, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
+import { resolvePending, RESOLVE_PER_TICK } from './resolve.js';
 import { starterHosts } from './starter.js';
 
 export const POLL_EVERY_SECONDS = 60;
@@ -27,6 +28,7 @@ let running: Promise<RefreshReport> | null = null;
 let declaredOnce = false;
 let lastPrune = 0;
 let logosMoved = false;
+let classified = false;
 
 export interface RefreshReport {
   fetched: number;
@@ -35,6 +37,8 @@ export interface RefreshReport {
   added: number;
   stories: number;
   logos: number;
+  /** Google News links resolved to the outlet's own. */
+  links: number;
 }
 
 /** For tests: forget what this process did. */
@@ -43,6 +47,7 @@ export function resetPoller(): void {
   declaredOnce = false;
   lastPrune = 0;
   logosMoved = false;
+  classified = false;
 }
 
 /**
@@ -86,12 +91,14 @@ export function refresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms:
 }
 
 async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms: number) => Promise<void> }): Promise<RefreshReport> {
-  const report: RefreshReport = { fetched: 0, notModified: 0, failed: 0, added: 0, stories: 0, logos: 0 };
+  const report: RefreshReport = { fetched: 0, notModified: 0, failed: 0, added: 0, stories: 0, logos: 0, links: 0 };
   const http = buddi.http;
   if (!http) return report;
   const db = buddi.db;
   if (!declaredOnce) await declareRuntimeHosts(buddi);
   const now = buddi.clock.now();
+  // Articles from before 0.2.1 are read for deals once, before anything is clustered.
+  if (!classified) classified = (await classifyPending(db)) < 2000;
   const { rows: due } = await db.query<SourceRow>(
     `select s.* from news.sources s
       where not s.muted
@@ -145,6 +152,7 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
     for (const topicId of touched) report.stories += (await clusterTopic(db, topicId, language)).created;
     await declareRuntimeHosts(buddi);
   }
+  report.links = await resolvePending(db, http, now, RESOLVE_PER_TICK, (line) => buddi.log(line), opts.sleep);
   await moveKeptLogos(buddi);
   report.logos = await fetchMissingLogos(buddi, LOGOS_PER_TICK, opts.sleep);
   if (now.getTime() - lastPrune >= PRUNE_EVERY_MS) {

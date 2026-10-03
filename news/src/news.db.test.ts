@@ -23,6 +23,7 @@ import { gnewsUrl } from './starter.js';
 import { FIRST_READ_NOTE, SETUP_NOTE } from './setup.js';
 import type { HeadlinesOutput } from './tools.js';
 import type { StoryDetail } from './reads.js';
+import { storiesFor } from './dashboard.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
@@ -534,5 +535,47 @@ suite('news (postgres)', () => {
     const untold = (await widget.produce(ctx(), { size: 'medium', settings: {} })) as any;
     expect(untold.rows[0].title).toBe('Apple unveils new iPhone with faster chip at September event');
     expect(await widget.produce(ctx(), { size: 'small', settings: { topics: ['nope'], show: 'untold' } })).toMatchObject({ kind: 'list' });
+  });
+  it('keeps deals out of editions, the widget and the News page but Deals, and swaps a Google News redirect for the outlet\'s link', async () => {
+    const reuters = 'https://news.google.com/rss/articles/CBMiREUTERS1'; // as kept: tracking parameters stripped
+    web['https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml'] = () => ({
+      status: 200,
+      body: rss([
+        item(cnbc, 'https://www.nytimes.com/2026/09/17/business/fed-cuts-rates.html?smid=rss'),
+        { title: 'The best credit cards to get right now for travel rewards', link: 'https://www.nytimes.com/wirecutter/money/best-travel-cards/', lead: 'Our picks.', at: '2026-09-17T19:30:00Z' },
+      ]),
+    });
+    web[reuters] = () => ({ status: 200, body: '<html><c-wiz><div data-n-a-ts="1791013716" data-n-a-sg="sig-1"></div></c-wiz></html>' });
+    web['https://news.google.com/_/DotsSplashUi/data/batchexecute'] = () => ({
+      status: 200,
+      body: `)]}'\n\n[["wrb.fr","Fbv4je","[\\"garturlres\\",\\"https://www.reuters.com/business/fed-cuts-rates-2026-09-17/?utm_source=gn\\",1]",null,null,null,"generic"]]`,
+    });
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await fetchAll();
+
+    const kinds = (await pool.query(`select title, kind from news.articles where kind = 'deal'`)).rows;
+    expect(kinds.map((r) => r.title)).toEqual(['The best credit cards to get right now for travel rewards']);
+    const titles = (stories: Array<{ title: string }>): string[] => stories.map((x) => x.title);
+    const headlines = (await run('news.headlines', {})) as HeadlinesOutput;
+    expect(headlines.stories.some((x) => /credit cards/.test(x.title))).toBe(false);
+    const material = await run('news.edition_material', { edition: 'morning' });
+    expect(JSON.stringify(material)).not.toContain('credit cards');
+    const widget = (await manifest.widgets!.find((w) => w.id === 'news.top')!.produce(ctx(), { size: 'medium', settings: {} })) as any;
+    expect(JSON.stringify(widget)).not.toContain('credit cards');
+    expect(titles((await storiesFor(host(), {})).stories)).not.toContain('The best credit cards to get right now for travel rewards');
+    expect(titles((await storiesFor(host(), { filter: 'deals' })).stories)).toEqual(['The best credit cards to get right now for travel rewards']);
+
+    const links = (await pool.query(`select o.name, a.url, a.link_state from news.articles a join news.outlets o on o.id = a.outlet_id where o.name in ('Reuters', 'Les Echos') order by o.name`)).rows;
+    expect(links).toEqual([
+      { name: 'Les Echos', url: 'https://news.google.com/rss/articles/CBMiECHOS1', link_state: 'unresolved' },
+      { name: 'Reuters', url: 'https://www.reuters.com/business/fed-cuts-rates-2026-09-17', link_state: 'resolved' },
+    ]);
+    const fed = headlines.stories.find((x) => x.outlets.includes('Reuters'))!;
+    const detail = (await run('news.story', { id: fed.id })) as StoryDetail;
+    expect(detail.sources.find((x) => x.outlet === 'Reuters')?.url).toBe('https://www.reuters.com/business/fed-cuts-rates-2026-09-17');
+    // Tried once: the next tick does not ask again.
+    requested.length = 0;
+    await fetchAll();
+    expect(requested.filter((u) => u.startsWith('https://news.google.com/rss/articles/'))).toEqual([]);
   });
 });
