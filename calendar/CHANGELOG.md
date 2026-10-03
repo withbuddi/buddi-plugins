@@ -28,7 +28,7 @@ What changes in @withbuddi/plugin-calendar from one release to the next, newest 
 
 - Needs host API 1.28, and may send you a message (`owner:notify`) when a Google sign-in needs renewing.
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-10-03 (buddi pre.36)
 
 ### Added
 
