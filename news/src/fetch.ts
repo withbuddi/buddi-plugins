@@ -310,11 +310,20 @@ export function iconLinks(html: string, base: string): string[] {
   return found.sort((a, b) => b.score - a.score).map((f) => f.href);
 }
 
-/** An outlet's logo (spec §4.7): its page's icon links, then `/apple-touch-icon.png`, then `/favicon.ico`. Raster only, at most 256 KB. Null when none answers. */
-export async function fetchLogo(http: HttpArea, site: string, options: FetchOptions = {}): Promise<Logo | null> {
+/**
+ * An outlet's logo (spec §4.7): its page's icon links, then
+ * `/apple-touch-icon.png`, then `/favicon.ico`. Raster only, at most 256 KB.
+ * `keep` is asked of each candidate in turn — the assets area refuses some
+ * kinds (WebP) — and the first it keeps is the answer. Null when none
+ * answers or none is kept.
+ */
+export async function fetchLogo(
+  http: HttpArea, site: string, options: FetchOptions & { keep?: (logo: Logo) => Promise<boolean> } = {},
+): Promise<Logo | null> {
+  const { keep, ...get } = options;
   const candidates: string[] = [];
   try {
-    const { response, url } = await politeGet(http, site, { maxBytes: PAGE_MAX_BYTES, headers: { accept: 'text/html' }, ...options });
+    const { response, url } = await politeGet(http, site, { maxBytes: PAGE_MAX_BYTES, headers: { accept: 'text/html' }, ...get });
     if (response.ok) candidates.push(...iconLinks(new TextDecoder('utf-8').decode(await response.arrayBuffer()), url));
   } catch {
     // The page did not answer: try the conventional address.
@@ -322,13 +331,15 @@ export async function fetchLogo(http: HttpArea, site: string, options: FetchOpti
   candidates.push(new URL('/apple-touch-icon.png', site).toString(), new URL('/favicon.ico', site).toString());
   for (const candidate of [...new Set(candidates)].slice(0, 5)) {
     try {
-      const { response, url } = await politeGet(http, candidate, { maxBytes: LOGO_MAX_BYTES, headers: { accept: 'image/*' }, ...options });
+      const { response, url } = await politeGet(http, candidate, { maxBytes: LOGO_MAX_BYTES, headers: { accept: 'image/*' }, ...get });
       if (!response.ok) continue;
       const bytes = Buffer.from(await response.arrayBuffer());
       // What the bytes are decides, not what the server says: an HTML error page served as image/png is not a logo.
       const mime = sniffImage(bytes);
       if (!mime || bytes.length > LOGO_MAX_BYTES) continue;
-      return { bytes, mime, url };
+      const logo = { bytes, mime, url };
+      if (keep && !(await keep(logo))) continue;
+      return logo;
     } catch {
       // Too large, refused, timed out: the next candidate.
     }

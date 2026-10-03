@@ -6,14 +6,20 @@ already told kept so nothing is told twice.
 
 ## What it does
 
-Six tools your agents can call. Four read: `news.topics`, `news.headlines`
-(the top stories of a topic, or of all, each grouped from several outlets,
-with whether it was told already), `news.story` (every article on one
-story, with links) and `news.search` (the articles kept here, by words).
-Two keep this plugin's own records and change nothing else:
-`news.mark_told`, which an edition or a brief calls once it has told
-stories, and `news.feedback`, for when you say "not interested", "mute this
-outlet" or "not today".
+Eleven tools your agents can call. Six read: `news.topics`,
+`news.headlines` (the top stories of a topic, or of all, each grouped from
+several outlets, with whether it was told already), `news.story` (every
+article on one story, with links), `news.search` (the articles kept here, by
+words), `news.edition_material` (an edition's stories, untold first) and
+`news.read` (an article's text, fetched once from its outlet). Four keep this
+plugin's own records and change nothing else: `news.mark_told` and
+`news.edition_save` (what an edition told), `news.feedback` ("not
+interested", "not today") and `news.quiet_today`. One asks you first:
+`news.mute_outlet`.
+
+A News page on the rail, the sources on Settings → News, and a Top stories
+widget for Home and the lock screen. It works better with the Speech plugin
+(editions read aloud) and says so when it is not there.
 
 Nothing is followed until you turn on the starter sources (Technology, AI,
 Togo and West Africa, US politics, International, Economy: about 75 checked
@@ -31,17 +37,20 @@ you nothing.
 
 ## What it stores
 
-Schema `news`: your topics, the sources and the outlets behind them (with
-their icons), the articles of the last 30 days (title, a short summary,
-link, language, time), the stories they form, each edition's told stories,
-and your settings. No full article text.
+Schema `news`: your topics, the sources and the outlets behind them, the
+articles of the last 30 days (title, a short summary, link, language, time),
+an article's text when Anchor read it (a week), the stories they form, each
+edition's told stories, and your settings. Outlet logos are kept by buddi as
+small images (its assets area) and removed with the plugin.
 
 ## What leaves the machine
 
 Only feed fetches: a request to each source's address for its latest items,
 to Google News with a topic's keywords as the search (an owner topic's name
 and keywords are visible to Google), to Hacker News's Algolia front page,
-and to an outlet's site for its icon, once a month at most. No cookies, no
+to an outlet's site for its icon when it is first seen and once a week
+after, and to an article's outlet when Anchor reads it (once, after its
+robots.txt). No cookies, no
 account, nothing about you, your agents or your conversations. A feed you
 add, and an outlet a search names, is declared when it is first seen and
 listed on the Plugins page.

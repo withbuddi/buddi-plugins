@@ -41,8 +41,8 @@ export interface StoryArticle {
   id: string;
   outlet: string;
   outletId: string | null;
-  /** The outlet's logo, when there is one: GET /api/pages/news/logo?outlet=<id>. */
-  logo: boolean;
+  /** The outlet's logo, a key of this plugin's assets (`/api/plugin-assets/news/<key>`), or null. */
+  logo: string | null;
   title: string;
   lead: string;
   url: string;
@@ -98,20 +98,20 @@ interface CandidateRow {
   last_told_at: Date | null; twin_of: string | null; title_article_id: string | null;
 }
 
-interface ArticleRow {
+export interface ArticleRow {
   story_id: string; id: string; title: string; lead: string; url: string; language: string; published_at: Date; fetched_at: Date;
-  opinion: boolean; outlet_id: string | null; outlet: string; outlet_kind: string | null; paywall: boolean; logo: boolean;
-  source_id: string; source_kind: SourceKind;
+  opinion: boolean; outlet_id: string | null; outlet: string; outlet_kind: string | null; paywall: boolean; logo: string | null;
+  lean: string | null; source_id: string; source_kind: SourceKind;
 }
 
 /** The visible articles of these stories: sources and outlets not muted. */
-async function visibleArticles(db: Db, storyIds: string[]): Promise<Map<string, ArticleRow[]>> {
+export async function visibleArticles(db: Db, storyIds: string[]): Promise<Map<string, ArticleRow[]>> {
   const out = new Map<string, ArticleRow[]>();
   if (storyIds.length === 0) return out;
   const { rows } = await db.query<ArticleRow>(
     `select at.story_id, a.id, a.title, a.lead, a.url, a.language, a.published_at, a.fetched_at, a.opinion, a.outlet_id,
             coalesce(o.name, src.name) as outlet, o.kind as outlet_kind, coalesce(o.paywall, false) as paywall,
-            (o.logo_key is not null) as logo, a.source_id, src.kind as source_kind
+            o.logo_key as logo, o.lean, a.source_id, src.kind as source_kind
        from news.article_topics at
        join news.stories s on s.id = at.story_id and s.topic_id = at.topic_id
        join news.articles a on a.id = at.article_id
@@ -169,7 +169,10 @@ function summarise(c: CandidateRow, articles: ArticleRow[], lastTold: { outlets:
   const allOpinion = articles.every((a) => a.opinion);
   const gdeltOnly = outlets.length === 1 && articles.every((a) => a.source_kind === 'gdelt');
   const ageHours = Math.max(0, (now.getTime() - c.updated_at.getTime()) / 3600_000);
-  const score = (2 * Math.log2(1 + outlets.length) + (languages.length >= 2 ? 0.5 : 0) + (kinds >= 2 ? 0.5 : 0)) *
+  // Outlets on both sides of the curated lean carry it (spec §4.5): the US politics outlets only have one.
+  const leans = new Set(articles.map((a) => a.lean).filter((l): l is string => !!l));
+  const bothSides = [...leans].some((l) => l.endsWith('left')) && [...leans].some((l) => l.endsWith('right'));
+  const score = (2 * Math.log2(1 + outlets.length) + (languages.length >= 2 ? 0.5 : 0) + (kinds >= 2 ? 0.5 : 0) + (bothSides ? 0.5 : 0)) *
     Math.exp(-ageHours / AGE_SCALE_HOURS) * (allOpinion ? 0.5 : gdeltOnly ? 0.6 : 1);
   const status: StorySummary['status'] = c.last_told_at === null ? 'new'
     : materialUpdate(articles.map((a) => ({ title: a.title, fetchedAt: a.fetched_at, outlet: outletKey(a) })), c.last_told_at, lastTold?.outlets ?? outlets.length) ? 'update' : 'told';
@@ -227,15 +230,32 @@ const CANDIDATES = `
  * once even when it has a twin in another topic.
  */
 export async function headlines(db: Db, now: Date, q: HeadlinesQuery): Promise<StorySummary[]> {
+  return (await rankedStories(db, now, q)).map((r) => r.summary);
+}
+
+/** A ranked story with the visible articles it was summarised from, oldest first. */
+export interface RankedStory {
+  summary: StorySummary;
+  articles: ArticleRow[];
+}
+
+/**
+ * The ranked stories with their articles, for the page, the widget and an
+ * edition: `headlines` without the cut to a summary. Across all topics a
+ * story shows once even when it has a twin; with `perTopic`, each topic keeps
+ * at most that many (the page's All view).
+ */
+export async function rankedStories(db: Db, now: Date, q: HeadlinesQuery & { perTopic?: number }): Promise<RankedStory[]> {
   const since = q.since ?? new Date(now.getTime() - 24 * 3600_000);
   const { rows } = await db.query<CandidateRow>(
-    `${CANDIDATES} and s.updated_at >= $2 and ($3::text is null or s.topic_id = $3) order by s.score desc, s.updated_at desc limit 300`,
+    `${CANDIDATES} and s.updated_at >= $2 and ($3::text is null or s.topic_id = $3) order by s.score desc, s.updated_at desc limit 400`,
     [now, since, q.topicId ?? null],
   );
   const ids = rows.map((r) => r.id);
   const [articles, told] = await Promise.all([visibleArticles(db, ids), lastToldCounts(db, ids)]);
   const shown = new Set<string>();
-  const out: StorySummary[] = [];
+  const perTopic = new Map<string, number>();
+  const out: RankedStory[] = [];
   const all = rows
     .filter((r) => (articles.get(r.id)?.length ?? 0) > 0)
     .map((r) => ({ r, s: summarise(r, articles.get(r.id)!, told.get(r.id), q.ownerLanguage, now) }))
@@ -244,8 +264,10 @@ export async function headlines(db: Db, now: Date, q: HeadlinesQuery): Promise<S
   for (const { r, s } of all) {
     const family = r.twin_of ?? r.id;
     if (!q.topicId && shown.has(family)) continue;
+    if (q.perTopic !== undefined && (perTopic.get(r.topic_id) ?? 0) >= q.perTopic) continue;
     shown.add(family);
-    out.push(s);
+    perTopic.set(r.topic_id, (perTopic.get(r.topic_id) ?? 0) + 1);
+    out.push({ summary: s, articles: articles.get(r.id)! });
     if (out.length >= q.n) break;
   }
   return out;
@@ -320,6 +342,8 @@ export interface SourceHealth {
   id: string;
   name: string;
   outlet: string | null;
+  /** The outlet's domain ("rfi.fr"); null for an aggregator's own row. */
+  outletId: string | null;
   topics: string[];
   url: string;
   kind: string;
@@ -327,7 +351,8 @@ export interface SourceHealth {
   addedBy: string;
   muted: boolean;
   paywall: boolean;
-  logo: boolean;
+  /** The outlet's logo, a key of this plugin's assets, or null. */
+  logo: string | null;
   state: 'ok' | 'failing' | 'paused';
   lastOkAt: string | null;
   lastError: string | null;
@@ -339,23 +364,23 @@ export interface SourceHealth {
 /** Every source with its health, for the source manager and `news.topics`. */
 export async function sourceHealth(db: Db, topicId?: string): Promise<SourceHealth[]> {
   const { rows } = await db.query<{
-    id: string; name: string; outlet: string | null; topics: string[]; url: string; final_url: string | null; kind: string; language: string; added_by: string;
-    muted: boolean; paywall: boolean; logo: boolean; state: 'ok' | 'failing' | 'paused'; last_ok_at: Date | null; last_error: string | null;
+    id: string; name: string; outlet: string | null; outlet_id: string | null; topics: string[]; url: string; final_url: string | null; kind: string; language: string; added_by: string;
+    muted: boolean; paywall: boolean; logo: string | null; state: 'ok' | 'failing' | 'paused'; last_ok_at: Date | null; last_error: string | null;
     failing_since: Date | null; failures: number; next_at: Date;
   }>(
-    `select s.id, s.name, o.name as outlet, coalesce(array_agg(ts.topic_id order by ts.topic_id) filter (where ts.topic_id is not null), '{}') as topics,
-            s.url, s.final_url, s.kind, s.language, s.added_by, s.muted, coalesce(o.paywall, false) as paywall, (o.logo_key is not null) as logo,
+    `select s.id, s.name, o.name as outlet, s.outlet_id, coalesce(array_agg(ts.topic_id order by ts.topic_id) filter (where ts.topic_id is not null), '{}') as topics,
+            s.url, s.final_url, s.kind, s.language, s.added_by, s.muted, coalesce(o.paywall, false) as paywall, o.logo_key as logo,
             s.state, s.last_ok_at, s.last_error, s.failing_since, s.failures, s.next_at
        from news.sources s
        left join news.outlets o on o.id = s.outlet_id
        left join news.topic_sources ts on ts.source_id = s.id
       where ($1::text is null or exists (select 1 from news.topic_sources x where x.source_id = s.id and x.topic_id = $1))
-      group by s.id, o.name, o.paywall, o.logo_key
+      group by s.id, o.name, o.paywall, o.logo_key, s.outlet_id
       order by s.name`,
     [topicId ?? null],
   );
   return rows.map((r) => ({
-    id: r.id, name: r.name, outlet: r.outlet, topics: r.topics, url: r.final_url ?? r.url, kind: r.kind, language: r.language, addedBy: r.added_by,
+    id: r.id, name: r.name, outlet: r.outlet, outletId: r.outlet_id, topics: r.topics, url: r.final_url ?? r.url, kind: r.kind, language: r.language, addedBy: r.added_by,
     muted: r.muted, paywall: r.paywall, logo: r.logo, state: r.state, lastOkAt: r.last_ok_at ? iso(r.last_ok_at) : null, lastError: r.last_error,
     failingSince: r.failing_since ? iso(r.failing_since) : null, failures: r.failures, nextAt: iso(r.next_at),
   }));

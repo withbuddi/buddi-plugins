@@ -7,7 +7,8 @@
  * twins across topics, logos, health, and retention. No socket is opened.
  * Skipped without `DATABASE_URL`.
  */
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -16,7 +17,7 @@ import {
 } from '@buddi/core/testing';
 import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
 import { manifest } from './index.js';
-import { fetchMissingLogos, refresh, resetPoller, fetchSourceDefinition } from './poller.js';
+import { fetchMissingLogos, moveKeptLogos, refresh, resetPoller, fetchSourceDefinition } from './poller.js';
 import { resetPoliteness } from './fetch.js';
 import { gnewsUrl } from './starter.js';
 import { FIRST_READ_NOTE, SETUP_NOTE } from './setup.js';
@@ -47,6 +48,7 @@ const item = (f: Fixture, link: string): Item => ({ title: f.title, link, lead: 
 
 suite('news (postgres)', () => {
   let admin: Pool;
+  let dataDir = '';
   let pool: Pool;
   let now = new Date('2026-09-17T22:00:00Z');
   /** What the fake web answers, by URL. */
@@ -111,11 +113,18 @@ suite('news (postgres)', () => {
     url.pathname = `/${TEST_DB}`;
     pool = createPool(url.toString());
     await runMigrations(pool, [manifest]);
-    configurePluginHost({ vault: createMemoryVault(), httpTransport: transport as never });
+    // Logos go through the assets area: a fake codec, and a data directory of the test's own.
+    mkdirSync(new URL('../node_modules/.cache/', import.meta.url), { recursive: true });
+    dataDir = mkdtempSync(path.join(new URL('../node_modules/.cache/', import.meta.url).pathname, 'news-assets-'));
+    configurePluginHost({
+      vault: createMemoryVault(), httpTransport: transport as never, env: { BUDDI_DATA_DIR: dataDir },
+      images: { normalise: async (bytes: Buffer) => ({ 64: bytes, 128: bytes }) },
+    });
   }, 60_000);
 
   afterAll(async () => {
     resetPluginHost();
+    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
     await pool?.end();
     await admin?.query(`drop database if exists ${TEST_DB}`);
     await admin?.end();
@@ -254,8 +263,10 @@ suite('news (postgres)', () => {
     now = new Date(now.getTime() + 3 * 3600_000);
     expect(await ids()).toContain(apple);
 
-    const muted = await run('news.feedback', { outlet: 'Le Monde', action: 'mute' });
-    expect(muted).toMatchObject({ kind: 'outlet', subject: 'lemonde.fr', action: 'mute' });
+    // Muting an outlet is news.mute_outlet's, which asks the owner when an agent calls it.
+    await expect(run('news.feedback', { outlet: 'Le Monde', action: 'mute' })).rejects.toThrow('news.mute_outlet');
+    const muted = await run('news.mute_outlet', { outlet: 'Le Monde' }, asOwner);
+    expect(muted).toMatchObject({ id: 'lemonde.fr', muted: true });
     const story = (await run('news.story', { id: fed })) as StoryDetail;
     expect(story.outlets).not.toContain('Le Monde');
     await run('news.feedback', { outlet: 'lemonde.fr', action: 'clear' });
@@ -296,19 +307,38 @@ suite('news (postgres)', () => {
     expect(hidden.map((h) => h.hidden)).toEqual(['not_interested', 'not_interested']);
   });
 
-  it('fetches an outlet\'s logo through its redirect and serves it as an image', async () => {
+  it('keeps an outlet\'s logo through the assets area, refreshes it weekly, and moves the ones 0.1.0 kept', async () => {
     await run('news.enable_starter', { topics: ['economy'] }, asOwner);
     await fetchAll();
     await fetchMissingLogos(host(), 1, noSleep, 'nytimes.com'); // the timer may have fetched it already
-    const { rows } = await pool.query(`select logo_key from news.outlets where id = 'nytimes.com'`);
+    const { rows } = await pool.query(`select logo_key, logo_fetched_at from news.outlets where id = 'nytimes.com'`);
     expect(rows[0].logo_key).toBe('nytimes.com');
-    const file = (await manifest.queries!.find((q) => q.name === 'logo')!.produce({ outlet: 'nytimes.com' }, ctx())) as { contentType: string; body: Buffer };
-    expect(file.contentType).toBe('image/png');
-    expect(Buffer.compare(file.body, PNG)).toBe(0);
-    await expect(manifest.queries!.find((q) => q.name === 'logo')!.produce({ outlet: 'cnbc.com' }, ctx())).rejects.toThrow('no logo');
+    expect((await host().assets!.list()).map((a) => a.key)).toContain('nytimes.com');
     const story = ((await run('news.headlines', { topic: 'economy' })) as HeadlinesOutput).stories[0]!;
     const detail = (await run('news.story', { id: story.id })) as StoryDetail;
-    expect(detail.sources.find((s) => s.outletId === 'nytimes.com')!.logo).toBe(true);
+    expect(detail.sources.find((s) => s.outletId === 'nytimes.com')!.logo).toBe('nytimes.com');
+
+    // A week on, it is asked again; a site that no longer answers keeps the logo it had.
+    now = new Date(now.getTime() + 8 * 86_400_000);
+    delete web['https://www.nytimes.com/touch.png'];
+    requested.length = 0;
+    await fetchMissingLogos(host(), 5, noSleep, 'nytimes.com');
+    expect(requested).toContain('https://www.nytimes.com/');
+    expect((await pool.query(`select logo_key from news.outlets where id = 'nytimes.com'`)).rows[0].logo_key).toBe('nytimes.com');
+
+    // A WebP is refused by the area: the next candidate is tried.
+    web['https://cnbc.com/'] = () => ({ status: 200, body: '<link rel="icon" href="/a.webp"><link rel="apple-touch-icon" href="/b.png">' });
+    web['https://cnbc.com/a.webp'] = () => ({ status: 200, body: Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP'), Buffer.alloc(20)]) });
+    web['https://cnbc.com/b.png'] = () => ({ status: 200, body: PNG });
+    expect(await fetchMissingLogos(host(), 1, noSleep, 'cnbc.com')).toBe(1);
+
+    // 0.1.0's rows are handed to the area once, then deleted.
+    await pool.query(`insert into news.logos (key, mime, bytes, sha256, source_url) values ('lefigaro.fr', 'image/png', $1, 'x', 'https://www.lefigaro.fr/i.png')`, [PNG]);
+    await pool.query(`update news.outlets set logo_key = 'lefigaro.fr' where id = 'lefigaro.fr'`);
+    resetPoller();
+    expect(await moveKeptLogos(host())).toBe(1);
+    expect((await pool.query(`select count(*)::int as n from news.logos`)).rows[0].n).toBe(0);
+    expect((await host().assets!.list()).map((a) => a.key)).toContain('lefigaro.fr');
   });
 
   it('drops one outlet\'s repeat and items older than three days, and forgets what is past the retention', async () => {
@@ -328,5 +358,181 @@ suite('news (postgres)', () => {
     await refresh(host(), { sleep: noSleep });
     const { rows: left } = await pool.query(`select (select count(*)::int from news.stories) as stories, (select count(*)::int from news.articles) as articles`);
     expect(left[0]).toEqual({ stories: 0, articles: 0 });
+  });
+
+  const query = (name: string, params: object = {}, over: Partial<CoreToolContext> = {}) =>
+    manifest.queries!.find((q) => q.name === name)!.produce(params, ctx(over)) as Promise<any>;
+
+  it('draws the News page: the quiet line, chips, stories grouped by topic, and what an empty feed means', async () => {
+    expect(await query('stories', {})).toMatchObject({ stories: [], state: 'none' });
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    expect(await query('stories', {})).toMatchObject({ state: 'first' });
+    await fetchAll();
+    const view = await query('overview');
+    expect(view.fetched).toMatch(/^Fetched at 00:00 from \d+ sources · next at \d\d:\d\d$/);
+    expect(view.failing).toBeNull(); // a source is failing only after a day without an answer
+    expect(view.failed).toBe(false);
+    expect(view.anchor).toBe('anchor'); // a host with no roster says yes
+    expect((await query('topics')).topics).toEqual([{ id: 'all', name: 'All' }, { id: 'economy', name: 'Economy' }]);
+    const all = await query('stories', { topic: 'all', filter: 'all' });
+    expect(all.state).toBe('ok');
+    const fed = all.stories[0];
+    expect(fed.group).toEqual({ id: 'economy', name: 'Economy' });
+    expect(fed.outlets).toHaveLength(6);
+    expect(fed.languages).toBe('EN · FR');
+    expect(fed.ago).toMatch(/^\d+ h ago$/);
+    expect(fed.sources[0].url).toMatch(/^https:\/\//);
+    expect(fed.timeline[0].text).toMatch(/^First reported by /);
+    expect(fed.mark).toBeUndefined();
+
+    // Told in an edition: Told you on the card; Not yet told is then empty, with the way back.
+    await run('news.edition_save', { edition: 'morning', storyIds: all.stories.map((st: { id: string }) => st.id), text: 'Morning edition' });
+    const after = await query('stories', {});
+    expect(after.stories[0].mark).toEqual({ kind: 'told', text: 'Told you · last night' });
+    expect(after.stories[0].quiet).toBe(true);
+    expect(await query('stories', { filter: 'untold' })).toMatchObject({ stories: [], state: 'told', emptyTitle: 'Anchor has told you all of this' });
+
+    // A topic of the owner's with no source says so.
+    await pool.query(`insert into news.topics (id, slug, name, keywords, position) values ('lyon', 'lyon', 'Lyon', '{Lyon}', 9)`);
+    expect(await query('stories', { topic: 'lyon' })).toMatchObject({ state: 'nosources', emptyTitle: 'No sources for Lyon yet' });
+
+    // Nothing answering for 40 minutes: the failed fetch instead of the quiet line.
+    now = new Date(now.getTime() + 2 * 3600_000);
+    await pool.query(`update news.sources set last_tried_at = $1`, [now]);
+    expect(await query('overview')).toMatchObject({ failed: true, failedTitle: 'Couldn’t fetch at 02:00.', fetched: null });
+  });
+
+  it('runs the ways out of the page: Not interested and Undo, mute an outlet and back, quiet and mute a topic', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await fetchAll();
+    const ids = async () => (await query('stories', {})).stories.map((st: { id: string }) => st.id);
+    const [fed, apple] = await ids();
+    await run('news.hide_story', { id: apple, action: 'not_interested' }, asOwner);
+    expect(await ids()).toEqual([fed]);
+    await run('news.hide_story', { id: apple, action: 'undo' }, asOwner);
+    expect(await ids()).toContain(apple);
+
+    await run('news.mute_outlet', { outlet: 'cnbc.com', muted: true }, asOwner);
+    expect(await ids()).toEqual([fed]);
+    await run('news.mute_outlet', { outlet: 'cnbc.com', muted: false }, asOwner);
+    expect(await ids()).toContain(apple);
+
+    await run('news.set_topic', { topic: 'economy', mutedForHours: 168 }, asOwner);
+    expect(await ids()).toEqual([]);
+    expect((await query('topic_rows')).topics[0]).toMatchObject({ quiet: true, muted: false, line: expect.stringContaining('Quiet until') });
+    await run('news.set_topic', { topic: 'economy', mutedForHours: 0 }, asOwner);
+    await run('news.set_topic', { topic: 'economy', muted: true }, asOwner);
+    expect((await query('topic_rows')).topics[0]).toMatchObject({ muted: true, line: expect.stringContaining('Muted') });
+    expect((await query('topics')).topics.map((t: { id: string }) => t.id)).toEqual(['all']);
+    await run('news.set_topic', { topic: 'economy', muted: false }, asOwner);
+    expect((await ids()).length).toBe(2);
+  });
+
+  it('lists the sources per topic with their logos, health in words and the starter line; removes one from a topic', async () => {
+    let settings = await query('news_settings');
+    expect(settings.starterOff).toBe(true);
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    now = new Date(now.getTime() + 25 * 3600_000);
+    await fetchAll();
+    resetPoller();
+    now = new Date(now.getTime() + 25 * 3600_000);
+    await fetchAll();
+    settings = await query('news_settings');
+    expect(settings.starterOff).toBe(false);
+    expect(settings.starterLine).toMatch(/starter sources are not on/);
+    const { sources } = await query('source_rows');
+    const bloomberg = sources.find((r: { id: string }) => r.id === 'bloomberg-markets');
+    expect(bloomberg).toMatchObject({ key: 'economy:bloomberg-markets', topic: 'Economy', lang: 'EN', tone: 'warning', failing: true });
+    expect(bloomberg.problem).toMatch(/^Failing since .*: answered 500\.$/);
+    expect(bloomberg.line).toMatch(/^bloomberg\.com · Paywalled · 0 stories this week$/);
+    expect(sources.find((r: { id: string }) => r.id === 'les-echos')).toMatchObject({ lang: 'FR · Google News' });
+    expect(sources[0].topicAside).toBe('12 sources');
+    await run('news.remove_source', { id: 'bloomberg-markets', topic: 'economy' }, asOwner);
+    expect((await pool.query(`select count(*)::int as n from news.sources where id = 'bloomberg-markets'`)).rows[0].n).toBe(0);
+  });
+
+  it('adds a source only once it answers a feed, and words as a Google News search', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    web['https://www.leprogres.fr/'] = () => ({ status: 200, body: '<html><head><link rel="alternate" type="application/rss+xml" href="/lyon/rss"></head></html>' });
+    web['https://www.leprogres.fr/lyon/rss'] = () => ({ status: 200, body: rss([{ title: 'Le tram T10 ouvre lundi aux voyageurs', link: 'https://www.leprogres.fr/t10', at: '2026-09-17T20:00:00Z' }]) });
+    const added = await run('news.add_feed', { address: 'www.leprogres.fr', topic: 'Economy' }, asOwner);
+    expect(added.note).toMatch(/^Added .* \(English\), 1 articles\.$/);
+    expect((await pool.query(`select url from news.sources where added_by = 'owner'`)).rows.map((r) => r.url)).toEqual(['https://www.leprogres.fr/lyon/rss']);
+    await expect(run('news.add_feed', { address: 'https://nothing.example/feed', topic: 'economy' }, asOwner)).rejects.toThrow();
+    expect((await pool.query(`select count(*)::int as n from news.sources where url like '%nothing.example%'`)).rows[0].n).toBe(0);
+    web[gnewsUrl('Lyon tram when:2d', 'en')] = () => ({ status: 200, body: rss([{ title: 'Lyon opens a tram line', link: 'https://news.google.com/rss/articles/x', at: '2026-09-17T20:00:00Z' }]) });
+    const search = await run('news.add_feed', { address: 'Lyon tram', topic: 'economy' }, asOwner);
+    expect(search.note).toBe('Added the Google News search “Lyon tram” to Economy, 1 articles now.');
+  });
+
+  it('hands an edition its material untold first, records it, and keeps a quiet day', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await run('news.set_settings', { voiceEditions: ['morning'] }, asOwner);
+    await fetchAll();
+    const material = await run('news.edition_material', { edition: 'morning' });
+    expect(material).toMatchObject({ edition: 'morning', language: 'en', voice: false, voiceOff: 'the Speech plugin is not installed', quietToday: false, lastEdition: null });
+    expect(material.next).toEqual({ edition: 'midday', at: '12:30' });
+    expect(material.topics.map((t: { topicId: string }) => t.topicId)).toEqual(['economy']);
+    const [fed] = material.topics[0].stories;
+    expect(fed.status).toBe('new');
+    expect(fed.articles.length).toBeLessThanOrEqual(4);
+    expect(new Set(fed.articles.map((a: { outlet: string }) => a.outlet)).size).toBe(fed.articles.length);
+    expect(fed.outlets.find((o: { name: string }) => o.name === 'Reuters')).toMatchObject({ lean: 'center', kind: 'wire' });
+    // The export answers the same, for a mission's context.
+    expect(await manifest.exports!.edition_material!.produce({ edition: 'morning', next: '13:00' }, ctx())).toMatchObject({ next: { edition: 'midday', at: '13:00' } });
+
+    const saved = await run('news.edition_save', { edition: 'morning', storyIds: [fed.id, 's_none'], text: 'Morning edition · Thu 17 Sep' });
+    expect(saved).toMatchObject({ told: [{ id: fed.id, wasUpdate: false }], unknown: ['s_none'], link: '#/p/news/stories' });
+    const { rows } = await pool.query(`select kind, text, agent_id from news.editions`);
+    expect(rows).toEqual([{ kind: 'morning', text: 'Morning edition · Thu 17 Sep', agent_id: 'anchor' }]);
+    const next = await run('news.edition_material', { edition: 'midday' });
+    expect(next.alreadyTold.map((t: { id: string }) => t.id)).toContain(fed.id);
+    expect(next.topics.flatMap((t: { stories: Array<{ id: string }> }) => t.stories.map((st) => st.id))).not.toContain(fed.id);
+
+    const quiet = await run('news.quiet_today', {});
+    expect(quiet.quietUntil).toBe('2026-09-18T22:00:00.000Z'); // 00:00 in Paris is already the 18th: until its midnight
+    expect(await run('news.edition_material', { edition: 'evening' })).toMatchObject({ quietToday: true });
+    now = new Date('2026-09-18T22:30:00Z');
+    expect(await run('news.edition_material', { edition: 'morning' })).toMatchObject({ quietToday: false });
+  });
+
+  it('reads an article once, refuses a paywalled outlet and a page robots.txt closes', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await fetchAll();
+    const { rows } = await pool.query(`select a.id, a.url, a.outlet_id from news.articles a where a.outlet_id in ('lemonde.fr', 'lesechos.fr', 'theguardian.com') order by a.outlet_id`);
+    const byOutlet = Object.fromEntries(rows.map((r) => [r.outlet_id, r]));
+    const para = 'La Réserve fédérale a abaissé ses taux directeurs d’un quart de point mercredi, une première depuis des mois. '.repeat(3);
+    web['https://www.lemonde.fr/robots.txt'] = () => ({ status: 200, body: 'User-agent: *\nDisallow: /private/' });
+    web[byOutlet['lemonde.fr'].url] = () => ({ status: 200, body: `<article><p>${para}</p></article>` });
+    const first = await run('news.read', { articleId: byOutlet['lemonde.fr'].id });
+    expect(first).toMatchObject({ status: 'ok', outlet: 'Le Monde' });
+    expect(first.text).toContain('Réserve fédérale');
+    requested.length = 0;
+    expect(await run('news.read', { articleId: byOutlet['lemonde.fr'].id })).toMatchObject({ status: 'ok' });
+    expect(requested).toEqual([]); // kept: not fetched twice
+    expect(await run('news.read', { articleId: byOutlet['lesechos.fr'].id })).toMatchObject({ status: 'refused', reason: expect.stringContaining('paywalled') });
+    web['https://www.theguardian.com/robots.txt'] = () => ({ status: 200, body: 'User-agent: *\nDisallow: /business/' });
+    expect(await run('news.read', { articleId: byOutlet['theguardian.com'].id })).toMatchObject({ status: 'refused', reason: expect.stringContaining('robots.txt') });
+  });
+
+  it('answers the Top stories widget: logos, five at medium, untold first, a placement\'s topics', async () => {
+    const widget = manifest.widgets!.find((w) => w.id === 'news.top')!;
+    expect(await widget.produce(ctx(), { size: 'small', settings: {} })).toMatchObject({ kind: 'text' });
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await fetchAll();
+    await fetchMissingLogos(host(), 1, noSleep, 'nytimes.com');
+    const small = (await widget.produce(ctx(), { size: 'small', settings: {} })) as any;
+    expect(small).toMatchObject({ kind: 'list', wrap: true });
+    expect(small.rows.length).toBe(2);
+    expect(small.rows[0].side).toBeUndefined();
+    const medium = (await widget.produce(ctx(), { size: 'medium', settings: { show: 'top' } })) as any;
+    expect(medium.max).toBe(5);
+    expect(medium.rows[0].side).toMatch(/^[\w ]+ · \d+ h$/);
+    expect(medium.rows.some((r: { image?: { asset: string } }) => r.image?.asset === 'nytimes.com')).toBe(true);
+    expect(medium.rows.every((r: { image?: { label?: string } }) => typeof r.image?.label === 'string')).toBe(true);
+    await run('news.mark_told', { storyIds: [((await run('news.headlines', {})) as HeadlinesOutput).stories[0]!.id], edition: 'morning' });
+    const untold = (await widget.produce(ctx(), { size: 'medium', settings: {} })) as any;
+    expect(untold.rows[0].title).toBe('Apple unveils new iPhone with faster chip at September event');
+    expect(await widget.produce(ctx(), { size: 'small', settings: { topics: ['nope'], show: 'untold' } })).toMatchObject({ kind: 'list' });
   });
 });

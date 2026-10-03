@@ -9,7 +9,6 @@
  * slept a week catches up in one round and keeps the last 72 hours; a feed is
  * read to at most `MAX_ITEMS` items. Nothing here notifies anyone.
  */
-import { createHash } from 'node:crypto';
 import type { BuddiHost, Source } from '@buddi/core/plugin';
 import { fetchLogo, fetchSource, FetchError, hostDeclared } from './fetch.js';
 import { clusterTopic, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
@@ -20,11 +19,14 @@ export const SOURCES_PER_TICK = 8;
 export const CONCURRENCY = 4;
 export const LOGOS_PER_TICK = 2;
 const LOGO_RETRY_MS = 30 * 86_400_000;
+/** A kept logo is fetched again after a week (the outlet may have changed it). */
+const LOGO_REFRESH_MS = 7 * 86_400_000;
 const PRUNE_EVERY_MS = 86_400_000;
 
 let running: Promise<RefreshReport> | null = null;
 let declaredOnce = false;
 let lastPrune = 0;
+let logosMoved = false;
 
 export interface RefreshReport {
   fetched: number;
@@ -40,6 +42,7 @@ export function resetPoller(): void {
   running = null;
   declaredOnce = false;
   lastPrune = 0;
+  logosMoved = false;
 }
 
 /**
@@ -142,6 +145,7 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
     for (const topicId of touched) report.stories += (await clusterTopic(db, topicId, language)).created;
     await declareRuntimeHosts(buddi);
   }
+  await moveKeptLogos(buddi);
   report.logos = await fetchMissingLogos(buddi, LOGOS_PER_TICK, opts.sleep);
   if (now.getTime() - lastPrune >= PRUNE_EVERY_MS) {
     lastPrune = now.getTime();
@@ -150,34 +154,69 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
   return report;
 }
 
-/** Fetch logos for outlets that have none (spec §4.7), the ones with the most articles first; at most `limit`. */
+/**
+ * Fetch logos for outlets that have none (spec §4.7) and refresh the ones a
+ * week old, the outlets with the most articles first; at most `limit`. Each is
+ * kept through the host's assets area (host API 1.27) under the outlet's id,
+ * which core re-draws as PNGs and buddi serves; the page never reaches the
+ * outlet. A candidate the area refuses (WebP) gives way to the next one. A
+ * refresh that finds nothing keeps the logo it had.
+ */
 export async function fetchMissingLogos(buddi: BuddiHost, limit: number, sleep?: (ms: number) => Promise<void>, onlyOutlet?: string): Promise<number> {
   const http = buddi.http;
-  if (!http) return 0;
+  const assets = buddi.assets;
+  if (!http || !assets) return 0;
   const db = buddi.db;
   const now = buddi.clock.now();
-  const { rows } = await db.query<{ id: string; domain: string }>(
-    `select o.id, o.domain from news.outlets o
-      where o.logo_key is null and ($3::text is null or o.id = $3)
-        and (o.logo_fetched_at is null or o.logo_fetched_at < $1)
-      order by (select count(*) from news.articles a where a.outlet_id = o.id) desc, o.created_at
+  const { rows } = await db.query<{ id: string; domain: string; logo_key: string | null }>(
+    `select o.id, o.domain, o.logo_key from news.outlets o
+      where ($3::text is null or o.id = $3)
+        and ((o.logo_key is null and (o.logo_fetched_at is null or o.logo_fetched_at < $1))
+          or (o.logo_key is not null and o.logo_fetched_at < $4))
+      order by (o.logo_key is null) desc, (select count(*) from news.articles a where a.outlet_id = o.id) desc, o.created_at
       limit $2`,
-    [new Date(now.getTime() - LOGO_RETRY_MS), limit, onlyOutlet ?? null],
+    [new Date(now.getTime() - LOGO_RETRY_MS), limit, onlyOutlet ?? null, new Date(now.getTime() - LOGO_REFRESH_MS)],
   );
   let saved = 0;
   for (const outlet of rows) {
-    const logo = await fetchLogo(http, `https://${outlet.domain}/`, { allowHost: allowHostFor(buddi), ...(sleep ? { sleep } : {}) }).catch(() => null);
-    if (logo) {
-      await db.query(
-        `insert into news.logos (key, mime, bytes, sha256, source_url) values ($1, $2, $3, $4, $5)
-         on conflict (key) do update set mime = excluded.mime, bytes = excluded.bytes, sha256 = excluded.sha256, source_url = excluded.source_url, fetched_at = now()`,
-        [outlet.id, logo.mime, logo.bytes, createHash('sha256').update(logo.bytes).digest('hex'), logo.url],
-      );
-      saved += 1;
-    }
-    await db.query(`update news.outlets set logo_key = $2, logo_fetched_at = $3 where id = $1`, [outlet.id, logo ? outlet.id : null, now]);
+    const keep = async (logo: { bytes: Buffer; mime: string }): Promise<boolean> => {
+      try {
+        await assets.put(outlet.id, logo.bytes, logo.mime);
+        return true;
+      } catch (err) {
+        buddi.log(`news: the logo of ${outlet.domain} was not kept: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      }
+    };
+    const logo = await fetchLogo(http, `https://${outlet.domain}/`, { allowHost: allowHostFor(buddi), keep, ...(sleep ? { sleep } : {}) }).catch(() => null);
+    if (logo) saved += 1;
+    await db.query(`update news.outlets set logo_key = $2, logo_fetched_at = $3 where id = $1`, [outlet.id, logo ? outlet.id : outlet.logo_key, now]);
   }
   return saved;
+}
+
+
+/**
+ * Logos kept by 0.1.0 in the plugin's own table, handed to the assets area
+ * once (news 0.2.0): each row is put under its key and deleted; one the area
+ * refuses is deleted and its outlet asked again on the next tick.
+ */
+export async function moveKeptLogos(buddi: BuddiHost): Promise<number> {
+  if (logosMoved || !buddi.assets) return 0;
+  const db = buddi.db;
+  const { rows } = await db.query<{ key: string; mime: string; bytes: Buffer }>(`select key, mime, bytes from news.logos order by key limit 200`);
+  let moved = 0;
+  for (const row of rows) {
+    try {
+      await buddi.assets.put(row.key, row.bytes, row.mime);
+      moved += 1;
+    } catch {
+      await db.query(`update news.outlets set logo_key = null, logo_fetched_at = null where logo_key = $1`, [row.key]);
+    }
+    await db.query(`delete from news.logos where key = $1`, [row.key]);
+  }
+  if (rows.length < 200) logosMoved = true;
+  return moved;
 }
 
 export const fetchSourceDefinition: Source = {

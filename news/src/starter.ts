@@ -22,7 +22,15 @@ export interface StarterOutlet {
   kind: OutletKind;
   language?: Language;
   paywall?: boolean;
+  /**
+   * Where AllSides' published media bias ratings place it (spec §13.1): the US
+   * politics outlets only. Used for the diversity bonus in ranking and given to
+   * Anchor; never shown on a card.
+   */
+  lean?: Lean;
 }
+
+export type Lean = 'left' | 'lean-left' | 'center' | 'lean-right' | 'right';
 
 export interface StarterSource {
   id: string;
@@ -76,14 +84,14 @@ export const STARTER_OUTLETS: StarterOutlet[] = [
   { domain: 'arstechnica.com', name: 'Ars Technica', kind: 'specialist', language: 'en' },
   { domain: 'techcrunch.com', name: 'TechCrunch', kind: 'specialist', language: 'en' },
   { domain: 'wired.com', name: 'Wired', kind: 'specialist', language: 'en' },
-  { domain: 'nytimes.com', name: 'The New York Times', kind: 'national', language: 'en', paywall: true },
+  { domain: 'nytimes.com', name: 'The New York Times', kind: 'national', language: 'en', paywall: true, lean: 'lean-left' },
   { domain: 'lemonde.fr', name: 'Le Monde', kind: 'national', language: 'fr' },
   { domain: 'numerama.com', name: 'Numerama', kind: 'specialist', language: 'fr' },
   { domain: '01net.com', name: '01net', kind: 'specialist', language: 'fr' },
   { domain: 'frandroid.com', name: 'Frandroid', kind: 'specialist', language: 'fr' },
   { domain: 'journaldunet.com', name: 'Journal du Net', kind: 'specialist', language: 'fr' },
   { domain: 'technologyreview.com', name: 'MIT Technology Review', kind: 'specialist', language: 'en' },
-  { domain: 'theguardian.com', name: 'The Guardian', kind: 'national', language: 'en' },
+  { domain: 'theguardian.com', name: 'The Guardian', kind: 'national', language: 'en', lean: 'left' },
   { domain: 'importai.substack.com', name: 'Import AI', kind: 'blog', language: 'en' },
   { domain: 'simonwillison.net', name: 'Simon Willison', kind: 'blog', language: 'en' },
   { domain: 'openai.com', name: 'OpenAI', kind: 'company', language: 'en' },
@@ -96,23 +104,23 @@ export const STARTER_OUTLETS: StarterOutlet[] = [
   { domain: 'icilome.com', name: 'icilome', kind: 'regional', language: 'fr' },
   { domain: 'rfi.fr', name: 'RFI', kind: 'international' },
   { domain: 'africanews.com', name: 'Africanews', kind: 'regional' },
-  { domain: 'bbc.com', name: 'BBC News', kind: 'international', language: 'en' },
-  { domain: 'apnews.com', name: 'AP', kind: 'wire', language: 'en' },
-  { domain: 'reuters.com', name: 'Reuters', kind: 'wire', language: 'en' },
-  { domain: 'npr.org', name: 'NPR', kind: 'national', language: 'en' },
-  { domain: 'politico.com', name: 'Politico', kind: 'national', language: 'en' },
-  { domain: 'axios.com', name: 'Axios', kind: 'national', language: 'en' },
-  { domain: 'semafor.com', name: 'Semafor', kind: 'national', language: 'en' },
-  { domain: 'thehill.com', name: 'The Hill', kind: 'national', language: 'en' },
-  { domain: 'foxnews.com', name: 'Fox News', kind: 'national', language: 'en' },
-  { domain: 'washingtonexaminer.com', name: 'Washington Examiner', kind: 'national', language: 'en' },
-  { domain: 'nationalreview.com', name: 'National Review', kind: 'national', language: 'en' },
-  { domain: 'economist.com', name: 'The Economist', kind: 'international', language: 'en', paywall: true },
+  { domain: 'bbc.com', name: 'BBC News', kind: 'international', language: 'en', lean: 'center' },
+  { domain: 'apnews.com', name: 'AP', kind: 'wire', language: 'en', lean: 'lean-left' },
+  { domain: 'reuters.com', name: 'Reuters', kind: 'wire', language: 'en', lean: 'center' },
+  { domain: 'npr.org', name: 'NPR', kind: 'national', language: 'en', lean: 'lean-left' },
+  { domain: 'politico.com', name: 'Politico', kind: 'national', language: 'en', lean: 'lean-left' },
+  { domain: 'axios.com', name: 'Axios', kind: 'national', language: 'en', lean: 'lean-left' },
+  { domain: 'semafor.com', name: 'Semafor', kind: 'national', language: 'en', lean: 'center' },
+  { domain: 'thehill.com', name: 'The Hill', kind: 'national', language: 'en', lean: 'center' },
+  { domain: 'foxnews.com', name: 'Fox News', kind: 'national', language: 'en', lean: 'right' },
+  { domain: 'washingtonexaminer.com', name: 'Washington Examiner', kind: 'national', language: 'en', lean: 'lean-right' },
+  { domain: 'nationalreview.com', name: 'National Review', kind: 'national', language: 'en', lean: 'right' },
+  { domain: 'economist.com', name: 'The Economist', kind: 'international', language: 'en', paywall: true, lean: 'lean-left' },
   { domain: 'aljazeera.com', name: 'Al Jazeera', kind: 'international', language: 'en' },
   { domain: 'dw.com', name: 'DW', kind: 'international', language: 'en' },
   { domain: 'france24.com', name: 'France 24', kind: 'international' },
   { domain: 'ft.com', name: 'Financial Times', kind: 'international', language: 'en', paywall: true },
-  { domain: 'wsj.com', name: 'The Wall Street Journal', kind: 'national', language: 'en', paywall: true },
+  { domain: 'wsj.com', name: 'The Wall Street Journal', kind: 'national', language: 'en', paywall: true, lean: 'center' },
   { domain: 'liberation.fr', name: 'Libération', kind: 'national', language: 'fr' },
   { domain: 'lefigaro.fr', name: 'Le Figaro', kind: 'national', language: 'fr' },
   { domain: 'bloomberg.com', name: 'Bloomberg', kind: 'international', language: 'en', paywall: true },

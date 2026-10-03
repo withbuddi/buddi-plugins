@@ -10,29 +10,41 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 };
 
 describe('news manifest', () => {
-  it('registers, with six tools a model sees and the source manager\'s tools kept from models', () => {
+  it('registers, with the tools a model sees, the source manager\'s kept from models, and muting an outlet gated', () => {
     const registry = new ToolRegistry();
     expect(() => registry.register(manifest)).not.toThrow();
     expect(registry.list().map((t) => t.name).sort()).toEqual([
-      'news.feedback', 'news.headlines', 'news.mark_told', 'news.search', 'news.story', 'news.topics',
+      'news.edition_material', 'news.edition_save', 'news.feedback', 'news.headlines', 'news.mark_told', 'news.mute_outlet',
+      'news.quiet_today', 'news.read', 'news.search', 'news.story', 'news.topics',
     ]);
     for (const tool of manifest.tools) {
       expect(tool.name.startsWith('news.')).toBe(true);
-      expect(tool.tier).toBe('auto');
+      expect(tool.tier).toBe(tool.name === 'news.mute_outlet' ? 'gated' : 'auto');
     }
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name).sort()).toEqual([
-      'news.add_source', 'news.add_topic', 'news.enable_starter', 'news.hide_story', 'news.mute_outlet', 'news.refresh',
+      'news.add_feed', 'news.add_source', 'news.add_topic', 'news.enable_starter', 'news.hide_story', 'news.refresh',
       'news.remove_source', 'news.remove_topic', 'news.retry_source', 'news.set_settings', 'news.set_source', 'news.set_topic',
     ]);
     // What outlets wrote is someone else's text.
-    expect(manifest.tools.filter((t) => t.untrusted === 'web').map((t) => t.name).sort()).toEqual(['news.headlines', 'news.search', 'news.story']);
+    expect(manifest.tools.filter((t) => t.untrusted === 'web').map((t) => t.name).sort()).toEqual([
+      'news.edition_material', 'news.headlines', 'news.read', 'news.search', 'news.story',
+    ]);
   });
 
-  it('exports headlines and story, has a setup and one timer', () => {
-    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['headlines', 'story']);
+  it('asks the owner before an agent mutes an outlet, and not when the owner presses the button', async () => {
+    const tool = manifest.tools.find((t) => t.name === 'news.mute_outlet')!;
+    expect(await tool.tierFor!({ outlet: 'foxnews.com' }, { agentId: 'anchor' } as never)).toMatchObject({ tier: 'gated' });
+    expect(await tool.tierFor!({ outlet: 'foxnews.com' }, { agentId: 'owner' } as never)).toEqual({ tier: 'auto' });
+  });
+
+  it('exports headlines, story and the edition material, has a setup, one timer, two pages and the widget', () => {
+    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'headlines', 'story']);
     expect(manifest.setup).toBeDefined();
     expect(manifest.sources?.map((s) => [s.id, s.every])).toEqual([['news.fetch', 60]]);
-    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['logo', 'sources']);
+    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
+    expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['stories', 'rail'], ['sources', 'settings']]);
+    expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['news.top', ['small', 'medium']]]);
+    expect(manifest.optional).toEqual({ speech: '^0.1.3' });
   });
 
   it('declares what leaves the machine and what it uses, as package.json and buddi.md do', () => {
@@ -42,7 +54,7 @@ describe('news manifest', () => {
     expect(pkg.buddi.name).toBe(manifest.name);
     expect(pkg.license).toBe('Apache-2.0');
     expect(manifest.version).toBe(pkg.version);
-    expect(pkg.buddi.hostApi).toBe('^1.18');
+    expect(pkg.buddi.hostApi).toBe('^1.27');
     const md = readFileSync(new URL('../buddi.md', import.meta.url), 'utf8');
     expect(md).toMatch(/^Schema: news$/m);
     expect(md).toContain(`\nHosts: ${starterHosts().join(', ')}\n`);

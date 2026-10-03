@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { fetchSourceDefinition } from './poller.js';
 import { newsQueries, ownerTools } from './settings.js';
+import { dashboardQueries, newsPages } from './dashboard.js';
+import { editionMaterialExport, editionTools } from './edition.js';
+import { topStoriesWidget } from './widget.js';
 import { headlinesExport, newsSetup, storyExport } from './setup.js';
 import { starterHosts } from './starter.js';
 import { modelTools } from './tools.js';
@@ -40,12 +43,15 @@ export const manifest: PluginManifest = {
     'The news on the topics you follow, from English and French feeds you can see and change, grouped into stories on ' +
     'your own machine, with what was already told kept so nothing is told twice.',
   network: starterHosts().map((host) => ({ host, why: whyHost(host) })),
-  uses: ['http'],
+  uses: ['http', 'assets'],
+  optional: { speech: '^0.1.3' },
   setup: newsSetup,
-  exports: { headlines: headlinesExport, story: storyExport },
-  tools: [...modelTools, ...ownerTools],
+  exports: { headlines: headlinesExport, story: storyExport, edition_material: editionMaterialExport },
+  tools: [...modelTools, ...editionTools, ...ownerTools],
   sources: [fetchSourceDefinition],
-  queries: newsQueries,
+  queries: [...newsQueries, ...dashboardQueries],
+  pages: newsPages,
+  widgets: [topStoriesWidget],
 };
 
 export default manifest;
@@ -57,3 +63,7 @@ export * from './reads.js';
 export * from './starter.js';
 export * from './tools.js';
 export * from './setup.js';
+export * from './dashboard.js';
+export * from './edition.js';
+export * from './widget.js';
+export * from './format.js';

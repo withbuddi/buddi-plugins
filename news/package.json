@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-news",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The news on the topics you follow, from feeds you can see, grouped into stories on your own machine.",
   "keywords": [
     "buddi-plugin"
@@ -34,9 +34,13 @@
     "manifest": "manifest",
     "core": ">=0.1.0",
     "uses": [
-      "http"
+      "http",
+      "assets"
     ],
-    "hostApi": "^1.18"
+    "optional": {
+      "speech": "^0.1.3"
+    },
+    "hostApi": "^1.27"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

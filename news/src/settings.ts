@@ -8,12 +8,11 @@
  */
 import { z } from 'zod';
 import type { HttpArea, PageQuery, ToolDefinition, ToolContext } from '@buddi/core/plugin';
-import { pageFile, QueryRefusal } from '@buddi/core/plugin';
 import { decodeBytes, parseFeed } from './feed.js';
 import { politeGet, FetchError } from './fetch.js';
 import { declareRuntimeHosts, fetchMissingLogos, refresh, type RefreshReport } from './poller.js';
 import { sourceHealth, type SourceHealth } from './reads.js';
-import { addSourceRow, enableStarter, ensureOutlet, ensureTopic, findOutlet, findTopic, hideStory, muteOutlet, muteTopic, retrySource, slug } from './store.js';
+import { addSourceRow, enableStarter, ensureOutlet, ensureTopic, findTopic, hideStory, muteTopic, retrySource, slug } from './store.js';
 import { gnewsUrl, STARTER_TOPICS, type Language } from './starter.js';
 import { outletHost } from './canonical.js';
 
@@ -146,15 +145,30 @@ export const setSourceTool: ToolDefinition<z.infer<typeof setSourceInput>, { id:
 };
 
 const idInput = z.object({ id: z.string().trim().min(1).max(80) }).strict();
+const removeInput = z
+  .object({ id: z.string().trim().min(1).max(80), topic: z.string().trim().min(1).max(80).optional().describe('Only from this topic; the source goes when it feeds no other.') })
+  .strict();
 
-export const removeSourceTool: ToolDefinition<z.infer<typeof idInput>, { removed: boolean }> = {
+export const removeSourceTool: ToolDefinition<z.infer<typeof removeInput>, { removed: boolean }> = {
   name: 'news.remove_source',
-  description: 'Remove a source and the articles only it brought.',
+  description: 'Remove a source (from one topic, or altogether) and the articles only it brought.',
   tier: 'auto',
   ownerOnly: true,
-  input: idInput,
+  input: removeInput,
   async execute(input, ctx) {
     const buddi = ctx.buddi!;
+    if (input.topic) {
+      await buddi.db.query(`delete from news.topic_sources where source_id = $1 and topic_id = $2`, [input.id, input.topic]);
+      await buddi.db.query(
+        `delete from news.article_topics at using news.articles a where a.id = at.article_id and a.source_id = $1 and at.topic_id = $2`,
+        [input.id, input.topic],
+      );
+      const { rows: left } = await buddi.db.query<{ n: number }>(`select count(*)::int as n from news.topic_sources where source_id = $1`, [input.id]);
+      if ((left[0]?.n ?? 0) > 0) {
+        await buddi.db.query(`delete from news.stories s where not exists (select 1 from news.article_topics at where at.story_id = s.id)`);
+        return { removed: true };
+      }
+    }
     const { rows } = await buddi.db.query<{ url: string; final_url: string | null; added_by: string }>(`delete from news.sources where id = $1 returning url, final_url, added_by`, [input.id]);
     await buddi.db.query(`delete from news.stories s where not exists (select 1 from news.article_topics at where at.story_id = s.id)`);
     const removed = rows[0];
@@ -181,18 +195,23 @@ export const retrySourceTool: ToolDefinition<z.infer<typeof idInput>, { id: stri
 const addTopicInput = z
   .object({
     name: z.string().trim().min(2).max(60),
-    keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).describe('What Google News is searched for, and the words the topic is about.'),
+    keywords: z.union([z.array(z.string().trim().min(1).max(60)).min(1).max(20), z.string().trim().min(1).max(600)])
+      .transform((k) => (Array.isArray(k) ? k : k.split(',').map((w) => w.trim()).filter(Boolean).slice(0, 20)))
+      .describe('What Google News is searched for, and the words the topic is about (a list, or words separated by commas).'),
     languages: z.array(languageField).min(1).max(2).optional(),
-    feeds: z.array(z.string().trim().url().max(500)).max(20).optional().describe('Feeds or pages that name one. With none, the topic follows a Google News search for its keywords.'),
+    feeds: z.union([z.array(z.string().trim().url().max(500)).max(20), z.string().trim().max(500)])
+      .transform((f) => (Array.isArray(f) ? f : f === '' ? [] : [/^https?:\/\//i.test(f) ? f : `https://${f}`]))
+      .optional()
+      .describe('Feeds or pages that name one. With none, the topic follows a Google News search for its keywords.'),
   })
   .strict();
 
-export const addTopicTool: ToolDefinition<z.infer<typeof addTopicInput>, { id: string; sources: number; problems: string[] }> = {
+export const addTopicTool: ToolDefinition<z.infer<typeof addTopicInput>, { id: string; sources: number; problems: string[]; note: string }> = {
   name: 'news.add_topic',
   description: 'Add a topic of the owner\'s own: a name, keywords, and feeds; with no feed, a Google News search in each language.',
   tier: 'auto',
   ownerOnly: true,
-  input: addTopicInput,
+  input: addTopicInput as unknown as z.ZodType<z.infer<typeof addTopicInput>>,
   async execute(input, ctx) {
     const buddi = ctx.buddi!;
     const now = buddi.clock.now();
@@ -221,7 +240,7 @@ export const addTopicTool: ToolDefinition<z.infer<typeof addTopicInput>, { id: s
         if (added) sources += 1;
       }
     }
-    return { id, sources, problems };
+    return { id, sources, problems, note: `Added ${input.name}, reading ${sources} ${sources === 1 ? 'source' : 'sources'}.${problems.length ? ` ${problems[0]}` : ''}` };
   },
 };
 
@@ -231,6 +250,7 @@ const setTopicInput = z
     name: z.string().trim().min(2).max(60).optional(),
     keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).optional(),
     mutedForHours: z.number().int().min(0).max(24 * 365).optional().describe('0 takes a mute back.'),
+    muted: z.boolean().optional().describe('Mute for good (true), or take any mute back (false).'),
   })
   .strict();
 
@@ -245,7 +265,8 @@ export const setTopicTool: ToolDefinition<z.infer<typeof setTopicInput>, { id: s
     const topic = await findTopic(buddi.db, input.topic);
     if (!topic) throw new Error(`No topic called "${input.topic}".`);
     await buddi.db.query(`update news.topics set name = coalesce($2, name), keywords = coalesce($3, keywords) where id = $1`, [topic.id, input.name ?? null, input.keywords ?? null]);
-    if (input.mutedForHours !== undefined) {
+    if (input.muted !== undefined) await muteTopic(buddi.db, topic.id, input.muted ? 'infinity' : null);
+    else if (input.mutedForHours !== undefined) {
       await muteTopic(buddi.db, topic.id, input.mutedForHours === 0 ? null : new Date(buddi.clock.now().getTime() + input.mutedForHours * 3600_000));
     }
     return { id: topic.id };
@@ -287,22 +308,6 @@ export const hideStoryTool: ToolDefinition<z.infer<typeof hideInput>, { id: stri
     const until = hidden === 'snoozed' ? new Date(buddi.clock.now().getTime() + (input.hours ?? 24) * 3600_000) : null;
     if (!(await hideStory(buddi.db, input.id, hidden, until))) throw new Error(`No story ${input.id}.`);
     return { id: input.id, hidden };
-  },
-};
-
-const muteOutletInput = z.object({ outlet: z.string().trim().min(1).max(120), muted: z.boolean() }).strict();
-
-export const muteOutletTool: ToolDefinition<z.infer<typeof muteOutletInput>, { id: string; muted: boolean }> = {
-  name: 'news.mute_outlet',
-  description: 'Mute an outlet everywhere (its articles leave every story), or turn it back on.',
-  tier: 'auto',
-  ownerOnly: true,
-  input: muteOutletInput,
-  async execute(input, ctx) {
-    const outlet = await findOutlet(ctx.buddi!.db, input.outlet);
-    if (!outlet) throw new Error(`No outlet called "${input.outlet}".`);
-    await muteOutlet(ctx.buddi!.db, outlet.id, input.muted);
-    return { id: outlet.id, muted: input.muted };
   },
 };
 
@@ -357,9 +362,70 @@ export const refreshTool: ToolDefinition<z.infer<typeof refreshInput>, RefreshRe
   },
 };
 
+const addFeedInput = z
+  .object({
+    address: z.string().trim().min(2).max(500).describe('A feed or a site address, or words to follow as a Google News search.'),
+    topic: z.string().trim().min(1).max(80),
+  })
+  .strict();
+
+/** Whether what the owner typed is an address rather than words to search for. */
+export function looksLikeAddress(text: string): boolean {
+  return /^https?:\/\//i.test(text) || (!/\s/.test(text) && /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(text));
+}
+
+/**
+ * The source manager's Add a source (the kit's sheet): an address is fetched
+ * and parsed before anything is saved — the feed itself, or the one the page
+ * names — and words become a Google News search, checked to answer items in
+ * the topic's languages. Says what was added and how much it carries now.
+ */
+export const addFeedTool: ToolDefinition<z.infer<typeof addFeedInput>, { id: string; note: string; items: number }> = {
+  name: 'news.add_feed',
+  description: 'Add a source to a topic from what the owner typed: a feed, a site that names one, or words for a Google News search; checked before it is saved.',
+  tier: 'auto',
+  ownerOnly: true,
+  input: addFeedInput,
+  async execute(input, ctx) {
+    const buddi = ctx.buddi!;
+    const topic = await findTopic(buddi.db, input.topic);
+    if (!topic) throw new Error(`No topic called "${input.topic}".`);
+    if (looksLikeAddress(input.address)) {
+      const url = new URL(/^https?:\/\//i.test(input.address) ? input.address : `https://${input.address}`).toString();
+      const added = await addSource(ctx, { url, topics: [{ topic: topic.id }] });
+      return { id: added.id, note: added.note, items: added.items };
+    }
+    const { rows } = await buddi.db.query<{ languages: string[] }>(`select languages from news.topics where id = $1`, [topic.id]);
+    const languages = ((rows[0]?.languages ?? ['en']).filter((l) => l === 'en' || l === 'fr') as Language[]);
+    const query = input.address.replace(/\s+/g, ' ');
+    let items = 0;
+    let first = '';
+    let answered = 0;
+    let problem = '';
+    for (const language of languages.length ? languages : (['en'] as Language[])) {
+      const url = gnewsUrl(`${query} when:2d`, language);
+      // Checked before it is saved: a search Google News does not answer is not added.
+      const found = await discoverFeed(buddi.http!, url).catch((err: unknown) => {
+        problem = err instanceof Error ? err.message : String(err);
+        return null;
+      });
+      if (!found) continue;
+      answered += 1;
+      const id = `${topic.id}-${slug(query)}-${language}`.slice(0, 80);
+      if (await addSourceRow(buddi.db, { id, name: `Google News · ${query}`, kind: 'gnews', url, language, outletId: null, addedBy: 'owner' }, [{ topic: topic.id }], buddi.clock.now())) {
+        items += found.items;
+        first ||= id;
+      }
+    }
+    if (answered === 0) throw new Error(`Google News did not answer that search: ${problem}`);
+    if (!first) throw new Error(`${topic.name} already follows that search.`);
+    return { id: first, items, note: `Added the Google News search “${query}” to ${topic.name}, ${items} articles now.` };
+  },
+};
+
 export const ownerTools = [
   enableStarterTool, addSourceTool, setSourceTool, removeSourceTool, retrySourceTool, addTopicTool, setTopicTool, removeTopicTool,
-  hideStoryTool, muteOutletTool, setSettingsTool, refreshTool,
+  hideStoryTool, setSettingsTool, refreshTool, addFeedTool,
 ];
 
 /* ------------------------------------------------------------------ */
@@ -371,22 +437,6 @@ export const newsQueries: PageQuery[] = [
     async produce(params, ctx): Promise<{ sources: SourceHealth[] }> {
       const { topic } = params as { topic?: string };
       return { sources: await sourceHealth(ctx.buddi!.db, topic) };
-    },
-  },
-  {
-    // An outlet's logo: GET /api/pages/news/logo?outlet=<id>. A passive image the gateway serves under its sandboxing CSP.
-    name: 'logo',
-    params: z.object({ outlet: z.string().min(1).max(120) }).strict(),
-    async produce(params, ctx) {
-      const { outlet } = params as { outlet: string };
-      const { rows } = await ctx.buddi!.db.query<{ mime: string; bytes: Buffer; key: string }>(
-        `select l.mime, l.bytes, l.key from news.outlets o join news.logos l on l.key = o.logo_key where o.id = $1`,
-        [outlet],
-      );
-      const logo = rows[0];
-      if (!logo) throw new QueryRefusal('This outlet has no logo.');
-      const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[logo.mime] ?? 'ico';
-      return pageFile({ body: logo.bytes, contentType: logo.mime, filename: `${logo.key}.${ext}`, disposition: 'inline', size: logo.bytes.length });
     },
   },
 ];

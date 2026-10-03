@@ -83,8 +83,8 @@ export async function ensureOutlet(db: Query, domain: string, name: string, extr
   if (!d || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return null;
   const starter = STARTER_OUTLETS.find((o) => o.domain === d);
   await db.query(
-    `insert into news.outlets (id, name, domain, kind, language, paywall) values ($1, $2, $1, $3, $4, $5) on conflict (id) do nothing`,
-    [d, starter?.name ?? (name || d), starter?.kind ?? extra.kind ?? null, starter?.language ?? extra.language ?? null, starter?.paywall ?? extra.paywall ?? false],
+    `insert into news.outlets (id, name, domain, kind, language, paywall, lean) values ($1, $2, $1, $3, $4, $5, $6) on conflict (id) do nothing`,
+    [d, starter?.name ?? (name || d), starter?.kind ?? extra.kind ?? null, starter?.language ?? extra.language ?? null, starter?.paywall ?? extra.paywall ?? false, starter?.lean ?? null],
   );
   return d;
 }
@@ -152,7 +152,7 @@ export async function recordSuccess(
   update: { etag?: string; lastModified?: string; keepValidators?: boolean; finalUrl?: string } = {},
 ): Promise<void> {
   await db.query(
-    `update news.sources set last_ok_at = $2, last_error = null, failures = 0, failing_since = null, state = 'ok', next_at = $3,
+    `update news.sources set last_ok_at = $2, last_tried_at = $2, last_error = null, failures = 0, failing_since = null, state = 'ok', next_at = $3,
        etag = case when $6 then etag else $4 end, last_modified = case when $6 then last_modified else $5 end,
        final_url = coalesce($7, final_url)
      where id = $1`,
@@ -163,7 +163,7 @@ export async function recordSuccess(
 /** A failure: one more in a row, the wait doubled (or what Retry-After asks), failing after a day, paused after a week. */
 export async function recordFailure(db: Query, source: Pick<SourceRow, 'id' | 'every_seconds'>, now: Date, error: string, retryAfterMs?: number): Promise<'ok' | 'failing' | 'paused'> {
   const { rows } = await db.query<{ failures: number; failing_since: Date }>(
-    `update news.sources set last_error = $3, failures = failures + 1, failing_since = coalesce(failing_since, $2)
+    `update news.sources set last_error = $3, last_tried_at = $2, failures = failures + 1, failing_since = coalesce(failing_since, $2)
      where id = $1 returning failures, failing_since`,
     [source.id, now, error.slice(0, 300)],
   );

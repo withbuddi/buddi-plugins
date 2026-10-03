@@ -12,6 +12,7 @@
  */
 import { z } from 'zod';
 import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
+import { ToolRefusal } from '@buddi/core/plugin';
 import { headlines, listTopics, search, sourceHealth, story, type SearchHit, type StoryDetail, type StorySummary, type TopicSummary } from './reads.js';
 import { findOutlet, findTopic, hideStory, markTold, muteOutlet, muteTopic } from './store.js';
 
@@ -195,7 +196,7 @@ const feedbackInput = z
     outlet: z.string().trim().min(1).max(120).optional().describe('An outlet by name ("Le Monde") or site ("lemonde.fr").'),
     topic: z.string().trim().min(1).max(80).optional(),
     action: z.enum(['not_interested', 'mute', 'snooze', 'clear']).describe(
-      'not_interested: never this story again; mute: never this outlet, or this topic for a week; snooze: not until tomorrow (or hours); clear: take one of these back.'),
+      'not_interested: never this story again; mute: this topic for a week (an outlet is muted with news.mute_outlet, which asks the owner); snooze: not until tomorrow (or hours); clear: take one of these back.'),
     hours: z.coerce.number().int().min(1).max(24 * 30).optional().describe('How long a snooze or a topic mute lasts.'),
   })
   .strict();
@@ -252,7 +253,9 @@ export const feedbackTool: ToolDefinition<z.infer<typeof feedbackInput>, Feedbac
     const outlet = await findOutlet(buddi.db, input.outlet!);
     if (!outlet) throw new Error(`No outlet called "${input.outlet}" in the news kept here.`);
     if (input.action === 'snooze') throw new Error('An outlet is muted or not; snooze a story or a topic instead.');
-    const muted = input.action !== 'clear';
+    // Muting an outlet asks the owner first (news.mute_outlet); taking a mute back does not.
+    if (input.action !== 'clear') throw new ToolRefusal(`Muting ${outlet.name} asks the owner first: call news.mute_outlet.`);
+    const muted = false;
     await muteOutlet(buddi.db, outlet.id, muted);
     return { kind: 'outlet', subject: outlet.id, action: muted ? 'mute' : 'clear', until: null, note: muted ? `${outlet.name} is muted.` : `${outlet.name} is back.` };
   },
