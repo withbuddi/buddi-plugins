@@ -507,6 +507,12 @@ suite('news (postgres)', () => {
     expect(told.logos.length).toBe(Math.min(3, fed.outlets.length));
     expect(stray).toMatchObject({ title: 'A story the edition told from nowhere', outlet: 'Nobody', logos: [{ name: 'Nobody' }] });
     expect(stray.storyId).toBeUndefined();
+    // The card's ways out: the told story's topic and its mutable outlets; nothing for the stray.
+    expect(told).toMatchObject({ topicId: 'economy', topicName: material.topics[0].topic });
+    expect(told.mutable[0]).toMatchObject({ name: first.outlet });
+    expect(told.mutable.length).toBeLessThanOrEqual(4);
+    expect(stray.topicId).toBeUndefined();
+    expect(stray.mutable).toBeUndefined();
     expect(await query('edition', { id: 'e_gone' })).toEqual({ edition: null });
     const next = await run('news.edition_material', { edition: 'midday' });
     expect(next.alreadyTold.map((t: { id: string }) => t.id)).toContain(fed.id);

@@ -34,6 +34,11 @@ export interface EditionStoryView {
   link?: { url: string; label: string };
   /** Up to three outlets, the named one first; `logo` is an asset key. */
   logos: Array<{ name: string; logo?: string }>;
+  /** The matched story's topic, for the card's ways out (Quiet / Mute the topic). */
+  topicId?: string;
+  topicName?: string;
+  /** The matched story's outlets that can be muted (up to four, the named one first). */
+  mutable?: Array<{ id: string; name: string }>;
 }
 
 export interface EditionView {
@@ -218,19 +223,20 @@ function bare(url: string): string {
 
 const outletName = (name: string): string => name.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
 
-function logosOf(articles: ArticleRow[], named: string): Array<{ name: string; logo?: string }> {
+/** A story's distinct outlets, the one Anchor named first. */
+function outletsOf(articles: ArticleRow[], named: string): Array<{ id: string | null; name: string; logo?: string }> {
   const seen = new Set<string>();
-  const outlets: Array<{ name: string; logo?: string }> = [];
+  const outlets: Array<{ id: string | null; name: string; logo?: string }> = [];
   for (const a of articles) {
     const key = a.outlet_id ?? a.source_id;
     if (seen.has(key)) continue;
     seen.add(key);
-    outlets.push({ name: a.outlet, ...(a.logo ? { logo: a.logo } : {}) });
+    outlets.push({ id: a.outlet_id, name: a.outlet, ...(a.logo ? { logo: a.logo } : {}) });
   }
   const want = outletName(named);
   const lead = outlets.findIndex((o) => o.name.toLowerCase() === want || o.name.toLowerCase().startsWith(want));
   if (lead > 0) outlets.unshift(...outlets.splice(lead, 1));
-  return outlets.slice(0, 3);
+  return outlets;
 }
 
 /** One saved edition, as the chat's card draws it; undefined when there is no such edition. */
@@ -246,6 +252,11 @@ export async function editionView(buddi: BuddiHost, id: string): Promise<Edition
   const articles = await visibleArticles(db, row.story_ids);
   const byUrl = new Map<string, string>();
   for (const [storyId, list] of articles) for (const a of list) byUrl.set(bare(a.url), storyId);
+  const { rows: topicRows } = row.story_ids.length === 0 ? { rows: [] } : await db.query<{ id: string; topic_id: string; name: string }>(
+    `select s.id, s.topic_id, t.name from news.stories s join news.topics t on t.id = s.topic_id where s.id = any($1)`,
+    [row.story_ids],
+  );
+  const topicOf = new Map(topicRows.map((t) => [t.id, t]));
   const format = (await buddi.owner.formats?.().catch(() => null))?.time ?? null;
   const at = clock(row.created_at, buddi.owner.timezone, format);
   return {
@@ -259,8 +270,17 @@ export async function editionView(buddi: BuddiHost, id: string): Promise<Edition
       stories: g.stories.map((s) => {
         const storyId = s.link ? byUrl.get(bare(s.link.url)) : undefined;
         const list = storyId ? articles.get(storyId) ?? [] : [];
-        const logos = list.length > 0 ? logosOf(list, s.outlet) : s.outlet ? [{ name: s.outlet }] : [];
-        return { ...s, ...(storyId ? { storyId } : {}), logos };
+        const outlets = outletsOf(list, s.outlet);
+        const logos = outlets.length > 0 ? outlets.slice(0, 3).map(({ name, logo }) => ({ name, ...(logo ? { logo } : {}) })) : s.outlet ? [{ name: s.outlet }] : [];
+        const topic = storyId ? topicOf.get(storyId) : undefined;
+        const mutable = outlets.filter((o) => o.id !== null).slice(0, 4).map((o) => ({ id: o.id!, name: o.name }));
+        return {
+          ...s,
+          ...(storyId ? { storyId } : {}),
+          logos,
+          ...(topic ? { topicId: topic.topic_id, topicName: topic.name } : {}),
+          ...(storyId && mutable.length > 0 ? { mutable } : {}),
+        };
       }),
     })),
     notes: parsed.notes,
