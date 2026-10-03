@@ -17,7 +17,7 @@
  * by six outlets in English and French, and pairs of different stories told
  * in the same words.
  */
-import { featuresOf, isTranslatable, jaccard, weightedJaccard, type Features, type TermSet } from './text.js';
+import { crossConcept, ENTITY_WEIGHT, featuresOf, isTranslatable, jaccard, weightedJaccard, type Features, type TermSet } from './text.js';
 
 export const WINDOW_MS = 48 * 3600_000;
 export const MERGE_THRESHOLD = 0.3;
@@ -64,11 +64,23 @@ function alike(a: TermSet, b: TermSet): number {
   return Math.max(weightedJaccard(a.weights, b.weights), shingle);
 }
 
-/** A term set cut down to what reads the same in both languages: names, numbers and lexicon concepts. */
-function translatable(t: TermSet): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const [k, w] of t.weights) if (t.entities.has(k) || isTranslatable(k)) out.set(k, w);
-  return out;
+/**
+ * A term set as both languages read it: each term through the cross-language
+ * lexicon ("enfant" and "children" are `child`, "Omani" and "omanais" the name
+ * `oman`), then cut down to what can be shared — names, numbers and concepts.
+ */
+function translatable(t: TermSet): { weights: Map<string, number>; entities: Set<string> } {
+  const weights = new Map<string, number>();
+  const entities = new Set<string>();
+  for (const [k] of t.weights) {
+    const concept = crossConcept(k);
+    const key = concept ? concept.replace(/^!/, '') : k;
+    const entity = t.entities.has(k) || !!concept?.startsWith('!');
+    if (!entity && !concept && !isTranslatable(key)) continue;
+    if (entity) entities.add(key);
+    weights.set(key, Math.max(weights.get(key) ?? 0, entity ? ENTITY_WEIGHT : 1));
+  }
+  return { weights, entities };
 }
 
 /**
@@ -80,10 +92,12 @@ function translatable(t: TermSet): Map<string, number> {
  * (Trump, in US politics), and only past `CROSS_MERGE`.
  */
 function alikeAcross(a: TermSet, b: TermSet, common: ReadonlySet<string>): number {
+  const x = translatable(a);
+  const y = translatable(b);
   let shared = 0;
-  for (const e of a.entities) if (b.entities.has(e) && !common.has(e)) shared += 1;
+  for (const e of x.entities) if (y.entities.has(e) && !common.has(e)) shared += 1;
   if (shared < CROSS_NAMES) return 0;
-  const score = weightedJaccard(translatable(a), translatable(b));
+  const score = weightedJaccard(x.weights, y.weights);
   return score >= CROSS_MERGE ? score : 0;
 }
 

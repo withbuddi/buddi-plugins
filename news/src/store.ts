@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { BuddiHost } from '@buddi/core/plugin';
 import { canonicalUrl, outletHost } from './canonical.js';
-import { assignStories, likeness, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
+import { assignStories, bestStory, commonNames, likeness, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
 import type { FetchedItem } from './fetch.js';
 import { articleSequence, featuresOf, isDeal, isNews, isOpinion, LEAD_MARK, normalise, stripOutletSuffix } from './text.js';
 import { EVERY_SECONDS, STARTER_OUTLETS, STARTER_SOURCES, STARTER_TOPICS, starterSources, type Language, type SourceKind } from './starter.js';
@@ -323,6 +323,78 @@ export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: stri
     await refreshStories(tx, touched, ownerLanguage);
     await linkTwins(tx, touched);
     return { assigned: assignments.size, created: created.length };
+  });
+}
+
+/**
+ * Bring the open stories of a topic up to today's clustering, once a process
+ * (news 0.2.1 learnt to join English and French): the last 48 hours'
+ * articles get their terms read again, and an open story the current rules
+ * would have joined to an earlier one is merged into it, its told-marks with
+ * it. A story the owner turned away is left as it is. Answers how many
+ * stories were merged away.
+ */
+export async function regroupOpen(db: Db, topicId: string, now: Date, ownerLanguage?: string): Promise<number> {
+  const since = new Date(now.getTime() - WINDOW_MS);
+  const { rows: fresh } = await db.query<{ id: string; title: string; lead: string; tokens: string[] }>(
+    `select a.id, a.title, a.lead, a.tokens from news.article_topics at join news.articles a on a.id = at.article_id
+      where at.topic_id = $1 and a.published_at >= $2`,
+    [topicId, since],
+  );
+  for (const a of fresh) {
+    const sequence = articleSequence(a.title, a.lead);
+    if (sequence.join(' ') === a.tokens.join(' ')) continue;
+    await db.query(`update news.articles set tokens = $2, entities = $3 where id = $1`, [a.id, sequence, [...new Set(sequence.filter((t) => t.startsWith('!')).map((t) => t.slice(1)))]]);
+  }
+  return db.transaction(async (tx) => {
+    await tx.query(`select pg_advisory_xact_lock(hashtext('news.cluster:' || $1))`, [topicId]);
+    const { rows } = await tx.query<{ story_id: string; first_seen: Date; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
+      `select s.id as story_id, s.first_seen, a.id, a.published_at, a.tokens, a.language, a.kind
+         from news.stories s join news.article_topics at on at.story_id = s.id and at.topic_id = s.topic_id join news.articles a on a.id = at.article_id
+        where s.topic_id = $1 and s.updated_at >= $2 and s.hidden is null`,
+      [topicId, since],
+    );
+    const stories = new Map<string, OpenStory & { firstSeen: Date }>();
+    for (const r of rows) {
+      const story = stories.get(r.story_id) ?? { id: r.story_id, firstSeen: r.first_seen, updatedAt: r.published_at, members: [] };
+      story.members.push({ id: r.id, publishedAt: r.published_at, sequence: r.tokens, language: r.language, deal: r.kind === 'deal' });
+      if (r.published_at > story.updatedAt) story.updatedAt = r.published_at;
+      stories.set(r.story_id, story);
+    }
+    const ordered = [...stories.values()].sort((a, b) => a.firstSeen.getTime() - b.firstSeen.getTime() || a.id.localeCompare(b.id));
+    const common = commonNames(ordered, []);
+    const kept: OpenStory[] = [];
+    const merges: Array<[from: string, into: string]> = [];
+    for (const story of ordered) {
+      let best: { id: string; score: number } | null = null;
+      for (const member of story.members) {
+        const found = bestStory(member, kept, common);
+        if (found && (!best || found.score > best.score)) best = found;
+      }
+      const into = best ? kept.find((k) => k.id === best!.id) : undefined;
+      if (into) {
+        into.members.push(...story.members);
+        if (story.updatedAt > into.updatedAt) into.updatedAt = story.updatedAt;
+        merges.push([story.id, into.id]);
+      } else {
+        kept.push({ ...story, members: [...story.members] });
+      }
+    }
+    for (const [from, into] of merges) {
+      await tx.query(`update news.article_topics set story_id = $2 where story_id = $1 and topic_id = $3`, [from, into, topicId]);
+      await tx.query(
+        `insert into news.told (edition_id, story_id, told_at, article_count, outlet_count, was_update)
+         select edition_id, $2, told_at, article_count, outlet_count, was_update from news.told where story_id = $1
+         on conflict (edition_id, story_id) do nothing`,
+        [from, into],
+      );
+      await tx.query(`update news.stories set last_told_at = greatest(last_told_at, (select last_told_at from news.stories where id = $1)) where id = $2`, [from, into]);
+      await tx.query(`delete from news.stories where id = $1`, [from]);
+    }
+    const touched = [...new Set(merges.map(([, into]) => into))];
+    await refreshStories(tx, touched, ownerLanguage);
+    await linkTwins(tx, touched);
+    return merges.length;
   });
 }
 

@@ -6,9 +6,9 @@ What changes in @withbuddi/plugin-news from one release to the next, newest firs
 
 ### Changed
 
-- The same story in English and French now joins up more often: two articles in different languages are compared on what both languages share (names, numbers and a larger lexicon of news words and countries) once they name three things in common, leaving out names all over the topic that day (the flydubai pair from the first editions is one story now; two Ebola reports about different things stay two).
+- The same story in English and French now joins up more often: two articles in different languages are compared on what both languages share (names, numbers and a larger lexicon of news words and countries) once they name three things in common, leaving out names all over the topic that day (the flydubai pair from the first editions is one story now; two Ebola reports about different things stay two). The new words are read only across the two languages, so two articles in one language are judged as before. On the first tick after an update, the last 48 hours' open stories are regrouped by these rules, told-marks kept.
 - Deals and buying guides ("% off", "best … to buy", "bon plan", "promo", a discounted price, an outlet's deals section) are marked as they arrive, form stories of their own, and stay out of editions, the widget and the headlines; the News page shows them under a new Deals tab only. Articles from before this version are read once on the first tick.
-- A Google News item's link becomes the outlet's own address shortly after it arrives (its Google page, read once with a 1 MB cap and ten seconds, then Google's decoder), so cards, a story's sources and editions link the outlet; when that fails the Google link stays and is marked, and is not asked again.
+- A Google News item's link becomes the outlet's own address shortly after it arrives (its Google page, read once with a 1 MB cap and ten seconds, then Google's decoder), so cards, a story's sources and editions link the outlet (an edition resolves its own picks the timer has not reached yet, for up to 25 seconds); when that fails the Google link stays and is marked, and is not asked again.
 
 ## 0.2.0 — unreleased
 

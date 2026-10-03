@@ -118,6 +118,41 @@ million: million millions
 record: record records
 first: first premiere
 second: second deuxieme seconde
+!usa: us usa u.s united states etats unis americain americaine americains americaines american americans
+!france: france francais francaise french
+!uk: uk britain british royaume uni britannique
+!eu: eu european union ue europeenne union europeenne
+!china: china chinese chine chinois chinoise
+!russia: russia russian russie russe
+!ukraine: ukraine ukrainian ukrainien ukrainienne
+!israel: israel israeli israelien israelienne
+!gaza: gaza
+!iran: iran iranian iranien
+!togo: togo togolese togolais togolaise
+!lome: lome
+!ghana: ghana ghanaian ghaneen
+!nigeria: nigeria nigerian nigerian
+!benin: benin beninese beninois
+!senegal: senegal senegalese senegalais
+!mali: mali malian malien
+!burkina: burkina faso burkinabe
+!ivory_coast: ivory coast ivoire ivoirien ivorian
+!ecowas: ecowas cedeao
+!africa: africa african afrique africain africaine
+!fed: fed
+!ecb: ecb bce
+!un: un onu nations unies
+!nato: nato otan
+!white_house: white house maison blanche
+`;
+
+/**
+ * Words that mean one thing in both languages but are kept apart within one:
+ * read only when an English and a French article are compared, so that two
+ * articles in one language are judged exactly as before ("Indian" and "India"
+ * stay two words there, and two Indian stories are not joined by it).
+ */
+const CROSS_SOURCE = `
 terror: terror terrorist terrorists terrorism terroriste terroristes terrorisme
 pilot: pilot pilots pilote pilotes
 copilot: copilot copilots copilote copilotes
@@ -160,27 +195,6 @@ crisis: crisis crises crise
 deposed: deposed toppled dechu renverse
 axe: axe ax hache
 toll: toll bilan
-!usa: us usa u.s united states etats unis americain americaine americains americaines american americans
-!france: france francais francaise french
-!uk: uk britain british royaume uni britannique
-!eu: eu european union ue europeenne union europeenne
-!china: china chinese chine chinois chinoise
-!russia: russia russian russie russe
-!ukraine: ukraine ukrainian ukrainien ukrainienne
-!israel: israel israeli israelien israelienne
-!gaza: gaza
-!iran: iran iranian iranien
-!togo: togo togolese togolais togolaise
-!lome: lome
-!ghana: ghana ghanaian ghaneen
-!nigeria: nigeria nigerian nigerian
-!benin: benin beninese beninois
-!senegal: senegal senegalese senegalais
-!mali: mali malian malien
-!burkina: burkina faso burkinabe
-!ivory_coast: ivory coast ivoire ivoirien ivorian
-!ecowas: ecowas cedeao
-!africa: africa african afrique africain africaine
 !drc: drc rdc congo congolese congolais congolaise
 !uae: uae u.a.e emirats emirati emirien emirienne emiratie emirati
 !oman: oman omani omanais omanaise
@@ -208,11 +222,6 @@ toll: toll bilan
 !greece: greece greek grece grec grecque
 !imf: imf fmi
 !who: oms
-!fed: fed
-!ecb: ecb bce
-!un: un onu nations unies
-!nato: nato otan
-!white_house: white house maison blanche
 `;
 
 const LEXICON = new Map<string, string>();
@@ -242,8 +251,22 @@ const PHRASE_SOURCE: Array<[string, string]> = [
   ['north korea', '!north_korea'], ['coree du nord', '!north_korea'], ['south korea', '!south_korea'], ['coree du sud', '!south_korea'],
   ['world bank', '!world_bank'], ['banque mondiale', '!world_bank'], ['world health organization', '!who'], ['organisation mondiale de la sante', '!who'],
   ['death penalty', 'death_penalty'], ['peine de mort', 'death_penalty'], ['homme d affaires', 'businessman'], ['hommes d affaires', 'businessman'],
-  ['death toll', 'toll'],
 ];
+/** Stored term → its cross-language concept (`!` for a name). */
+const CROSS = new Map<string, string>();
+for (const line of CROSS_SOURCE.trim().split('\n')) {
+  const [concept, words] = line.split(':').map((s) => s.trim()) as [string, string];
+  CONCEPTS.add(concept.replace(/^!/, ''));
+  for (const word of words.split(/\s+/)) {
+    for (const key of [word, stem(word)]) if (!CROSS.has(key)) CROSS.set(key, concept);
+  }
+}
+
+/** The concept a stored term stands for when English and French are compared (`!` for a name), or undefined. */
+export function crossConcept(term: string): string | undefined {
+  return CROSS.get(term);
+}
+
 for (const [phrase, concept] of PHRASE_SOURCE) {
   PHRASES.push([phrase.split(' '), concept]);
   CONCEPTS.add(concept.replace(/^!/, ''));

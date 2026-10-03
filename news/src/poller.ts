@@ -11,7 +11,7 @@
  */
 import type { BuddiHost, Source } from '@buddi/core/plugin';
 import { fetchLogo, fetchSource, FetchError, hostDeclared } from './fetch.js';
-import { classifyPending, clusterTopic, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
+import { classifyPending, clusterTopic, regroupOpen, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
 import { resolvePending, RESOLVE_PER_TICK } from './resolve.js';
 import { starterHosts } from './starter.js';
 
@@ -29,6 +29,7 @@ let declaredOnce = false;
 let lastPrune = 0;
 let logosMoved = false;
 let classified = false;
+let regrouped = false;
 
 export interface RefreshReport {
   fetched: number;
@@ -48,6 +49,7 @@ export function resetPoller(): void {
   lastPrune = 0;
   logosMoved = false;
   classified = false;
+  regrouped = false;
 }
 
 /**
@@ -99,6 +101,14 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
   const now = buddi.clock.now();
   // Articles from before 0.2.1 are read for deals once, before anything is clustered.
   if (!classified) classified = (await classifyPending(db)) < 2000;
+  if (classified && !regrouped) {
+    regrouped = true;
+    const language = await buddi.owner.language().catch(() => undefined);
+    const { rows: topics } = await db.query<{ id: string }>(`select id from news.topics`);
+    let merged = 0;
+    for (const t of topics) merged += await regroupOpen(db, t.id, now, language).catch((err) => { buddi.log(`news: could not regroup ${t.id}: ${err instanceof Error ? err.message : String(err)}`); return 0; });
+    if (merged > 0) buddi.log(`news: ${merged} open stories joined to the one they tell`);
+  }
   const { rows: due } = await db.query<SourceRow>(
     `select s.* from news.sources s
       where not s.muted

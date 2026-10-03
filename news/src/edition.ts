@@ -16,6 +16,7 @@ import { FetchError, hostDeclared, politeGet } from './fetch.js';
 import { decodeEntities } from './xml.js';
 import { endOfDay, startOfDay, shortDate } from './format.js';
 import { rankedStories, type ArticleRow, type RankedStory } from './reads.js';
+import { resolveNow } from './resolve.js';
 import { findOutlet, markTold, muteOutlet } from './store.js';
 import { NOT_SET_UP, type NotSetUp } from './tools.js';
 
@@ -197,6 +198,18 @@ export async function editionMaterial(buddi: BuddiHost, input: z.infer<typeof ed
   const max = input.maxStories ?? MATERIAL_DEFAULT;
   const ranked = await rankedStories(db, now, { n: 300, since: new Date(now.getTime() - 24 * 3600_000), ownerLanguage: language });
   const { picked, told } = chooseMaterial(ranked, topics.map((t) => t.id), max);
+  // The picks' Google News links the timer has not reached yet: the outlet's own, now.
+  if (buddi.http) {
+    const found = await resolveNow(db, buddi.http, picked.flatMap((r) => pickArticles(r.articles, language).map((a) => a.id)), now).catch(() => new Map<string, string>());
+    for (const r of picked) {
+      for (const a of r.articles) {
+        const link = found.get(a.id);
+        if (!link) continue;
+        if (r.summary.url === a.url) r.summary.url = link;
+        a.url = link;
+      }
+    }
+  }
   const byTopic = new Map<string, MaterialStory[]>();
   for (const r of picked) byTopic.set(r.summary.topicId, [...(byTopic.get(r.summary.topicId) ?? []), materialStory(r, language)]);
   const untoldCount = picked.length;

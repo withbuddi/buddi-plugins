@@ -24,13 +24,14 @@ import { FIRST_READ_NOTE, SETUP_NOTE } from './setup.js';
 import type { HeadlinesOutput } from './tools.js';
 import type { StoryDetail } from './reads.js';
 import { storiesFor } from './dashboard.js';
+import { regroupOpen } from './store.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
 const TEST_DB = `buddi_news_test_${process.pid}`;
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
-const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[] };
+const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[]; crossLanguage: Array<[Fixture, Fixture]> };
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -577,5 +578,35 @@ suite('news (postgres)', () => {
     requested.length = 0;
     await fetchAll();
     expect(requested.filter((u) => u.startsWith('https://news.google.com/rss/articles/'))).toEqual([]);
+
+    // An edition resolves its picks the timer has not reached yet.
+    await pool.query(`update news.articles set url = $1, link_state = null where outlet_id = 'reuters.com'`, [reuters]);
+    const again = await run('news.edition_material', { edition: 'midday' });
+    const urls = again.topics.flatMap((t: { stories: Array<{ articles: Array<{ outlet: string; url: string }> }> }) => t.stories.flatMap((st) => st.articles));
+    expect(urls.find((a: { outlet: string }) => a.outlet === 'Reuters')?.url).toBe('https://www.reuters.com/business/fed-cuts-rates-2026-09-17');
+    expect((await pool.query(`select link_state from news.articles where outlet_id = 'reuters.com'`)).rows).toEqual([{ link_state: 'resolved' }]);
+  }, 30_000); // the edition's own requests wait their turn at news.google.com, a second apart
+  it('joins an open English story and its French twin made before 0.2.1, its told-mark with it', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    const [en, fr] = fx.crossLanguage[0]!;
+    now = new Date('2026-10-03T08:00:00Z');
+    const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
+    for (const [i, f] of [en!, fr!].entries()) {
+      await pool.query(
+        `insert into news.articles (id, source_id, url_canonical, url, title, lead, language, published_at, title_hash, tokens, kind)
+         values ($1, $2, $3, $3, $4, $5, $6, $7, $1, '{}', 'news')`,
+        [`a${i}`, source, `https://example.com/${i}`, f.title, f.lead, f.lang, f.at],
+      );
+      await pool.query(`insert into news.stories (id, topic_id, first_seen, updated_at, title) values ($1, 'economy', $2, $2, $3)`, [`s${i}`, f.at, f.title]);
+      await pool.query(`insert into news.article_topics (article_id, topic_id, story_id) values ($1, 'economy', $2)`, [`a${i}`, `s${i}`]);
+    }
+    await pool.query(`insert into news.editions (id, kind) values ('e1', 'morning')`);
+    await pool.query(`insert into news.told (edition_id, story_id, told_at, article_count, outlet_count) values ('e1', 's1', $1, 1, 1)`, [now]);
+    await pool.query(`update news.stories set last_told_at = $1 where id = 's1'`, [now]);
+    const db = host().db;
+    expect(await regroupOpen(db as never, 'economy', now)).toBe(1);
+    const left = (await pool.query(`select s.id, s.article_count, s.last_told_at is not null as told, (select count(*)::int from news.told t where t.story_id = s.id) as marks from news.stories s`)).rows;
+    expect(left).toEqual([{ id: 's0', article_count: 2, told: true, marks: 1 }]);
+    expect(await regroupOpen(db as never, 'economy', now)).toBe(0);
   });
 });
