@@ -57,6 +57,29 @@ export const topStoriesWidget: WidgetDefinition = {
       options: [{ value: 'top', label: 'Top stories' }, { value: 'untold', label: 'Not yet told' }],
     },
   ],
+  // Sample data for withbuddi.com and Browse (read by `buddi plugins describe`, never by the running host).
+  preview: {
+    small: {
+      kind: 'list',
+      wrap: true,
+      rows: [
+        { title: 'Central banks hold rates as inflation cools' },
+        { title: 'A comet bright enough to see is passing this week' },
+        { title: 'Lyon opens its third tram line' },
+      ],
+    },
+    medium: {
+      kind: 'list',
+      max: 5,
+      rows: [
+        { title: 'Central banks hold rates as inflation cools', side: 'Reuters · 1 h' },
+        { title: 'A comet bright enough to see is passing this week', side: 'BBC · 2 h' },
+        { title: 'Lyon opens its third tram line', side: 'Le Progrès · 3 h' },
+        { title: 'The new phone that folds twice', side: 'The Verge · 4 h' },
+        { title: 'A quiet start to the Champions League', side: 'L’Équipe · 5 h' },
+      ],
+    },
+  },
   async produce(ctx, request): Promise<WidgetBody | null> {
     const buddi = ctx.buddi!;
     const db = buddi.db;

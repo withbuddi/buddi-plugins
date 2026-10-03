@@ -1,6 +1,7 @@
 /** The canvas side of the weather: glyphs from WMO codes, a day as a card, and the views passing core's checks. */
 import { describe, expect, it } from 'vitest';
 import { parseViewDescriptors } from '@buddi/core/plugin';
+import { parseWidgets } from '@buddi/core';
 import { glyphOf } from './open-meteo.js';
 import { dayTile, weekdayOf } from './tools.js';
 import { manifest } from './index.js';
@@ -26,5 +27,11 @@ describe('weather tiles', () => {
     expect(() => parseViewDescriptors(manifest.views!, { plugin: 'weather', tools: manifest.tools.map((t) => t.name), pages: ['settings'] })).not.toThrow();
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['weather.now', 'glance']]);
     expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['weather.now', ['small', 'medium']]]);
+  });
+
+  it('gives the market a sample per size that core draws: the card when small, the hours when medium', () => {
+    const [widget] = parseWidgets('weather', manifest.widgets, { pages: manifest.pages!.map((p) => p.id), taken: () => false });
+    expect(widget!.preview?.small).toMatchObject({ kind: 'stat', value: '18°C', caption: 'Sunny · Lyon' });
+    expect(widget!.preview?.medium).toMatchObject({ kind: 'strip', items: expect.arrayContaining([{ label: '15:00', icon: 'sun', value: '21°' }]) });
   });
 });

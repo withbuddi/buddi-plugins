@@ -94,6 +94,19 @@ export const todayWidget: WidgetDefinition = {
     },
     { key: 'time', kind: 'timeFormat', label: 'Times' },
   ],
+  // Sample data for withbuddi.com and Browse (read by `buddi plugins describe`, never by the running host).
+  preview: {
+    medium: {
+      kind: 'list',
+      rows: [
+        { title: 'Dinner with Ana', sub: 'Le Kitchen Café', side: '20:00' },
+        { title: 'Team standup', sub: 'Tomorrow · Zoom', side: '09:30' },
+        { title: 'Dentist', sub: 'Tomorrow · Dr Morel', side: '16:00' },
+      ],
+      more: '2 more by tomorrow night',
+    },
+    small: { kind: 'list', rows: [{ title: 'Dinner with Ana', side: '20:00' }, { title: 'Team standup', side: '09:30' }, { title: 'Dentist', side: '16:00' }] },
+  },
   async produce(ctx, request): Promise<WidgetBody | null> {
     const buddi = ctx.buddi!;
     const settings = request.settings ?? {};

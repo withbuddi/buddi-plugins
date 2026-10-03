@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
+import { parseWidgets } from '@buddi/core';
 import { manifest } from './index.js';
 import { starterHosts } from './starter.js';
 
@@ -45,6 +46,13 @@ describe('news manifest', () => {
     expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['stories', 'rail'], ['sources', 'settings']]);
     expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['news.top', ['small', 'medium']]]);
     expect(manifest.optional).toEqual({ speech: '^0.1.3' });
+  });
+
+  it('gives the market a sample per size that core draws: three headlines small, five with outlets medium', () => {
+    const [widget] = parseWidgets('news', manifest.widgets, { pages: manifest.pages!.map((p) => p.id), taken: () => false });
+    expect(widget!.preview?.small).toMatchObject({ kind: 'list', wrap: true });
+    expect(widget!.preview?.medium).toMatchObject({ kind: 'list', max: 5 });
+    expect((widget!.preview?.medium as { rows: unknown[] }).rows).toHaveLength(5);
   });
 
   it('declares what leaves the machine and what it uses, as package.json and buddi.md do', () => {

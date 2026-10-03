@@ -142,6 +142,17 @@ export function createWeatherHome(service: WeatherService): { glance: HomeGlance
       // The hours under a medium widget: "6 PM" or "18:00". Handed over resolved: this pick, else the Profile.
       { key: 'time', kind: 'timeFormat', label: 'Times' },
     ],
+    // Sample data for withbuddi.com and Browse (read by `buddi plugins describe`, never by the running host).
+    preview: {
+      small: { kind: 'stat', icon: 'sun', value: '18°C', caption: 'Sunny · Lyon', trend: { label: 'Next 12 hours', points: [18, 19, 21, 22, 22, 21, 19, 17, 15, 14, 13, 13] }, foot: 'High 22° · Low 11°' },
+      medium: {
+        kind: 'strip', icon: 'sun', value: '18°C', caption: 'Sunny · Lyon',
+        items: [
+          { label: '15:00', icon: 'sun', value: '21°' }, { label: '17:00', icon: 'sun', value: '22°' }, { label: '19:00', icon: 'partly-cloudy', value: '19°' },
+          { label: '21:00', icon: 'moon-clear', value: '16°' }, { label: '23:00', icon: 'moon-cloud', value: '14°' }, { label: '01:00', icon: 'moon-clear', value: '13°' },
+        ],
+      },
+    },
     async produce(ctx, request): Promise<WidgetBody | null> {
       const { size } = request;
       const settings = request.settings ?? {};

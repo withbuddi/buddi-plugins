@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
 import { parseViewDescriptors, type Component } from '@buddi/core/plugin';
+import { parseWidgets } from '@buddi/core';
 import { manifest } from './index.js';
 import { normaliseLink, providerOf } from './store.js';
 
@@ -57,6 +58,12 @@ describe('the dashboard', () => {
     expect(() => parseViewDescriptors(manifest.views!, { plugin: 'calendar', tools: manifest.tools.map((t) => t.name), pages: ['settings'] })).not.toThrow();
     expect(manifest.home?.map((h) => [h.id, h.placement])).toEqual([['calendar.next', 'glance']]);
     expect(manifest.widgets?.map((w) => w.id)).toEqual(['calendar.today']);
+  });
+
+  it('gives the market a sample per size that core draws', () => {
+    const [widget] = parseWidgets('calendar', manifest.widgets, { pages: manifest.pages!.map((p) => p.id), taken: () => false });
+    expect(widget!.preview?.medium).toMatchObject({ kind: 'list', more: '2 more by tomorrow night' });
+    expect(widget!.preview?.small).toMatchObject({ kind: 'list', rows: [{ title: 'Dinner with Ana', side: '20:00' }, expect.anything(), expect.anything()] });
   });
 
   it('puts a Calendar place in the rail: week, month and list, a calendar filter, and Settings when none is linked', () => {
