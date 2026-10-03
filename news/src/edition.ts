@@ -287,7 +287,7 @@ export const editionSaveTool: ToolDefinition<z.infer<typeof editionSaveInput>, E
       buddi.clock.now(),
     );
     const seen = new Set(marked.map((m) => m.id));
-    return { edition: editionId, told: marked, unknown: ids.filter((id) => !seen.has(id)), link: '#/p/news/stories' };
+    return { edition: editionId, told: marked, unknown: ids.filter((id) => !seen.has(id)), link: `#/p/news/stories?edition=${encodeURIComponent(editionId)}` };
   },
 };
 

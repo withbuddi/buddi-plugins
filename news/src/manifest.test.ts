@@ -41,7 +41,7 @@ describe('news manifest', () => {
     expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'headlines', 'story']);
     expect(manifest.setup).toBeDefined();
     expect(manifest.sources?.map((s) => [s.id, s.every])).toEqual([['news.fetch', 60]]);
-    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
+    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
     expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['stories', 'rail'], ['sources', 'settings']]);
     expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['news.top', ['small', 'medium']]]);
     expect(manifest.optional).toEqual({ speech: '^0.1.3' });

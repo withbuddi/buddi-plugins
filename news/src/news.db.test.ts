@@ -483,10 +483,31 @@ suite('news (postgres)', () => {
     // The export answers the same, for a mission's context.
     expect(await manifest.exports!.edition_material!.produce({ edition: 'morning', next: '13:00' }, ctx())).toMatchObject({ next: { edition: 'midday', at: '13:00' } });
 
-    const saved = await run('news.edition_save', { edition: 'morning', storyIds: [fed.id, 's_none'], text: 'Morning edition · Thu 17 Sep' });
-    expect(saved).toMatchObject({ told: [{ id: fed.id, wasUpdate: false }], unknown: ['s_none'], link: '#/p/news/stories' });
+    const first = fed.articles[0];
+    const text = [
+      'Morning edition · Thu 17 Sep', 'One story. The Fed moved.', '', '### Economy', '',
+      `**UPDATE · ${fed.title}**`, '', 'What is new since last night, in a sentence.', '',
+      `*${first.outlet} and ${fed.outlets.length - 1} more* · [example.org](${first.url})`, '',
+      '**A story the edition told from nowhere**', '', 'No link of ours.', '', '*Nobody* · [nobody.example](https://nobody.example/x)', '',
+      '— Anchor · next at 12:30',
+    ].join('\n');
+    const saved = await run('news.edition_save', { edition: 'morning', storyIds: [fed.id, 's_none'], text });
+    expect(saved).toMatchObject({ told: [{ id: fed.id, wasUpdate: false }], unknown: ['s_none'], link: `#/p/news/stories?edition=${saved.edition}` });
     const { rows } = await pool.query(`select kind, text, agent_id from news.editions`);
-    expect(rows).toEqual([{ kind: 'morning', text: 'Morning edition · Thu 17 Sep', agent_id: 'anchor' }]);
+    expect(rows).toEqual([{ kind: 'morning', text, agent_id: 'anchor' }]);
+    // The chat's edition card reads it back: Anchor's words, the told story's logos.
+    const { edition } = await query('edition', { id: saved.edition });
+    expect(edition).toMatchObject({ id: saved.edition, kind: 'morning', name: 'Morning edition', lede: 'One story. The Fed moved.', next: '12:30', text });
+    expect(edition.when).toMatch(/^Thu 17 Sep · \d{2}:\d{2}$/);
+    expect(edition.groups).toHaveLength(1);
+    const [told, stray] = edition.groups[0].stories;
+    expect(edition.groups[0].topic).toBe('Economy');
+    expect(told).toMatchObject({ storyId: fed.id, mark: 'update', title: fed.title, lead: 'What is new since last night, in a sentence.', outlet: first.outlet, more: fed.outlets.length - 1, link: { url: first.url, label: 'example.org' } });
+    expect(told.logos[0].name).toBe(first.outlet);
+    expect(told.logos.length).toBe(Math.min(3, fed.outlets.length));
+    expect(stray).toMatchObject({ title: 'A story the edition told from nowhere', outlet: 'Nobody', logos: [{ name: 'Nobody' }] });
+    expect(stray.storyId).toBeUndefined();
+    expect(await query('edition', { id: 'e_gone' })).toEqual({ edition: null });
     const next = await run('news.edition_material', { edition: 'midday' });
     expect(next.alreadyTold.map((t: { id: string }) => t.id)).toContain(fed.id);
     expect(next.topics.flatMap((t: { stories: Array<{ id: string }> }) => t.stories.map((st) => st.id))).not.toContain(fed.id);

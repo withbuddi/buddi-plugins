@@ -2,6 +2,16 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
+## 0.2.3 — unreleased
+
+### Added
+
+- An `edition` page query: one saved edition read back for buddi's chat, which draws it as the edition card — the edition's name and time, its first sentence, each topic with its stories (Anchor's headline and line, UPDATE or OPINION, the outlet's logo with up to two more, "and N more" and the link). It reads both the Markdown Anchor writes from 1.0.1 and the plain editions before it; a story is matched to one the edition told by its link, for the logos.
+
+### Changed
+
+- `news.edition_save` answers with a link that names the edition (`#/p/news/stories?edition=<id>`), so the report's "Open edition" and the chat's card know which one it is.
+
 ## 0.2.2
 
 Same as 0.2.1, published from the repository workflow so the market can list it with provenance.

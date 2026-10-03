@@ -65,5 +65,6 @@ export * from './tools.js';
 export * from './setup.js';
 export * from './dashboard.js';
 export * from './edition.js';
+export * from './edition-view.js';
 export * from './widget.js';
 export * from './format.js';

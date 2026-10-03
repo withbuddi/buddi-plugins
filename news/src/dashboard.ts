@@ -7,6 +7,7 @@
  * ways out the stories component calls.
  */
 import { z } from 'zod';
+import { editionView } from './edition-view.js';
 import type { BuddiHost, PageDescriptor, PageQuery } from '@buddi/core/plugin';
 import { ago, clock, languageMark, languageName, shortDate, stamp, startOfDay, whenWords } from './format.js';
 import { rankedStories, sourceHealth, type ArticleRow, type RankedStory } from './reads.js';
@@ -450,6 +451,12 @@ export const dashboardQueries: PageQuery[] = [
   { name: 'source_rows', params: none, produce: async (_p, ctx) => sourceRows(ctx.buddi!) },
   { name: 'topic_rows', params: none, produce: async (_p, ctx) => topicRows(ctx.buddi!) },
   { name: 'news_settings', params: none, produce: async (_p, ctx) => settingsView(ctx.buddi!) },
+  /** One saved edition, parsed for the chat's edition card; `edition: null` when it is gone. */
+  {
+    name: 'edition',
+    params: z.object({ id: z.string().trim().min(1).max(40) }).strict(),
+    produce: async (params, ctx) => ({ edition: (await editionView(ctx.buddi!, (params as { id: string }).id)) ?? null }),
+  },
 ];
 
 /* ------------------------------------------------------------------ *
