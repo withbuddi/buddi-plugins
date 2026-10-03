@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-calendar",
-  "version": "0.3.1",
+  "version": "0.2.1",
   "description": "Your calendars for your agents: Google by signing in, iCloud, Fastmail or any CalDAV account by app password, Outlook by private link; approved changes in the calendars you allow.",
   "keywords": [
     "buddi-plugin"

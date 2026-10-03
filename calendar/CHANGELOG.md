@@ -2,7 +2,7 @@
 
 What changes in @withbuddi/plugin-calendar from one release to the next, newest first.
 
-## 0.3.1 — unreleased
+## 0.2.1 — unreleased
 
 ### Added
 
@@ -15,7 +15,6 @@ What changes in @withbuddi/plugin-calendar from one release to the next, newest 
 - Signing in with Google finishes by itself when Google sends you back; the field for the pasted address appears only when buddi is opened from another computer.
 - The Calendar page drops the calendar picker and the count line above the grid: the count sits beside the dates, and adding a calendar lives in Settings → Calendar.
 
-## 0.3.0 — unreleased
 
 ### Added
 
