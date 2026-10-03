@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
 import { occurrences, type Occurrence } from './ics.js';
-import { eventsOf, listCalendars } from './store.js';
+import { eventsOf, googleOccurrencesOf, listAccounts, listCalendars } from './store.js';
 import { addDays, dateIn, dayLabel, duration, parseDay, timeIn, zonedTime } from './time.js';
 
 export const NO_CALENDAR = 'No calendar is linked yet. Add one on Settings → Calendar.';
@@ -66,9 +66,13 @@ export async function gather(
   const calendars = only ? linked.filter((row) => only.has(row.id)) : linked;
   const items: Occurrence[] = [];
   const problems: string[] = [];
+  const google = new Map((await listAccounts(buddi.db)).filter((a) => a.kind === 'google').map((a) => [a.id, a]));
   for (const row of calendars) {
     try {
-      const found = occurrences(await eventsOf(buddi, row, { from, to }), from, to, buddi.owner.timezone, row.name);
+      const account = row.accountId ? google.get(row.accountId) : undefined;
+      const found = account
+        ? await googleOccurrencesOf(buddi, row, account, { from, to })
+        : occurrences(await eventsOf(buddi, row, { from, to }), from, to, buddi.owner.timezone, row.name);
       for (const o of found) {
         o.calendarId = row.id;
         if (row.writable && row.accountId) o.writable = true;

@@ -1,6 +1,7 @@
 /**
  * Writing to the owner's calendars: add, change and cancel an event, in a
- * calendar of a signed-in CalDAV account the owner allowed changes on.
+ * calendar of a signed-in account — CalDAV, or Google through its API
+ * (`google.ts`) — the owner allowed changes on.
  *
  * Every call is `gated`: `describe` reads what it needs (the event as the
  * server has it now, and its ETag), renders the card — the calendar, the
@@ -23,7 +24,8 @@ import { z } from 'zod';
 import { ToolRefusal, type EffectDescription, type ToolContext, type ToolDefinition } from '@buddi/core/plugin';
 import { StaleError, deleteObject, findByUid, getObject, objectHref, putObject, type DavObject, type DavSend } from './caldav.js';
 import { buildEvent, editEvent, eventFacts, knownZone, parseWhen, validDate, type EventChanges, type EventFacts, type EventTime } from './icalwrite.js';
-import { accountOf, cachedObject, davFor, dropCache, listCalendars, type AccountRow, type CalendarRow } from './store.js';
+import { accountOf, cachedObject, davFor, dropCache, googleFor, listCalendars, markSignedOut, type AccountRow, type CalendarRow } from './store.js';
+import { GoogleSignedOut, deleteGoogleEvent, getGoogleEvent, googleEventIdFor, googleFacts, googleTime, insertGoogleEvent, patchGoogleEvent } from './google.js';
 import { eventId } from './tools.js';
 import { glanceFormat } from './home.js';
 import { addDays, dateIn, dayLabel, timeIn, zonedTime } from './time.js';
@@ -128,12 +130,68 @@ export async function writableCalendar(buddi: Host, ref: string): Promise<{ row:
   const which = open.length > 0 ? ` Agents may change: ${open.join(', ')}.` : ' No calendar allows changes yet: the owner allows them on Settings → Calendar.';
   if (!row) throw new ToolRefusal(`There is no linked calendar called ${ref}.${which}`);
   if (!row.accountId || !row.url) {
-    throw new ToolRefusal(`${row.name} is read through a private link, which can only be read. Linking its account with an app password on Settings → Calendar lets agents add events.`);
+    throw new ToolRefusal(
+      `${row.name} is read through a private link, which can only be read. Signing in to its account on Settings → Calendar ` +
+        '(Sign in with Google, or an app password for iCloud, Fastmail or CalDAV) lets agents add events.',
+    );
   }
   if (!row.writable) throw new ToolRefusal(`The owner has not allowed changes to ${row.name}.${which}`);
   const account = await accountOf(buddi.db, row.accountId);
   if (!account) throw new ToolRefusal(`${row.name}'s account is no longer signed in.`);
+  if (account.needsSignIn) throw signedOutRefusal(account);
   return { row, account };
+}
+
+/** What a write says when Google no longer accepts the account's sign-in: nothing was written, and what the owner does. */
+function signedOutRefusal(account: AccountRow): ToolRefusal {
+  return new ToolRefusal(
+    `Google no longer accepts buddi’s sign-in to ${account.username}, so buddi changed nothing. ` +
+      'The owner signs in to Google again on Settings → Calendar; the calendars stay linked.',
+  );
+}
+
+/** Run a Google call; a sign-in Google stopped accepting marks the account, tells the owner once, and refuses in words. */
+async function onGoogle<T>(buddi: Host, account: AccountRow, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof GoogleSignedOut) {
+      await markSignedOut(buddi, account);
+      throw signedOutRefusal(account);
+    }
+    throw err;
+  }
+}
+
+/** An event as the write tools need it: where it lives, its version, its facts. */
+interface LoadedEvent {
+  href: string;
+  etag: string;
+  facts: EventFacts;
+  /** The iCalendar text, for a CalDAV event. */
+  data?: string;
+}
+
+/** The event as its calendar has it now, from CalDAV or Google. */
+async function readEvent(buddi: Host, row: CalendarRow, account: AccountRow, uid: string): Promise<LoadedEvent> {
+  if (account.kind === 'google') {
+    const event = await onGoogle(buddi, account, () => getGoogleEvent(googleFor(buddi, account), row.url!, uid));
+    if (!event) throw new ToolRefusal(`That event is no longer in ${row.name}.`);
+    if (!event.etag) throw new ToolRefusal(`Google gave no version for that event, so buddi cannot change it safely.`);
+    return { href: `google:${row.url}`, etag: event.etag, facts: googleFacts(event, buddi.owner.timezone) };
+  }
+  const { object, facts } = await loadEvent(buddi, davFor(buddi, account), row, uid);
+  return { href: object.href, etag: object.etag!, facts, data: object.data };
+}
+
+/** A change as Google's patch takes it. */
+function googlePatch(changes: EventChanges): Record<string, unknown> {
+  return {
+    ...(changes.title !== undefined ? { summary: changes.title } : {}),
+    ...(changes.location !== undefined ? { location: changes.location ?? '' } : {}),
+    ...(changes.notes !== undefined ? { description: changes.notes ?? '' } : {}),
+    ...(changes.time ? googleTime(changes.time) : {}),
+  };
 }
 
 /** `work/abc-123@example.com` → the calendar and the UID. */
@@ -272,7 +330,10 @@ async function describeCreate(input: CreateInput, ctx: ToolContext): Promise<Eff
   const time = newTime(input, tz);
   const f = await ownerFormats(buddi);
   const stored = storeTime(time);
-  const uid = uidFor(row.url!, input.title, stored, input.location, input.notes);
+  const uid =
+    account.kind === 'google'
+      ? googleEventIdFor(JSON.stringify([row.url, input.title, stored, input.location ?? '', input.notes ?? '']))
+      : uidFor(row.url!, input.title, stored, input.location, input.notes);
   const whenWords = whenText(time, buddi.owner.timezone, f);
   const lines = [`Add to ${row.name} (${account.label})`, quoted(input.title), whenWords];
   if (input.location) lines.push(`Where: ${input.location}`);
@@ -281,7 +342,7 @@ async function describeCreate(input: CreateInput, ctx: ToolContext): Promise<Eff
     preview: lines.join('\n'),
     envelope: {
       calendar: row.id,
-      href: objectHref(row.url!, uid),
+      href: account.kind === 'google' ? `google:${row.url}` : objectHref(row.url!, uid),
       uid,
       title: input.title,
       time: stored,
@@ -295,7 +356,7 @@ async function describeCreate(input: CreateInput, ctx: ToolContext): Promise<Eff
 export const createEventTool: ToolDefinition<CreateInput, { note: string; id: string }> = {
   name: 'calendar.create_event',
   description:
-    'Add an event to one of the owner’s calendars that allows changes (an iCloud, Fastmail or CalDAV calendar the owner ' +
+    'Add an event to one of the owner’s calendars that allows changes (a Google, iCloud, Fastmail or CalDAV calendar the owner ' +
     'allowed on Settings → Calendar; a private-link calendar is read-only). The owner approves it on a card first. Times ' +
     'are the owner’s unless a timezone is given; an end or a duration in minutes (an hour when neither). Limits: no ' +
     'attendees and no invitations — the event is the owner’s alone; no repeating events.',
@@ -307,6 +368,19 @@ export const createEventTool: ToolDefinition<CreateInput, { note: string; id: st
     const env = (ctx.approvedEffect?.envelope as CreateEnvelope | undefined) ?? (await describeCreate(input, ctx)).envelope;
     // Allowed when asked; still allowed now, or nothing is written.
     const { row, account } = await writableCalendar(buddi, env.calendar);
+    if (account.kind === 'google') {
+      const event = {
+        id: env.uid,
+        summary: env.title,
+        ...(env.location ? { location: env.location } : {}),
+        ...(env.notes ? { description: env.notes } : {}),
+        ...googleTime(loadTime(env.time)),
+      };
+      const done = await onGoogle(buddi, account, () => insertGoogleEvent(googleFor(buddi, account), row.url!, event));
+      if (done === 'exists') throw new ToolRefusal(`${quoted(env.title)} is already in ${row.name} at that time: buddi added nothing.`);
+      dropCache(row.id);
+      return { note: `Added ${quoted(env.title)} to ${row.name}: ${env.when}.`, id: eventId(row.id, env.uid) };
+    }
     const body = buildEvent({
       uid: env.uid,
       title: env.title,
@@ -427,7 +501,8 @@ async function describeUpdate(input: UpdateInput, ctx: ToolContext): Promise<Eff
   const buddi = ctx.buddi!;
   const { calendarId, uid } = splitId(input.id);
   const { row, account } = await writableCalendar(buddi, calendarId);
-  const { object, facts } = await loadEvent(buddi, davFor(buddi, account), row, uid);
+  const loaded = await readEvent(buddi, row, account, uid);
+  const { facts } = loaded;
   if (facts.invitees) throw new ToolRefusal(`${quoted(facts.summary)} has invitees, and buddi does not change events others are invited to. Change it in your calendar app so they are told.`);
   const f = await ownerFormats(buddi);
   const tz = buddi.owner.timezone;
@@ -457,7 +532,7 @@ async function describeUpdate(input: UpdateInput, ctx: ToolContext): Promise<Eff
   if (lines.length === 0) throw new ToolRefusal(`Nothing to change: ${quoted(facts.summary)} is already like that.`);
   const head = [`Change ${quoted(facts.summary)} on ${row.name} (${account.label})`];
   if (facts.rule) head.push(`${repeatsText(facts.rule)}: the whole series changes.`);
-  editEvent(object.data, uid, changes, buddi.clock.now()); // It can be made: said now, on no card at all, if not.
+  if (loaded.data !== undefined) editEvent(loaded.data, uid, changes, buddi.clock.now()); // It can be made: said now, on no card at all, if not.
   const stored: StoredChanges = {
     ...(changes.title !== undefined ? { title: changes.title } : {}),
     ...(changes.location !== undefined ? { location: changes.location } : {}),
@@ -466,7 +541,7 @@ async function describeUpdate(input: UpdateInput, ctx: ToolContext): Promise<Eff
   };
   return {
     preview: [...head, ...lines].join('\n'),
-    envelope: { calendar: row.id, href: object.href, etag: object.etag!, uid, title: facts.summary, changes: stored, ...(facts.rule ? { series: true } : {}) },
+    envelope: { calendar: row.id, href: loaded.href, etag: loaded.etag, uid, title: facts.summary, changes: stored, ...(facts.rule ? { series: true } : {}) },
   };
 }
 
@@ -484,6 +559,17 @@ export const updateEventTool: ToolDefinition<UpdateInput, { note: string; id: st
     const buddi = ctx.buddi!;
     const env = (ctx.approvedEffect?.envelope as WriteEnvelope | undefined) ?? (await describeUpdate(input, ctx)).envelope;
     const { row, account } = await writableCalendar(buddi, env.calendar);
+    if (account.kind === 'google') {
+      try {
+        await onGoogle(buddi, account, () => patchGoogleEvent(googleFor(buddi, account), row.url!, env.uid, googlePatch(loadChanges(env.changes ?? {})), env.etag));
+      } catch (err) {
+        if (err instanceof StaleError) throw staleRefusal(env.title, row.name);
+        if (err instanceof Error && /no longer in the calendar/.test(err.message)) throw new ToolRefusal(`${quoted(env.title)} is no longer in ${row.name}: buddi changed nothing.`);
+        throw err;
+      }
+      dropCache(row.id);
+      return { note: `Changed ${quoted(env.title)} in ${row.name}${env.series ? ' (the whole series)' : ''}.`, id: eventId(row.id, env.uid) };
+    }
     const send = davFor(buddi, account);
     try {
       // The event at the version the card showed, changed as the card said.
@@ -518,7 +604,8 @@ async function describeCancel(input: CancelInput, ctx: ToolContext): Promise<Eff
   const buddi = ctx.buddi!;
   const { calendarId, uid } = splitId(input.id);
   const { row, account } = await writableCalendar(buddi, calendarId);
-  const { object, facts } = await loadEvent(buddi, davFor(buddi, account), row, uid);
+  const loaded = await readEvent(buddi, row, account, uid);
+  const { facts } = loaded;
   if (facts.invitees) throw new ToolRefusal(`${quoted(facts.summary)} has invitees, and buddi does not cancel events others are invited to. Cancel it in your calendar app so they are told.`);
   if (facts.rule && input.series !== true) {
     throw new ToolRefusal(
@@ -535,7 +622,7 @@ async function describeCancel(input: CancelInput, ctx: ToolContext): Promise<Eff
   if (facts.location) lines.push(`Where: ${facts.location}`);
   return {
     preview: lines.join('\n'),
-    envelope: { calendar: row.id, href: object.href, etag: object.etag!, uid, title: facts.summary, ...(facts.rule ? { series: true } : {}) },
+    envelope: { calendar: row.id, href: loaded.href, etag: loaded.etag, uid, title: facts.summary, ...(facts.rule ? { series: true } : {}) },
   };
 }
 
@@ -555,7 +642,10 @@ export const cancelEventTool: ToolDefinition<CancelInput, { note: string }> = {
     const { row, account } = await writableCalendar(buddi, env.calendar);
     let done: 'deleted' | 'gone';
     try {
-      done = await deleteObject(davFor(buddi, account), env.href, env.etag);
+      done =
+        account.kind === 'google'
+          ? await onGoogle(buddi, account, () => deleteGoogleEvent(googleFor(buddi, account), row.url!, env.uid, env.etag))
+          : await deleteObject(davFor(buddi, account), env.href, env.etag);
     } catch (err) {
       if (err instanceof StaleError) throw staleRefusal(env.title, row.name);
       throw err;

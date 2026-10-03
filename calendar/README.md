@@ -11,15 +11,55 @@ approve first.
 buddi plugins install @withbuddi/plugin-calendar
 ```
 
-It needs buddi with host API 1.26 or later. Then link a calendar on Settings →
+It needs buddi with host API 1.28 or later. Then link a calendar on Settings →
 Calendar, and grant the tools to an agent (`calendar.*`), or let Planner pick
 them up: its morning brief lists today's meetings and the gaps between them
 when this plugin is installed. The Chief of Staff in the agent catalogue has
 the writing tools too.
 
-There are two ways to link a calendar: an **account**, signed in with an app
-password, which agents can read and — where you allow it — write to; or a
-calendar's **private link**, which they can only read.
+There are three ways to link a calendar: a **Google account**, signed in with
+Google; an **account** signed in with an app password (iCloud, Fastmail,
+CalDAV) — both of which agents can read and, where you allow it, write to; or
+a calendar's **private link**, which they can only read.
+
+## Signing in with Google
+
+Settings → Calendar → **Sign in with Google**, then **Continue to Google**:
+Google asks whether buddi may
+
+- see, edit, create and delete the events of your calendars
+  (`calendar.events`), to read your day and write the events you approve;
+- see the list of your calendars (`calendar.calendarlist.readonly`), to show
+  them here.
+
+Nothing else: not your mail, contacts, files, or your calendars' sharing
+settings. Allow it, come back, and press **Finish signing in**. buddi names the
+account by its address, links the calendars you can write to for reading, and
+offers the others (holidays, calendars shared with you) under **From your
+accounts**, where you link them and **Allow changes** as for any account.
+
+When buddi runs on another computer — a home server, the dashboard opened
+over Tailscale — Google's last page cannot load in your browser, since it
+points at that computer (`http://127.0.0.1:…`). That is expected: copy the
+whole address from that tab, choose **Paste the address instead**, and paste
+it.
+
+buddi, not this plugin, runs the sign-in (PKCE, with the answer taken on a
+loopback port for ten minutes at most) and keeps the tokens as an owner
+secret in its vault, sent only to Google's calendar API
+(`www.googleapis.com`) for this plugin and renewed by buddi itself. Settings
+→ Keys and secrets lists it as "Calendar sign-in: Google <address>". **Sign
+out** forgets it; to take buddi off your Google account too, remove it at
+[myaccount.google.com/connections](https://myaccount.google.com/connections).
+
+**While Google is still reviewing buddi** (its "testing" mode), three things
+hold: Google warns that the app is unverified (Continue past it), only the
+accounts listed as testers can sign in, and a sign-in lasts seven days. When
+Google stops accepting a sign-in — after those seven days, or if you revoke
+it — the account says **sign in again**, Settings → Calendar says so at the
+top, and you get one message with *Sign in to Google again*; nothing fails
+silently. **Sign in again** on the account keeps every calendar link and
+every permission you gave.
 
 ## Linking an account with an app password
 
@@ -55,9 +95,6 @@ where your calendars live on a numbered host), only with the calendar
 verbs, with small requests and at most 120 a minute — and the plugin never
 holds the password. Settings → Keys and secrets lists it under Calendar
 links and sign-ins.
-
-Google calendars are read through their private link for now; writing to
-Google comes with Google sign-in in a later release.
 
 ## Linking a calendar by its private link
 

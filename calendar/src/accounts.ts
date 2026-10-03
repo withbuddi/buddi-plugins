@@ -18,6 +18,7 @@ import type { ToolDefinition } from '@buddi/core/plugin';
 import { discover, type FoundCalendar } from './caldav.js';
 import { accountOf, davFor, dropCache, listAccounts, listAllCalendars, type AccountRow, type CalendarRow } from './store.js';
 import { idOf } from './ids.js';
+import { findGoogleAgain } from './google-accounts.js';
 
 /** The services the form offers; `other` is any CalDAV server by its address. */
 export const SERVICES = {
@@ -54,14 +55,14 @@ export function whereFor(service: Service, server: string | undefined): { label:
 type Host = NonNullable<Parameters<ToolDefinition['execute']>[1]['buddi']>;
 
 /** A name no linked calendar has yet: "Home", else "Home (iCloud)", else "Home (iCloud) 2". */
-function freeName(name: string, label: string, taken: ReadonlySet<string>): string {
+export function freeName(name: string, label: string, taken: ReadonlySet<string>): string {
   if (!taken.has(name.toLowerCase())) return name;
   const withAccount = `${name} (${label})`;
   if (!taken.has(withAccount.toLowerCase())) return withAccount;
   for (let n = 2; ; n++) if (!taken.has(`${withAccount} ${n}`.toLowerCase())) return `${withAccount} ${n}`;
 }
 
-function freeId(name: string, taken: ReadonlySet<string>): string {
+export function freeId(name: string, taken: ReadonlySet<string>): string {
   const base = idOf(name);
   if (!taken.has(base)) return base;
   for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
@@ -72,7 +73,12 @@ function freeId(name: string, taken: ReadonlySet<string>): string {
  * reading when they hold events), names, colours and rights refreshed, and
  * calendars the server no longer has dropped. Returns what changed.
  */
-async function keepFound(buddi: Host, account: AccountRow, found: FoundCalendar[]): Promise<{ added: number; linked: number; gone: number }> {
+export async function keepFound(
+  buddi: Host,
+  account: AccountRow,
+  found: FoundCalendar[],
+  linkNew: (cal: FoundCalendar) => boolean = () => true,
+): Promise<{ added: number; linked: number; gone: number }> {
   const all = await listAllCalendars(buddi.db);
   const mine = all.filter((c) => c.accountId === account.id);
   const ids = new Set(all.map((c) => c.id));
@@ -87,17 +93,19 @@ async function keepFound(buddi: Host, account: AccountRow, found: FoundCalendar[
       ]);
       continue;
     }
-    const name = freeName(cal.name, account.label, linkedNames);
+    const link = linkNew(cal);
+    const name = link ? freeName(cal.name, account.label, linkedNames) : cal.name;
     const id = freeId(name, ids);
     ids.add(id);
-    linkedNames.add(name.toLowerCase());
+    if (link) linkedNames.add(name.toLowerCase());
+    const host = account.kind === 'google' ? account.hostPattern : new URL(cal.url).hostname;
     await buddi.db.query(
       `insert into calendar.calendar (id, name, provider, host, secret_name, account_id, url, color, linked, writable, can_write)
-       values ($1, $2, $3, $4, null, $5, $6, $7, true, false, $8)`,
-      [id, name, account.label, new URL(cal.url).hostname, account.id, cal.url, cal.color, cal.writable],
+       values ($1, $2, $3, $4, null, $5, $6, $7, $8, false, $9)`,
+      [id, name, account.label, host, account.id, cal.url, cal.color, link, cal.writable],
     );
     added++;
-    linked++;
+    if (link) linked++;
   }
   const urls = new Set(found.filter((c) => c.events).map((c) => c.url));
   const gone = mine.filter((c) => !urls.has(c.url ?? ''));
@@ -109,7 +117,7 @@ async function keepFound(buddi: Host, account: AccountRow, found: FoundCalendar[
   return { added, linked, gone: gone.length };
 }
 
-const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 const linkInput = z
   .object({
@@ -142,7 +150,7 @@ export const linkAccountTool: ToolDefinition<z.infer<typeof linkInput>, { note: 
     ]);
     const draft: AccountRow = {
       id, kind: 'caldav', service: input.service, label: where.label, server: where.server, hostPattern: where.hostPattern,
-      username: input.username, secretName, homeUrl: null, lastFoundAt: null, lastError: null,
+      username: input.username, secretName, homeUrl: null, lastFoundAt: null, lastError: null, needsSignIn: false, signedOutNotifiedAt: null,
     };
     let found;
     try {
@@ -232,6 +240,7 @@ export const findAgainTool: ToolDefinition<z.infer<typeof idInput>, { note: stri
     const buddi = ctx.buddi!;
     const account = await accountOf(buddi.db, input.id);
     if (!account) throw new Error('That account is not linked any more.');
+    if (account.kind === 'google') return findGoogleAgain(buddi, account);
     let found;
     try {
       found = await discover(davFor(buddi, account), account.server);
@@ -248,7 +257,7 @@ export const findAgainTool: ToolDefinition<z.infer<typeof idInput>, { note: stri
 
 export const signOutTool: ToolDefinition<z.infer<typeof idInput>, { note: string }> = {
   name: 'calendar.sign_out',
-  description: 'Forget a CalDAV account: its password and its calendars here. The owner’s own.',
+  description: 'Forget a signed-in account (CalDAV or Google): its password or sign-in, and its calendars here. The owner’s own.',
   tier: 'auto',
   ownerOnly: true,
   input: idInput,
@@ -260,6 +269,13 @@ export const signOutTool: ToolDefinition<z.infer<typeof idInput>, { note: string
     await buddi.secrets?.delete(account.secretName).catch(() => false);
     await buddi.db.query(`delete from calendar.account where id = $1`, [account.id]);
     for (const c of calendars) dropCache(c.id);
+    if (account.kind === 'google') {
+      return {
+        note:
+          `Signed out of Google (${account.username}): buddi forgot its sign-in. Your calendars there are untouched. ` +
+          'To take buddi off your Google account too, remove it at myaccount.google.com/connections.',
+      };
+    }
     return { note: `Signed out of ${account.label} (${account.username}) and forgot its password. Your calendars there are untouched.` };
   },
 };

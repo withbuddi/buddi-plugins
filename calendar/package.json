@@ -1,7 +1,7 @@
 {
   "name": "@withbuddi/plugin-calendar",
-  "version": "0.2.0",
-  "description": "Your calendars for your agents: iCloud, Fastmail or any CalDAV account by app password, Google and Outlook by private link; approved changes in the calendars you allow.",
+  "version": "0.3.0",
+  "description": "Your calendars for your agents: Google by signing in, iCloud, Fastmail or any CalDAV account by app password, Outlook by private link; approved changes in the calendars you allow.",
   "keywords": [
     "buddi-plugin"
   ],
@@ -35,9 +35,10 @@
     "core": ">=0.1.0",
     "uses": [
       "http",
-      "secrets"
+      "secrets",
+      "owner:notify"
     ],
-    "hostApi": "^1.26"
+    "hostApi": "^1.28"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

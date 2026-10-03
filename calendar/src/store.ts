@@ -11,6 +11,8 @@ import type { BuddiHost, DbArea } from '@buddi/core/plugin';
 import type { VEvent } from 'node-ical';
 import { parseIcs } from './ics.js';
 import { davSender, queryEvents, uidsOf, type DavSend } from './caldav.js';
+import { GoogleSignedOut, googleOccurrences, googleSender, listGoogleEvents, type GoogleEvent, type GoogleSend } from './google.js';
+import type { Occurrence } from './ics.js';
 import { addDays, dateIn, zonedTime } from './time.js';
 
 export interface CalendarRow {
@@ -36,8 +38,8 @@ export interface CalendarRow {
 }
 
 /**
- * A sign-in to a calendar server. `kind` is `caldav`; `google` (OAuth) is
- * the seam for later, read through the same rows.
+ * A sign-in to a calendar server. `kind` is `caldav` (an app password) or
+ * `google` (an OAuth sign-in core keeps), read through the same rows.
  */
 export interface AccountRow {
   id: string;
@@ -51,6 +53,10 @@ export interface AccountRow {
   homeUrl: string | null;
   lastFoundAt: Date | null;
   lastError: string | null;
+  /** Google stopped accepting the sign-in: the owner signs in again. */
+  needsSignIn: boolean;
+  /** When the owner was told so, once. */
+  signedOutNotifiedAt: Date | null;
 }
 
 type Db = Pick<DbArea, 'query'>;
@@ -110,12 +116,15 @@ export function toAccount(r: Record<string, unknown>): AccountRow {
     homeUrl: str(r.home_url),
     lastFoundAt: r.last_found_at instanceof Date ? r.last_found_at : null,
     lastError: str(r.last_error),
+    needsSignIn: r.needs_sign_in === true,
+    signedOutNotifiedAt: r.signed_out_notified_at instanceof Date ? r.signed_out_notified_at : null,
   };
 }
 
 export async function listAccounts(db: Db): Promise<AccountRow[]> {
   const { rows } = await db.query(
-    `select id, kind, service, label, server, host_pattern, username, secret_name, home_url, last_found_at, last_error
+    `select id, kind, service, label, server, host_pattern, username, secret_name, home_url, last_found_at, last_error,
+            needs_sign_in, signed_out_notified_at
        from calendar.account order by created_at, label`,
   );
   return rows.map((r) => toAccount(r as Record<string, unknown>));
@@ -140,6 +149,54 @@ export function setDavSender(make: (buddi: Pick<BuddiHost, 'http' | 'network'>, 
 
 export function davFor(buddi: Pick<BuddiHost, 'http' | 'network'>, account: AccountRow): DavSend {
   return sendFor(buddi, account);
+}
+
+/** How a Google account is spoken to; a test hands in a fake API instead. */
+let googleSendFor = (buddi: Pick<BuddiHost, 'http'>, account: AccountRow): GoogleSend => googleSender(buddi, account.secretName);
+
+/** Tests only: talk to a fake Google. Returns the way back. */
+export function setGoogleSender(make: (buddi: Pick<BuddiHost, 'http'>, account: AccountRow) => GoogleSend): () => void {
+  const before = googleSendFor;
+  googleSendFor = make;
+  return () => {
+    googleSendFor = before;
+  };
+}
+
+export function googleFor(buddi: Pick<BuddiHost, 'http'>, account: AccountRow): GoogleSend {
+  return googleSendFor(buddi, account);
+}
+
+/** What the readiness note and the account row say once Google stops accepting the sign-in. */
+export const SIGNED_OUT_PROBLEM = 'Google no longer accepts buddi’s sign-in (it was revoked, or its seven days ran out). Sign in to Google again.';
+
+/**
+ * Google stopped accepting an account's sign-in: say so on the account, and
+ * tell the owner once — a message that waits in Needs you with Sign in to
+ * Google again — until they sign in anew. Never silent, never repeated.
+ */
+export async function markSignedOut(buddi: Pick<BuddiHost, 'db' | 'clock' | 'owner'>, account: AccountRow): Promise<void> {
+  const { rows } = await buddi.db.query(
+    `update calendar.account set needs_sign_in = true, last_error = $2,
+            signed_out_notified_at = coalesce(signed_out_notified_at, $3)
+      where id = $1 and signed_out_notified_at is null
+      returning id`,
+    [account.id, SIGNED_OUT_PROBLEM, buddi.clock.now()],
+  );
+  if (rows.length === 0) {
+    await buddi.db.query(`update calendar.account set needs_sign_in = true, last_error = $2 where id = $1`, [account.id, SIGNED_OUT_PROBLEM]);
+    return;
+  }
+  await buddi.owner.notify?.({
+    urgency: 'today',
+    title: `Google Calendar: sign in again (${account.username})`,
+    text:
+      `Google stopped accepting buddi’s sign-in to ${account.username}, so your agents cannot read or change those calendars. ` +
+      'Sign in again on Settings → Calendar; the calendars you linked stay linked.',
+    link: { route: '#/settings/p.calendar.settings' },
+    dedupeKey: `google-sign-in-${account.id}`,
+    action: 'Sign in to Google again',
+  }).catch(() => undefined);
 }
 
 /** Which service a host belongs to, in the owner's words. */
@@ -205,8 +262,13 @@ export function remember(id: string, events: VEvent[], at: Date): void {
 
 /** Forget one calendar's events, or all of them. */
 export function dropCache(id?: string): void {
-  if (id === undefined) cache.clear();
-  else cache.delete(id);
+  if (id === undefined) {
+    cache.clear();
+    googleCache.clear();
+  } else {
+    cache.delete(id);
+    googleCache.delete(id);
+  }
 }
 
 /** Where an event read in the last ten minutes lives, when it was. */
@@ -306,4 +368,65 @@ export async function eventsOf(
     await buddi.db.query(`update calendar.calendar set last_error = $2 where id = $1`, [row.id, message.slice(0, 300)]).catch(() => {});
     throw err;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Google calendars
+ * ------------------------------------------------------------------ */
+
+interface GoogleCached {
+  at: number;
+  from: number;
+  to: number;
+  events: GoogleEvent[];
+}
+
+const googleCache = new Map<string, GoogleCached>();
+
+/** Forget one Google calendar's events, or all of them (with `dropCache`). */
+export function dropGoogleCache(id?: string): void {
+  if (id === undefined) googleCache.clear();
+  else googleCache.delete(id);
+}
+
+/**
+ * One Google calendar's occurrences over a window: from memory when read in
+ * the last ten minutes over a window that covers it, else `events.list` over
+ * five weeks back to half a year ahead (widened to the window), Google
+ * expanding the repeating ones in the owner's zone. A sign-in Google no
+ * longer accepts marks the account and tells the owner once.
+ */
+export async function googleOccurrencesOf(
+  buddi: Pick<BuddiHost, 'http' | 'db' | 'clock' | 'owner'>,
+  row: CalendarRow,
+  account: AccountRow,
+  window: { from: Date; to: Date },
+): Promise<Occurrence[]> {
+  const now = buddi.clock.now().getTime();
+  const tz = buddi.owner.timezone;
+  const hit = googleCache.get(row.id);
+  let events: GoogleEvent[];
+  if (hit && now - hit.at < CACHE_MS && hit.from <= window.from.getTime() && hit.to >= window.to.getTime()) {
+    events = hit.events;
+  } else {
+    if (account.needsSignIn) throw new GoogleSignedOut();
+    const today = dateIn(new Date(now), tz);
+    const from = Math.min(zonedTime(addDays(today, -DAV_BACK_DAYS), '00:00', tz).getTime(), window.from.getTime() - 86_400_000);
+    const to = Math.max(zonedTime(addDays(today, DAV_AHEAD_DAYS), '00:00', tz).getTime(), window.to.getTime() + 86_400_000);
+    try {
+      events = await listGoogleEvents(googleFor(buddi, account), row.url ?? '', new Date(from), new Date(to), tz);
+    } catch (err) {
+      // A page's query reads on a read-only pool: the mark and the message wait for the next tool's read.
+      if (err instanceof GoogleSignedOut) await markSignedOut(buddi, account).catch(() => undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      await buddi.db.query(`update calendar.calendar set last_error = $2 where id = $1`, [row.id, message.slice(0, 300)]).catch(() => {});
+      throw err;
+    }
+    googleCache.set(row.id, { at: now, from, to, events });
+    await buddi.db.query(
+      `update calendar.calendar set last_fetched_at = $2, last_error = null, event_count = $3 where id = $1`,
+      [row.id, new Date(now), events.length],
+    ).catch(() => {});
+  }
+  return googleOccurrences(events, window.from, window.to, tz, row.name);
 }

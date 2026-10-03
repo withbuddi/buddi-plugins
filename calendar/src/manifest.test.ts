@@ -33,11 +33,14 @@ describe('calendar manifest', () => {
     for (const name of ['calendar.today', 'calendar.upcoming', 'calendar.find', 'calendar.free']) expect(tiers[name], name).toBe('auto');
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name)).toEqual([
       'calendar.add', 'calendar.remove', 'calendar.link_account', 'calendar.link_calendar', 'calendar.allow_changes', 'calendar.find_again', 'calendar.sign_out',
+      'calendar.google_sign_in', 'calendar.google_finish', 'calendar.google_cancel',
     ]);
   });
 
-  it('needs host API 1.26 for its CalDAV sign-ins, and says what it uses and where it reads and writes', () => {
-    expect(pkg.buddi.hostApi).toBe('^1.26');
+  it('needs host API 1.28 for its Google sign-ins, and says what it uses and where it reads and writes', () => {
+    expect(pkg.buddi.hostApi).toBe('^1.28');
+    expect(manifest.uses).toEqual(['http', 'secrets', 'owner:notify']);
+    expect(manifest.network!.map((n) => n.host)).toContain('www.googleapis.com');
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe('calendar');
     expect(pkg.license).toBe('Apache-2.0');
@@ -74,10 +77,11 @@ describe('the dashboard', () => {
     expect(JSON.stringify(page.body)).toContain('{"page":"settings"}');
   });
 
-  it('says how to make an app password and find a link in folds, and keeps both in the vault, not a keychain', () => {
+  it('says what buddi asks Google for, how to make an app password and find a link in folds, and keeps all in the vault, not a keychain', () => {
     const body = manifest.pages![0]!.body;
-    expect(body.filter((c) => c.kind === 'expand').map((c) => (c as { label: string }).label)).toEqual(['How to make an app password', 'How to find a private link']);
-    expect(JSON.stringify(body)).toMatch(/buddi's vault/);
+    expect(body.filter((c) => c.kind === 'expand').map((c) => (c as { label: string }).label)).toEqual(['What buddi asks Google for', 'How to make an app password', 'How to find a private link']);
+    expect(JSON.stringify(body)).toMatch(/seven days/);
+    expect(JSON.stringify(body)).toMatch(/buddi's vault|its vault/);
     expect(JSON.stringify(body)).not.toMatch(/keychain/);
   });
 });
@@ -108,8 +112,25 @@ describe('Settings → Calendar', () => {
   const page = registry.pages().find((p) => p.id === 'settings')!;
   const sections = page.body.filter((c) => c.kind === 'section') as Array<Extract<Component, { kind: 'section' }>>;
 
+  it('signs in to Google: the button, then Continue to Google ↗, Finish, the pasted address, Cancel; a warning when Google stopped accepting it', () => {
+    const signing = sections[0]!;
+    expect(signing).toMatchObject({ title: 'Signing in to Google', when: { path: 'hasGoogleSignIn', equals: true } });
+    expect(signing.body.map((c) => c.kind)).toEqual(['notice', 'button', 'link', 'form', 'button']);
+    expect((signing.body[1] as Extract<Component, { kind: 'button' }>).action).toMatchObject({ tool: 'calendar.google_cancel', label: 'Cancel' });
+    expect(signing.body[2]).toEqual({ kind: 'link', label: 'Continue to Google', to: { href: { path: 'googleSignIn.url' } } });
+    const paste = signing.body[3] as Extract<Component, { kind: 'form' }>;
+    expect(paste.drawer!.button).toBe('Paste the address instead');
+    expect(paste.submit.args).toEqual({ id: { path: 'googleSignIn.id' }, pasted: { field: 'pasted' } });
+    // Finish, the primary, last: on the right.
+    expect((signing.body[4] as Extract<Component, { kind: 'button' }>).action).toMatchObject({ tool: 'calendar.google_finish', label: 'Finish signing in', tone: 'accent', then: 'refresh' });
+    const button = sections[1]!.body.find((c) => c.kind === 'button') as Extract<Component, { kind: 'button' }>;
+    expect(button).toMatchObject({ when: { path: 'googleAvailable', equals: true }, action: { tool: 'calendar.google_sign_in', label: 'Sign in with Google', tone: 'accent' } });
+    const warning = page.body.find((c) => c.kind === 'notice' && c.when !== undefined);
+    expect(warning).toMatchObject({ text: { path: 'signedOut' }, tone: 'warning', when: { path: 'hasSignedOut', equals: true } });
+  });
+
   it('lists the calendars with their colour and what agents may do, and links with an app password from a sheet', () => {
-    const [calendars] = sections;
+    const calendars = sections[1];
     const table = calendars!.body[0] as Extract<Component, { kind: 'table' }>;
     expect(table.columns[0]).toEqual({ key: 'name', label: 'Name', swatch: 'color' });
     expect(table.columns.map((c) => c.label)).toEqual(['Name', 'From', 'Agents may', 'Events', 'Last read', 'State', 'Problem']);
@@ -124,7 +145,7 @@ describe('Settings → Calendar', () => {
   });
 
   it('offers the account calendars to link and allow changes on, only once there is an account', () => {
-    const accounts = sections[1]!;
+    const accounts = sections[2]!;
     expect(accounts).toMatchObject({ title: 'From your accounts', when: { path: 'hasAccounts', equals: true } });
     const found = accounts.body[0] as Extract<Component, { kind: 'table' }>;
     expect(found.actions!.map((a) => [a.label, a.when])).toEqual([
@@ -134,6 +155,10 @@ describe('Settings → Calendar', () => {
       ['Link', { path: 'linked', equals: false }],
     ]);
     const list = accounts.body[1] as Extract<Component, { kind: 'table' }>;
-    expect(list.actions!.map((a) => a.label)).toEqual(['Find calendars again', 'Sign out']);
+    expect(list.actions!.map((a) => [a.label, a.when])).toEqual([
+      ['Sign in again', { path: 'needsSignIn', equals: true }],
+      ['Find calendars again', { path: 'canFind', equals: true }],
+      ['Sign out', undefined],
+    ]);
   });
 });
