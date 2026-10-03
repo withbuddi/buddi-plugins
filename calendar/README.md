@@ -33,23 +33,23 @@ Google asks whether buddi may
   them here.
 
 Nothing else: not your mail, contacts, files, or your calendars' sharing
-settings. Allow it, come back, and press **Finish signing in**. buddi names the
-account by its address, links the calendars you can write to for reading, and
-offers the others (holidays, calendars shared with you) under **From your
-accounts**, where you link them and **Allow changes** as for any account.
+settings. Allow it: the card on Settings → Calendar finishes by itself when
+Google sends you back ("Signed in as …"). buddi names the account by its
+address and links the calendars you can write to for reading; the others
+(holidays, calendars shared with you) are in the list as **Not linked**.
 
 When buddi runs on another computer — a home server, the dashboard opened
 over Tailscale — Google's last page cannot load in your browser, since it
 points at that computer (`http://127.0.0.1:…`). That is expected: copy the
-whole address from that tab, choose **Paste the address instead**, and paste
-it.
+whole address from that tab and paste it into the card, which shows the field
+only when the dashboard is opened from another computer.
 
 buddi, not this plugin, runs the sign-in (PKCE, with the answer taken on a
 loopback port for ten minutes at most) and keeps the tokens as an owner
 secret in its vault, sent only to Google's calendar API
 (`www.googleapis.com`) for this plugin and renewed by buddi itself. Settings
-→ Keys and secrets lists it as "Calendar sign-in: Google <address>". **Sign
-out** forgets it; to take buddi off your Google account too, remove it at
+→ Keys and secrets lists it as "Calendar sign-in: Google <address>". **Remove
+account…** (the ⋯ on the account) forgets it; to take buddi off your Google account too, remove it at
 [myaccount.google.com/connections](https://myaccount.google.com/connections).
 
 **While Google is still reviewing buddi** (its "testing" mode), three things
@@ -63,13 +63,13 @@ every permission you gave.
 
 ## Linking an account with an app password
 
-Settings → Calendar → **Link with an app password**: pick the service, type
-the sign-in name and an app-specific password, and **Sign in and find
-calendars**. buddi finds the account's calendars with their colours and links
-the ones that hold events for reading. Under **From your accounts** you link
-or unlink each one, and **Allow changes** on the ones agents may add events
-to; **Read only** takes that back. **Find calendars again** picks up a
-calendar you added since; **Sign out** forgets the password.
+Settings → Calendar → **Add a calendar** → **Link with an app password**:
+pick the service, type the sign-in name and an app-specific password, and
+**Sign in and find calendars**. buddi finds the account's calendars with
+their colours and links the ones that hold events for reading. Each calendar
+has one choice, **Not linked · Read · Read and change** (each change still
+asked on a card). On the account's ⋯, **Find calendars again** picks up a
+calendar you added since; **Remove account…** forgets the password.
 
 An app-specific password is a password made for one app, which you can
 revoke on its own without changing your account's password:

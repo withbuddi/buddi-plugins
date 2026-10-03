@@ -53,6 +53,7 @@ suite('calendar over Google (postgres)', () => {
   const owner = (name: string, input: unknown) => tool(name).execute(input as never, ctx({ agentId: 'owner' }));
   const read = (name: string, input: unknown = {}) => tool(name).execute(input as never, ctx());
   const settings = async () => manifest.queries!.find((q) => q.name === 'settings')!.produce({}, ctx({ agentId: 'owner' })) as Promise<any>;
+  const signInCard = async () => manifest.queries!.find((q) => q.name === 'sign_in')!.produce({}, ctx({ agentId: 'owner' })) as Promise<any>;
   const readiness = () => manifest.setup!.produce(ctx());
   const ask = async (name: string, args: unknown) =>
     (await registry.invoke(name, args, facts())) as { ok: false; reason: string; actionId?: string; preview?: string; message: string } | { ok: true; output: any };
@@ -115,15 +116,25 @@ suite('calendar over Google (postgres)', () => {
     const before = await settings();
     expect(before).toMatchObject({ googleAvailable: true, hasGoogleSignIn: false });
     const started = await owner('calendar.google_sign_in', {});
-    expect(started.note).toBe('Continue on Google’s page, then come back here and press Finish signing in.');
+    expect(started.note).toBe('Continue on Google’s page. This finishes by itself when Google sends you back.');
     const page = await settings();
-    expect(page).toMatchObject({ googleAvailable: false, hasGoogleSignIn: true, googleSignIn: { id: 'signin-1', url: expect.stringMatching(/^https:\/\/accounts\.google\.com\//) } });
+    expect(page).toMatchObject({ googleAvailable: false, hasGoogleSignIn: true, googleSignIn: { id: 'signin-1', state: 'waiting', url: expect.stringMatching(/^https:\/\/accounts\.google\.com\//) } });
+    // The card's own read: waiting, so the page keeps asking.
+    expect(await signInCard()).toEqual({ waiting: true, rows: [expect.objectContaining({ id: 'signin-1', state: 'waiting', line: 'Waiting for Google… This finishes by itself when Google sends you back.' })] });
 
     // Finish before Google answered says what to do; nothing is kept.
     await expect(owner('calendar.google_finish', { id: 'signin-1' })).rejects.toThrow(/Google has not sent buddi back yet.*paste it here/);
     await google.answer('signin-1');
+    // Google answered on the loopback: the card's read says so and stops the asking; the page runs Finish by itself.
+    expect(await signInCard()).toEqual({ waiting: false, rows: [expect.objectContaining({ id: 'signin-1', state: 'received' })] });
     const done = await owner('calendar.google_finish', { id: 'signin-1' });
-    expect(done.note).toBe(`Signed in to Google as ${SAM}: 3 calendars found, 2 linked for reading. Link others and allow changes under From your accounts.`);
+    expect(done.note).toBe(`Signed in as ${SAM}: 3 calendars found, 2 linked for reading.`);
+    // Done stays on the card until Done; a second Finish (a press racing the page) says the same and keeps nothing twice.
+    expect(await signInCard()).toEqual({ waiting: false, rows: [expect.objectContaining({ state: 'done', note: done.note })] });
+    expect((await owner('calendar.google_finish', { id: 'signin-1' })).note).toBe(done.note);
+    expect((await settings()).googleAvailable).toBe(true);
+    await owner('calendar.google_dismiss', { id: 'signin-1' });
+    expect(await signInCard()).toEqual({ waiting: false, rows: [] });
 
     expect(await secretsKept()).toEqual([[`Calendar sign-in: Google ${SAM}`, 'http.bearer', { plugin: 'calendar', host: 'www.googleapis.com' }]]);
     const { rows } = await pool.query('select * from calendar.account');
@@ -134,26 +145,24 @@ suite('calendar over Google (postgres)', () => {
 
     const after = await settings();
     expect(after).toMatchObject({ hasGoogleSignIn: false, googleAvailable: true, hasSignedOut: false });
-    expect(after.calendars.map((c: any) => [c.name, c.color, c.provider])).toEqual([
-      [SAM, '#039be5', `Google · ${SAM}`],
-      ['Family', '#7986cb', `Google · ${SAM}`],
+    expect(after.calendars.map((c: any) => [c.name, c.color, c.groupLabel, c.groupAside, c.access, c.readOnly, c.line])).toEqual([
+      [SAM, '#039be5', `Google · ${SAM}`, '3 calendars · 2 linked', 'read', false, 'not read yet'],
+      ['Family', '#7986cb', `Google · ${SAM}`, '3 calendars · 2 linked', 'read', false, 'not read yet'],
+      ['Holidays in United States', '#16a765', `Google · ${SAM}`, '3 calendars · 2 linked', 'off', true, 'Agents don’t see it'],
     ]);
-    expect(after.found.map((c: any) => [c.name, c.linked, c.canAllow])).toEqual([
-      [SAM, true, true],
-      ['Family', true, true],
-      ['Holidays in United States', false, false],
-    ]);
-    expect(after.accounts).toEqual([expect.objectContaining({ label: 'Google', username: SAM, calendars: '3 calendars · 2 linked', needsSignIn: false })]);
-    // A reader's calendar can be linked but never allowed changes.
-    await owner('calendar.link_calendar', { id: (after.found[2] as { id: string }).id, linked: true });
-    await expect(owner('calendar.allow_changes', { id: (after.found[2] as { id: string }).id, writable: true })).rejects.toThrow(/does not let this account change/);
+    expect(after.calendars[2]).toMatchObject({ kind: 'account', why: 'Read-only in Google', expired: false, canFind: true });
+    expect(after.accounts).toEqual([expect.objectContaining({ label: 'Google', username: SAM, needsSignIn: false })]);
+    // A reader's calendar can be read but never changed.
+    const holidays = after.calendars[2].id as string;
+    expect((await owner('calendar.set_access', { id: holidays, access: 'read' })).note).toBe('Agents read Holidays in United States.');
+    await expect(owner('calendar.set_access', { id: holidays, access: 'change' })).rejects.toThrow(/read-only in Google: agents can only read it/);
   });
 
   it('takes the address pasted from another computer, and drops a sign-in on Cancel', async () => {
     await owner('calendar.google_sign_in', {});
     await expect(owner('calendar.google_finish', { id: 'signin-1', pasted: 'http://127.0.0.1:50123/?state=signin-9&code=x' })).rejects.toThrow(/another sign-in/);
     const done = await owner('calendar.google_finish', { id: 'signin-1', pasted: 'http://127.0.0.1:50123/?state=signin-1&code=4/0Ab' });
-    expect(done.note).toMatch(/^Signed in to Google as sam@gmail\.com/);
+    expect(done.note).toMatch(/^Signed in as sam@gmail\.com/);
     expect(google.state.finished.map((f) => f.id)).toEqual(['signin-1', 'signin-1']);
 
     await owner('calendar.google_sign_in', {});
@@ -162,9 +171,24 @@ suite('calendar over Google (postgres)', () => {
     expect((await settings()).hasGoogleSignIn).toBe(false);
   });
 
+  it('keeps how a sign-in ended for the card: Google refusing, or the calendars not answering, with Try again', async () => {
+    await owner('calendar.google_sign_in', {});
+    google.state.calendarsFail = true;
+    await google.answer('signin-1');
+    const failed = await owner('calendar.google_finish', { id: 'signin-1' });
+    expect(failed.note).toMatch(/^buddi signed in, but could not read your Google calendars/);
+    expect(await signInCard()).toEqual({ waiting: false, rows: [expect.objectContaining({ state: 'failed', problem: failed.note })] });
+    expect(await secretsKept()).toEqual([]);
+    expect((await pool.query('select count(*)::int as n from calendar.account')).rows[0].n).toBe(0);
+    // Try again starts afresh.
+    google.state.calendarsFail = false;
+    await owner('calendar.google_sign_in', {});
+    expect(await signInCard()).toMatchObject({ waiting: true, rows: [{ state: 'waiting' }] });
+  });
+
   it('reads Google calendars into the same tools, a series under one id, and refreshes a token Google stopped taking, once', async () => {
     await signIn();
-    google.put(SAM, { id: 'lunch1', summary: 'Team lunch', location: 'Café Lou', start: { dateTime: '2026-10-05T14:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-10-05T15:00:00-04:00', timeZone: TZ } });
+    google.put(SAM, { id: 'lunch1', summary: 'Team lunch', location: 'Café Lou', htmlLink: 'https://www.google.com/calendar/event?eid=bHVuY2gx', start: { dateTime: '2026-10-05T14:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-10-05T15:00:00-04:00', timeZone: TZ } });
     google.put(SAM, { id: 'weekly1', summary: 'Weekly 1:1', start: { dateTime: '2026-09-28T16:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-09-28T16:30:00-04:00', timeZone: TZ }, recurrence: ['RRULE:FREQ=WEEKLY'] });
     google.put('family123@group.calendar.google.com', { id: 'trip', summary: 'School trip', start: { date: '2026-10-05' }, end: { date: '2026-10-06' } });
     const today = await read('calendar.today');
@@ -173,8 +197,13 @@ suite('calendar over Google (postgres)', () => {
     expect(list.url.searchParams.get('singleEvents')).toBe('true');
     expect(list.url.searchParams.get('timeZone')).toBe(TZ);
     expect(today.forAgent).toBeUndefined();
+    // The Calendar page's sheet: the event opens in Google Calendar, in the calendar's own colour.
+    const agenda = (await manifest.queries!.find((q) => q.name === 'agenda')!.produce({}, ctx())) as { events: Array<Record<string, unknown>> };
+    expect(agenda.events.find((e) => e.title === 'Team lunch')).toMatchObject({
+      openLabel: 'Open in Google Calendar', openHref: 'https://www.google.com/calendar/event?eid=bHVuY2gx', color: '#039be5', mapHref: expect.stringMatching(/^https:\/\/www\.google\.com\/maps\//),
+    });
 
-    const samId = (await settings()).found[0].id as string;
+    const samId = (await settings()).calendars[0].id as string;
     await owner('calendar.allow_changes', { id: samId, writable: true });
     dropCache();
     // The access token ran out at Google: core refreshes it once and sends again.
@@ -188,7 +217,7 @@ suite('calendar over Google (postgres)', () => {
 
   it('adds an event on approval under an id from what it is, refused rather than doubled the second time', async () => {
     await signIn();
-    const samId = (await settings()).found[0].id as string;
+    const samId = (await settings()).calendars[0].id as string;
     await owner('calendar.allow_changes', { id: samId, writable: true });
     const input = { calendar: SAM, title: 'Dentist', start: '2026-11-02T09:00', duration: 45, location: '12 Main St', notes: 'Bring the X-rays' };
     const asked = (await ask('calendar.create_event', input)) as { actionId: string; preview: string };
@@ -221,7 +250,7 @@ suite('calendar over Google (postgres)', () => {
 
   it('changes an event with If-Match on the version the card showed, and refuses one changed in Google meanwhile', async () => {
     await signIn();
-    const samId = (await settings()).found[0].id as string;
+    const samId = (await settings()).calendars[0].id as string;
     await owner('calendar.allow_changes', { id: samId, writable: true });
     google.put(SAM, { id: 'lunch1', summary: 'Team lunch', location: 'Café Lou', start: { dateTime: '2026-10-09T12:30:00-04:00', timeZone: TZ }, end: { dateTime: '2026-10-09T13:30:00-04:00', timeZone: TZ } });
     const etag = google.state.events.get(SAM)![0]!.etag;
@@ -245,7 +274,7 @@ suite('calendar over Google (postgres)', () => {
 
   it('changes and cancels a series only whole, and leaves events with invitees alone', async () => {
     await signIn();
-    const samId = (await settings()).found[0].id as string;
+    const samId = (await settings()).calendars[0].id as string;
     await owner('calendar.allow_changes', { id: samId, writable: true });
     google.put(SAM, { id: 'weekly1', summary: 'Weekly 1:1', start: { dateTime: '2026-09-29T10:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-09-29T10:30:00-04:00', timeZone: TZ }, recurrence: ['RRULE:FREQ=WEEKLY'] });
     google.put(SAM, { id: 'invited', summary: 'Board', start: { dateTime: '2026-10-07T10:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-10-07T11:00:00-04:00', timeZone: TZ }, attendees: [{ email: SAM, self: true }, { email: 'ana@example.com' }] });
@@ -268,9 +297,9 @@ suite('calendar over Google (postgres)', () => {
 
   it('when Google stops accepting the sign-in: sign in again, one message, a warning, words on a write, the note — and signing in again keeps the links', async () => {
     await signIn();
-    const samId = (await settings()).found[0].id as string;
+    const samId = (await settings()).calendars[0].id as string;
     await owner('calendar.allow_changes', { id: samId, writable: true });
-    await owner('calendar.link_calendar', { id: (await settings()).found[1].id, linked: false });
+    await owner('calendar.set_access', { id: (await settings()).calendars[1].id, access: 'off' });
     google.put(SAM, { id: 'lunch1', summary: 'Team lunch', start: { dateTime: '2026-10-05T14:00:00-04:00', timeZone: TZ }, end: { dateTime: '2026-10-05T15:00:00-04:00', timeZone: TZ } });
     dropCache();
     google.revoke();
@@ -283,8 +312,9 @@ suite('calendar over Google (postgres)', () => {
 
     const page = await settings();
     expect(page.hasSignedOut).toBe(true);
-    expect(page.signedOut).toMatch(/Google stopped accepting buddi’s sign-in to sam@gmail\.com.*your calendar links stay as they are/);
-    expect(page.accounts[0]).toMatchObject({ needsSignIn: true, canFind: false, state: [{ value: 'sign in again', tone: 'danger' }] });
+    expect(page.signedOut).toBe('Google stopped accepting buddi’s sign-in to sam@gmail.com, so agents can’t read those calendars. Sign in again: your choices stay as they are.');
+    expect(page.accounts[0]).toMatchObject({ needsSignIn: true });
+    expect(page.calendars[0]).toMatchObject({ expired: true, canFind: false, groupAside: 'Sign-in ran out · agents can’t read these', groupTone: 'warning' });
     expect(await readiness()).toEqual({ ready: false, note: `Sign in to Google again (${SAM}).`, page: 'settings' });
 
     const refused = await ask('calendar.create_event', { calendar: SAM, title: 'Dentist', start: '2026-11-02T09:00' });
@@ -293,13 +323,13 @@ suite('calendar over Google (postgres)', () => {
     // Signing in again: the same account, the same links and permissions, the warning gone.
     google.state.revoked = false;
     const again = await signIn(page.accounts[0].id);
-    expect(again.note).toBe(`Signed in to Google again as ${SAM}: your calendar links are as they were.`);
+    expect(again.note).toBe(`Signed in to Google again as ${SAM}: your choices are as they were.`);
     const after = await settings();
     expect(after.hasSignedOut).toBe(false);
-    expect(after.found.map((c: any) => [c.name, c.linked, c.writable])).toEqual([
-      [SAM, true, true],
-      ['Family', false, false],
-      ['Holidays in United States', false, false],
+    expect(after.calendars.map((c: any) => [c.name, c.access])).toEqual([
+      [SAM, 'change'],
+      ['Family', 'off'],
+      ['Holidays in United States', 'off'],
     ]);
     expect(await secretsKept()).toEqual([[`Calendar sign-in: Google ${SAM}`, 'http.bearer', { plugin: 'calendar', host: 'www.googleapis.com' }]]);
     expect(await readiness()).toEqual({ ready: true });
@@ -310,7 +340,7 @@ suite('calendar over Google (postgres)', () => {
   it('signs out of Google: the sign-in and its calendars go here, and it says where to remove buddi at Google', async () => {
     await signIn();
     const { note } = await owner('calendar.sign_out', { id: (await settings()).accounts[0].id });
-    expect(note).toMatch(/^Signed out of Google \(sam@gmail\.com\): buddi forgot its sign-in\..*myaccount\.google\.com\/connections/);
+    expect(note).toMatch(/^Removed Google \(sam@gmail\.com\): buddi forgot its sign-in and its calendars\..*myaccount\.google\.com\/connections/);
     expect(await secretsKept()).toEqual([]);
     expect((await pool.query('select count(*)::int as n from calendar.calendar')).rows[0].n).toBe(0);
   });

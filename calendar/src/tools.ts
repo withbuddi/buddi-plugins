@@ -299,4 +299,43 @@ export const freeTool: ToolDefinition<z.infer<typeof freeInput>, { date: string;
   },
 };
 
-export const calendarTools = [todayTool, upcomingTool, findTool, freeTool];
+/**
+ * The owner's linked calendars and which ones agents may write to, so an
+ * agent picks a calendar for a change rather than learning it from a refusal.
+ * `default` marks the one to use without asking: the only writable calendar,
+ * else a Google account's own (primary) calendar when it is writable.
+ */
+export const calendarsTool: ToolDefinition<Record<string, never>, { calendars: Array<{ name: string; account: string; colour: string | null; mayWrite: boolean; default: boolean }>; note?: string }> = {
+  name: 'calendar.calendars',
+  description:
+    'The owner’s linked calendars: name, account, colour, whether agents may add and change events in it (mayWrite), ' +
+    'and the default one to write to. Read it before calendar.create_event when the owner did not name a calendar.',
+  tier: 'auto',
+  input: z.object({}).strict() as unknown as z.ZodType<Record<string, never>>,
+  async execute(_input, ctx) {
+    const db = ctx.buddi!.db;
+    const [linked, accounts] = await Promise.all([listCalendars(db), listAccounts(db)]);
+    const accountOfRow = new Map(accounts.map((a) => [a.id, a]));
+    const rows = linked.map((c) => {
+      const a = c.accountId ? accountOfRow.get(c.accountId) : undefined;
+      return { c, a, mayWrite: c.writable && a !== undefined && !a.needsSignIn };
+    });
+    const writable = rows.filter((r) => r.mayWrite);
+    const chosen =
+      writable.length === 1
+        ? writable[0]
+        : writable.find((r) => r.a?.kind === 'google' && r.c.url?.toLowerCase() === r.a.username.toLowerCase());
+    const calendars = rows.map((r) => ({
+      name: r.c.name,
+      account: r.a ? `${r.a.label} · ${r.a.username}` : `${r.c.provider} (private link)`,
+      colour: r.c.color,
+      mayWrite: r.mayWrite,
+      default: r === chosen,
+    }));
+    if (calendars.length === 0) return { calendars, note: 'No calendar is linked yet: the owner links one on Settings → Calendar.' };
+    if (writable.length === 0) return { calendars, note: 'Agents may not change any of these: the owner allows changes per calendar on Settings → Calendar.' };
+    return { calendars };
+  },
+};
+
+export const calendarTools = [todayTool, upcomingTool, findTool, freeTool, calendarsTool];

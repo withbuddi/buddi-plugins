@@ -42,14 +42,51 @@ function draftAccount(id: string, username: string, secretName: string): Account
 /** The calendar list as discovery's rows: every calendar holds events; the owner's and writers' are linked at first. */
 const asFound = (cals: GoogleCalendar[]) => cals.map((c) => ({ url: c.id, name: c.name, color: c.color, events: true, writable: c.writable }));
 
-/** The sign-in waiting for the owner, if there is one and it is not over. */
-export async function pendingSignIn(buddi: Pick<Host, 'db' | 'clock'>): Promise<{ id: string; accountId: string | null; url: string; expiresAt: Date } | undefined> {
+/** The latest sign-in, while its ten minutes last: waiting, or ended with what it kept or why it stopped. */
+export async function currentSignIn(
+  buddi: Pick<Host, 'db' | 'clock'>,
+): Promise<{ id: string; accountId: string | null; url: string; expiresAt: Date; finishedNote: string | null; problem: string | null } | undefined> {
   const { rows } = await buddi.db.query(
-    `select id, account_id, authorize_url, expires_at from calendar.google_sign_in where expires_at > $1 order by created_at desc limit 1`,
+    `select id, account_id, authorize_url, expires_at, finished_note, problem
+       from calendar.google_sign_in where expires_at > $1 order by created_at desc limit 1`,
     [buddi.clock.now()],
   );
-  const r = rows[0] as { id: string; account_id: string | null; authorize_url: string; expires_at: Date } | undefined;
-  return r ? { id: r.id, accountId: r.account_id, url: r.authorize_url, expiresAt: r.expires_at } : undefined;
+  const r = rows[0] as
+    | { id: string; account_id: string | null; authorize_url: string; expires_at: Date; finished_note: string | null; problem: string | null }
+    | undefined;
+  return r ? { id: r.id, accountId: r.account_id, url: r.authorize_url, expiresAt: r.expires_at, finishedNote: r.finished_note, problem: r.problem } : undefined;
+}
+
+/** The sign-in waiting for the owner, if there is one: started, not ended, not over. */
+export async function pendingSignIn(buddi: Pick<Host, 'db' | 'clock'>): Promise<{ id: string; accountId: string | null; url: string; expiresAt: Date } | undefined> {
+  const row = await currentSignIn(buddi);
+  return row && row.finishedNote === null && row.problem === null ? row : undefined;
+}
+
+/**
+ * Where the sign-in card stands: `waiting` for Google, `received` (Google
+ * answered; the page finishes it by itself), `done` with what was kept, or
+ * `failed` with why. Read-only: core's sign-in state is asked, nothing written.
+ */
+export async function signInState(
+  buddi: Pick<Host, 'db' | 'clock' | 'secrets'>,
+): Promise<{ id: string; url: string; renewing: string; state: 'waiting' | 'received' | 'done' | 'failed'; note: string; problem: string } | undefined> {
+  const row = await currentSignIn(buddi);
+  if (!row) return undefined;
+  const renewing = row.accountId ? ((await accountOf(buddi.db, row.accountId))?.username ?? '') : '';
+  const base = { id: row.id, url: row.url, renewing, note: row.finishedNote ?? '', problem: row.problem ?? '' };
+  if (row.finishedNote !== null) return { ...base, state: 'done' };
+  if (row.problem !== null) return { ...base, state: 'failed' };
+  const status = (await buddi.secrets?.signInStatus?.(row.id)) ?? { state: 'expired' as const, problem: 'That sign-in is over; start again.' };
+  if (status.state === 'waiting') return { ...base, state: 'waiting' };
+  if (status.state === 'signed-in') return { ...base, state: 'received' };
+  return { ...base, state: 'failed', problem: plainProblem(status.problem) };
+}
+
+/** Google's refusal in the owner's words. */
+function plainProblem(problem: string | undefined): string {
+  if (!problem) return 'The sign-in did not finish. Nothing was kept.';
+  return /access_denied/.test(problem) ? 'Google didn’t sign you in (access_denied). Nothing was kept.' : `${problem.replace(/\.$/, '')}. Nothing was kept.`;
 }
 
 const signInInput = z.object({ account: z.string().min(1).max(80).optional() }).strict();
@@ -67,7 +104,7 @@ export const googleSignInTool: ToolDefinition<z.infer<typeof signInInput>, { not
     const renewing = input.account ? await accountOf(buddi.db, input.account) : undefined;
     if (input.account && !renewing) throw new Error('That account is not linked any more.');
     // A sign-in left half-way is dropped, with whatever it kept.
-    const { rows: old } = await buddi.db.query(`select id from calendar.google_sign_in`);
+    const { rows: old } = await buddi.db.query(`select id from calendar.google_sign_in where finished_note is null and problem is null`);
     for (const r of old as Array<{ id: string }>) await secrets.signInCancel?.(r.id).catch(() => undefined);
     await buddi.db.query(`delete from calendar.google_sign_in`);
     await secrets.delete(SIGNING_IN_SECRET).catch(() => false);
@@ -83,7 +120,7 @@ export const googleSignInTool: ToolDefinition<z.infer<typeof signInInput>, { not
       `insert into calendar.google_sign_in (id, account_id, secret_name, authorize_url, expires_at) values ($1, $2, $3, $4, $5)`,
       [started.id, renewing?.id ?? null, SIGNING_IN_SECRET, started.authorizeUrl, new Date(started.expiresAt)],
     );
-    return { note: 'Continue on Google’s page, then come back here and press Finish signing in.' };
+    return { note: 'Continue on Google’s page. This finishes by itself when Google sends you back.' };
   },
 };
 
@@ -92,7 +129,7 @@ export const googleSignInTool: ToolDefinition<z.infer<typeof signInInput>, { not
  * its address), the tokens under that account's name, the account row — new,
  * or the one it renews, with its links — and its calendars.
  */
-async function keepSignIn(buddi: Host): Promise<{ note: string }> {
+async function keepSignIn(buddi: Host, signInId: string): Promise<{ note: string }> {
   const draft = draftAccount('signing-in', '', SIGNING_IN_SECRET);
   let calendars: GoogleCalendar[];
   try {
@@ -128,17 +165,20 @@ async function keepSignIn(buddi: Host): Promise<{ note: string }> {
   }
   const kept = await keepFound(buddi, account, asFound(calendars), (cal) => cal.writable === true);
   for (const c of (await listAllCalendars(buddi.db)).filter((c) => c.accountId === account.id)) dropCache(c.id);
-  await buddi.db.query(`delete from calendar.google_sign_in`);
-  if (existing) {
-    const extra = kept.added > 0 ? `, and found ${plural(kept.added, 'new calendar')}` : '';
-    return { note: `Signed in to Google again as ${address}: your calendar links are as they were${extra}.` };
-  }
-  const shown = calendars.length;
-  return {
-    note:
-      `Signed in to Google as ${address}: ${plural(shown, 'calendar')} found, ${kept.linked} linked for reading. ` +
-      'Link others and allow changes under From your accounts.',
-  };
+  const extra = kept.added > 0 ? `, and found ${plural(kept.added, 'new calendar')}` : '';
+  const note = existing
+    ? `Signed in to Google again as ${address}: your choices are as they were${extra}.`
+    : `Signed in as ${address}: ${plural(calendars.length, 'calendar')} found, ${kept.linked} linked for reading.`;
+  // The card says so until Done, a new sign-in, or its ten minutes.
+  await buddi.db.query(`update calendar.google_sign_in set finished_note = $2 where id = $1`, [signInId, note]);
+  return { note };
+}
+
+/** A sign-in that ended without an account: the card says why, the half-made tokens go. */
+async function failSignIn(buddi: Host, id: string, problem: string): Promise<{ note: string }> {
+  await buddi.db.query(`update calendar.google_sign_in set problem = $2 where id = $1`, [id, problem.slice(0, 400)]);
+  await buddi.secrets?.delete(SIGNING_IN_SECRET).catch(() => false);
+  return { note: problem };
 }
 
 const finishInput = z.object({ id: z.string().min(1).max(200), pasted: z.string().trim().max(8192).optional() }).strict();
@@ -153,18 +193,37 @@ export const googleFinishTool: ToolDefinition<z.infer<typeof finishInput>, { not
     const buddi = ctx.buddi!;
     const secrets = buddi.secrets;
     if (secrets?.signInStatus === undefined || secrets.signInFinish === undefined) throw new Error('This buddi cannot sign in to Google yet. Update buddi.');
+    // Finished already (the page and a press racing): say what it kept, once.
+    const ended = await currentSignIn(buddi);
+    if (ended?.id === input.id && ended.finishedNote !== null) return { note: ended.finishedNote };
     const status = input.pasted ? await secrets.signInFinish(input.id, input.pasted) : await secrets.signInStatus(input.id);
     if (status.state === 'waiting') {
       throw new Error(
         'Google has not sent buddi back yet. Allow buddi on Google’s page first. If that tab ended on a page that would not load, copy its whole address and paste it here.',
       );
     }
-    if (status.state !== 'signed-in') {
-      await buddi.db.query(`delete from calendar.google_sign_in where id = $1`, [input.id]);
-      await secrets.delete(SIGNING_IN_SECRET).catch(() => false);
-      throw new Error(status.problem ?? 'The sign-in did not finish. Start again.');
+    // An ending is kept on the sign-in for the card to say — not thrown, so
+    // the page that finished it by itself draws it in place.
+    if (status.state !== 'signed-in') return failSignIn(buddi, input.id, plainProblem(status.problem));
+    try {
+      return await keepSignIn(buddi, input.id);
+    } catch (err) {
+      return failSignIn(buddi, input.id, err instanceof Error ? err.message : String(err));
     }
-    return keepSignIn(buddi);
+  },
+};
+
+const dismissInput = z.object({ id: z.string().min(1).max(200) }).strict();
+
+export const googleDismissTool: ToolDefinition<z.infer<typeof dismissInput>, { note: string }> = {
+  name: 'calendar.google_dismiss',
+  description: 'Put away the card of a Google sign-in that has ended. The owner’s own.',
+  tier: 'auto',
+  ownerOnly: true,
+  input: dismissInput,
+  async execute(input, ctx) {
+    await ctx.buddi!.db.query(`delete from calendar.google_sign_in where id = $1 and (finished_note is not null or problem is not null)`, [input.id]);
+    return { note: '' };
   },
 };
 
@@ -204,4 +263,4 @@ export async function findGoogleAgain(buddi: Host, account: AccountRow): Promise
   return { note: parts.length > 0 ? `Google (${account.username}): ${parts.join(', ')}.` : `Google (${account.username}): nothing new.` };
 }
 
-export const googleTools = [googleSignInTool, googleFinishTool, googleCancelTool];
+export const googleTools = [googleSignInTool, googleFinishTool, googleCancelTool, googleDismissTool];

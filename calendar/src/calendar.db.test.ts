@@ -84,7 +84,7 @@ suite('calendar (postgres)', () => {
     expect(await manifest.home![0]!.produce(ctx())).toBeNull();
     expect(await manifest.widgets![0]!.produce(ctx(), { size: 'medium' })).toEqual({ kind: 'text', icon: 'calendar', text: 'Link a calendar on Settings → Calendar to see your day here.' });
     expect(await agendaQuery.produce({}, ctx())).toEqual({
-      linked: false, many: false, calendars: [], message: 'No calendar is linked yet. Add one on Settings → Calendar.', events: [], summary: [], problem: '',
+      linked: false, message: 'No calendar is linked yet. Add one on Settings → Calendar.', events: [], problem: '',
     });
     // And the Plugins page says what to do first (host API 1.18), on the read-only pool.
     const registry = new ToolRegistry();
@@ -95,9 +95,9 @@ suite('calendar (postgres)', () => {
   it('answers the Calendar page: the days it asks for, each event with its calendar, tone and place, filtered by calendar', async () => {
     await run('calendar.add', { name: 'Work', link: LINK }, asOwner);
     type Event = { id: string; title: string; start: string; end: string; allDay: boolean; calendar: string; tone: number; location: string };
-    type Agenda = { linked: boolean; many: boolean; events: Event[]; summary: Array<{ text: string }> };
+    type Agenda = { linked: boolean; events: Array<Event & Record<string, string>> };
     const agenda = (await agendaQuery.produce({}, ctx())) as Agenda;
-    expect(agenda).toMatchObject({ linked: true, many: false });
+    expect(agenda).toMatchObject({ linked: true, problem: '' });
     // Today and the six days after it, when the page does not say.
     expect(agenda.events.filter((e) => e.start.startsWith('2026-09-28')).map((e) => [e.title, e.start, e.end, e.allDay, e.calendar, e.tone, e.location])).toEqual([
       ['Company offsite', '2026-09-28', '2026-09-29', true, 'Work', 0, ''],
@@ -108,7 +108,11 @@ suite('calendar (postgres)', () => {
     expect(agenda.events.find((e) => e.title === 'Trip to Boston')).toMatchObject({ start: '2026-10-01', end: '2026-10-03', allDay: true });
     expect(agenda.events.every((e) => e.start < '2026-10-05T04:00')).toBe(true);
     expect(new Set(agenda.events.map((e) => e.id)).size).toBe(agenda.events.length);
-    expect(agenda.summary[0]!.text).toMatch(/^\d+ events over the next 7 days\.$/);
+    // What the event's sheet reads: the place as a map search, the notes; a private link has no app to open in.
+    expect(agenda.events.find((e) => e.title === 'Dentist')).toMatchObject({
+      mapHref: 'https://www.google.com/maps/search/?api=1&query=12%20Main%20St', color: '', openLabel: '', openHref: '',
+    });
+    expect(agenda.events.find((e) => e.title === 'Call with Paris office')).toMatchObject({ mapHref: '' });
     // Nothing is a row no longer: the page draws "Nothing." on an empty day itself.
     expect(agenda.events.some((e) => e.title === 'Nothing.')).toBe(false);
 
@@ -116,16 +120,14 @@ suite('calendar (postgres)', () => {
     const later = (await agendaQuery.produce({ from: '2026-10-05', to: '2026-10-12' }, ctx())) as Agenda;
     expect(later.events.every((e) => e.start >= '2026-10-05' && e.start < '2026-10-12T04:00')).toBe(true);
     expect(later.events.filter((e) => e.title === 'Team standup').length).toBe(2);
-    expect(later.summary[0]!.text).toBe('2 events from Mon 5 Oct to Sun 11 Oct.');
+
     const tuesday = (await agendaQuery.produce({ from: '2026-09-29', to: '2026-09-20' }, ctx())) as Agenda;
     expect(tuesday.events).toEqual([]);
-    expect(tuesday.summary[0]!.text).toBe('No events from Tue 29 Sep to Tue 29 Sep.');
+
     await expect(agendaQuery.produce({ from: 'monday' }, ctx())).rejects.toThrow();
 
     await run('calendar.add', { name: 'Family', link: 'webcal://p12-caldav.icloud.com/published/2/MTIzNDU2Nzg5MTIzNDU2N' }, asOwner);
-    const both = (await agendaQuery.produce({}, ctx())) as Agenda & { calendars: unknown };
-    expect(both.many).toBe(true);
-    expect(both.calendars).toEqual([{ id: 'work', name: 'Work' }, { id: 'family', name: 'Family' }]);
+    const both = (await agendaQuery.produce({}, ctx())) as Agenda;
     // Each calendar wears its own tone: its place in the list.
     expect(new Set(both.events.map((e) => `${e.calendar}:${e.tone}`))).toEqual(new Set(['Work:0', 'Family:1']));
     const onlyFamily = (await agendaQuery.produce({ calendars: 'family' }, ctx())) as Agenda;
@@ -267,7 +269,12 @@ suite('calendar (postgres)', () => {
       'Family could not be read: the calendar service answered 403: the link was reset, unpublished or turned off. Add it again with the new link.',
     ]);
     const page = await manifest.queries![0]!.produce({}, ctx());
-    expect((page as { calendars: Array<{ state: unknown }> }).calendars[0]!.state).toEqual([{ value: 'cannot read', tone: 'danger' }]);
+    const rows = (page as { calendars: Array<{ problem: string; kind: string; groupLabel: string }> }).calendars;
+    expect(rows[0]).toMatchObject({ kind: 'link', groupLabel: 'Private links', problem: expect.stringMatching(/^Can’t read it: the calendar service answered 403/) });
+    expect(await run('calendar.calendars', {})).toMatchObject({ calendars: [expect.objectContaining({ name: 'Work', mayWrite: false, default: false }), expect.anything()], note: expect.stringMatching(/may not change any/) });
+    // A private link takes Read only: neither Not linked nor Read and change.
+    await expect(run('calendar.set_access', { id: 'work', access: 'change' }, asOwner)).rejects.toThrow(/A private link only reads/);
+    await expect(run('calendar.set_access', { id: 'work', access: 'off' }, asOwner)).rejects.toThrow(/remove it/);
 
     expect(await run('calendar.remove', { id: 'work' }, asOwner)).toEqual({ note: 'Unlinked Work, and forgot its link.' });
     expect((await pool.query(`select 1 from core.secrets where name = 'Calendar link: Work'`)).rowCount).toBe(0);

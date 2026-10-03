@@ -1,30 +1,35 @@
 /**
- * Settings → Calendar: the calendars agents read, each with what agents may
- * do in it; a private link added or removed; an account linked with an app
- * password (`accounts.ts`), its calendars linked or unlinked and allowed
- * changes or kept read-only; and how to find a link or make an app password.
+ * Settings → Calendar: one list grouped by account — Google, iCloud and the
+ * other app-password accounts, then the private links — each calendar one row
+ * with its colour, what agents last read, and one choice: Not linked · Read ·
+ * Read and change (`calendar.set_access`). One Add a calendar menu: Sign in
+ * with Google, Link with an app password, Paste a private link. The Google
+ * sign-in is one card that finishes by itself once Google's answer reaches
+ * buddi (the page asks how it stands every two seconds); the pasted-address
+ * fallback appears only when the dashboard is opened from another computer.
  * A link or a password is an owner secret from the moment it is saved; rows
- * keep only the secret's name. Writes are `ownerOnly` tools.
+ * keep only the secret's name. Writes are `ownerOnly` tools. Host API 1.28's
+ * page grammar (a row's choice, a group head's actions, a menu, a polled
+ * card's finish, `where`).
  */
 import { z } from 'zod';
 import type { PageDescriptor, PageQuery, ToolDefinition } from '@buddi/core/plugin';
 import { parseIcs } from './ics.js';
 import { idOf } from './ids.js';
 import { declareHost, dropCache, fetchIcs, listAccounts, listAllCalendars, listCalendars, normaliseLink, providerOf, remember } from './store.js';
-import { pendingSignIn } from './google-accounts.js';
+import { pendingSignIn, signInState } from './google-accounts.js';
 
 export { idOf };
 
 export const CALENDAR_NOTICE =
-  'A private link reads a calendar; an account you sign in to — Google, or iCloud and Fastmail with an app password — ' +
-  "can also be written to, once you allow it. buddi keeps every link, password and sign-in in its vault, never shown " +
-  'again, used only by this plugin. Every change an agent makes is asked on a card first.';
+  'Choose what your agents may do with each calendar. Before any change, they ask you on a card. ' +
+  'Links, passwords and sign-ins stay in buddi’s vault.';
 
 /** What buddi asks Google for, and what testing mode means until Google has reviewed buddi. */
 export const GOOGLE_HELP = [
   'The events of your calendars — to read your day and add, change or cancel the events you approve — and the list ' +
     'of your calendars, to show them here. Nothing else: not your mail, contacts or files.',
-  'The sign-in is kept in buddi’s vault and sent only to Google’s calendar service. Sign out here, or remove buddi at ' +
+  'The sign-in is kept in buddi’s vault and sent only to Google’s calendar service. Remove the account here, or remove buddi at ' +
     'myaccount.google.com/connections, and it stops.',
   'While Google is still reviewing buddi, Google shows a warning that the app is unverified, only accounts Google lets ' +
     'test it can sign in, and a sign-in lasts seven days: buddi tells you when to sign in again.',
@@ -59,15 +64,36 @@ export const PROVIDER_HELP = [
     'it without it.',
   'Outlook: on outlook.com or Outlook on the web, Settings (the gear) → Calendar → Shared calendars → Publish a ' +
     'calendar → pick the calendar and "Can view all details" → Publish → copy the ICS link.',
-  'A private link only reads. To let agents add events, sign in with Google, or link the account with an app password (iCloud, Fastmail, CalDAV).',
+  'A private link only reads. To let agents change events, sign in with Google, or link the account with an app password (iCloud, Fastmail, CalDAV).',
 ];
 
-/** The state pill of a calendar: how its last read went. */
-function stateOf(r: { lastError: string | null; lastFetchedAt: Date | null }): Array<{ value: string; tone: string }> {
-  if (r.lastError) return [{ value: 'cannot read', tone: 'danger' }];
-  if (r.lastFetchedAt) return [{ value: 'reads', tone: 'good' }];
-  return [{ value: 'not read yet', tone: 'neutral' }];
+/** "2 min ago", "3 h ago", "3 days ago": when agents last read a calendar. */
+export function ago(then: Date, now: Date): string {
+  const minutes = Math.max(0, Math.round((now.getTime() - then.getTime()) / 60_000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
 }
+
+/** What agents may do with a calendar, as its choice reads it. */
+export type Access = 'off' | 'read' | 'change';
+
+/** A calendar's line under its name: what agents last read, and what a change costs. */
+function lineOf(r: { lastFetchedAt: Date | null; eventCount: number | null }, access: Access, now: Date): string {
+  if (access === 'off') return 'Agents don’t see it';
+  const parts = [
+    r.eventCount !== null ? `${r.eventCount} ${r.eventCount === 1 ? 'event' : 'events'}` : '',
+    r.lastFetchedAt ? `read ${ago(r.lastFetchedAt, now)}` : 'not read yet',
+    access === 'change' ? 'changes ask you first' : '',
+  ];
+  return parts.filter(Boolean).join(' · ');
+}
+
+/** The group a private link sits in: after every account. */
+const LINKS_GROUP = 'links';
 
 export const calendarQueries: PageQuery[] = [
   {
@@ -76,75 +102,93 @@ export const calendarQueries: PageQuery[] = [
     async produce(_params, ctx) {
       const buddi = ctx.buddi!;
       const db = buddi.db;
-      const [all, accounts, pending] = await Promise.all([listAllCalendars(db), listAccounts(db), pendingSignIn(buddi)]);
-      const accountName = new Map(accounts.map((a) => [a.id, `${a.label} · ${a.username}`]));
+      const now = buddi.clock.now();
+      const [all, accounts, pending, signIn] = await Promise.all([listAllCalendars(db), listAccounts(db), pendingSignIn(buddi), signInState(buddi)]);
       const signedOut = accounts.filter((a) => a.needsSignIn);
-      const renewing = pending?.accountId ? accounts.find((a) => a.id === pending.accountId) : undefined;
+      const links = all.filter((r) => !r.accountId);
+      const rows = [
+        // Each account's calendars under its head, in the order they came; then the private links.
+        ...accounts.flatMap((a) => {
+          const mine = all.filter((c) => c.accountId === a.id);
+          const linked = mine.filter((c) => c.linked).length;
+          const aside = a.needsSignIn
+            ? 'Sign-in ran out · agents can’t read these'
+            : a.lastError
+              ? `Can’t sign in: ${a.lastError.length > 80 ? `${a.lastError.slice(0, 79)}…` : a.lastError}`
+              : `${mine.length} ${mine.length === 1 ? 'calendar' : 'calendars'} · ${linked} linked`;
+          return mine.map((r) => {
+            const access: Access = !r.linked ? 'off' : r.writable ? 'change' : 'read';
+            return {
+              id: r.id,
+              name: r.name,
+              color: r.color ?? '',
+              group: a.id,
+              groupLabel: `${a.label} · ${a.username}`,
+              groupAside: aside,
+              groupTone: a.needsSignIn ? 'warning' : a.lastError ? 'critical' : '',
+              account: a.id,
+              accountWords: `${a.label} (${a.username})`,
+              expired: a.needsSignIn && a.kind === 'google',
+              canFind: !a.needsSignIn,
+              kind: 'account',
+              access,
+              // The server said this account may not write it.
+              readOnly: r.canWrite === false,
+              why: `Read-only in ${a.label}`,
+              line: lineOf(r, access, now),
+              problem: r.linked && r.lastError ? `Can’t read it: ${r.lastError}` : '',
+            };
+          });
+        }),
+        ...links.map((r) => ({
+          id: r.id,
+          name: r.name,
+          color: r.color ?? '',
+          group: LINKS_GROUP,
+          groupLabel: 'Private links',
+          groupAside: `${links.length} ${links.length === 1 ? 'link' : 'links'} · read only`,
+          groupTone: '',
+          account: '',
+          accountWords: '',
+          expired: false,
+          canFind: false,
+          kind: 'link',
+          access: 'read' as Access,
+          readOnly: true,
+          why: 'A private link only reads',
+          line: lineOf(r, 'read', now),
+          problem: r.lastError ? `Can’t read it: ${r.lastError}` : '',
+        })),
+      ];
       return {
-        hasAccounts: accounts.length > 0,
+        hasCalendars: rows.length > 0,
         defaultService: 'icloud',
-        // Sign in with Google needs a buddi that runs sign-ins (host API 1.28).
+        // Sign in with Google needs a buddi that runs sign-ins (host API 1.28), and one at a time.
         googleAvailable: typeof buddi.secrets?.signIn === 'function' && pending === undefined,
-        hasGoogleSignIn: pending !== undefined,
-        googleSignIn: pending
-          ? { id: pending.id, url: pending.url, renewing: renewing?.username ?? '' }
-          : { id: '', url: '', renewing: '' },
+        hasGoogleSignIn: signIn !== undefined,
+        googleSignIn: signIn ?? { id: '', url: '', renewing: '', state: '', note: '', problem: '' },
         hasSignedOut: signedOut.length > 0,
         signedOut:
           signedOut.length === 0
             ? ''
-            : `Google stopped accepting buddi’s sign-in to ${signedOut.map((a) => a.username).join(' and ')} (it was revoked, or its ` +
-              'seven days ran out), so agents can’t read or change those calendars. Sign in again under Accounts: your calendar links stay as they are.',
-        calendars: all
-          .filter((r) => r.linked)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            color: r.color ?? '',
-            kind: r.accountId ? 'account' : 'link',
-            provider: r.accountId ? (accountName.get(r.accountId) ?? r.provider) : r.provider === 'Calendar link' ? r.provider : `${r.provider} (private link)`,
-            may: [r.writable ? { value: 'add and change events', tone: 'accent' } : { value: 'read', tone: 'neutral' }],
-            events: r.eventCount ?? '',
-            lastRead: r.lastFetchedAt?.toISOString() ?? '',
-            state: stateOf(r),
-            problem: r.lastError ?? '',
-          })),
-        found: all
-          .filter((r) => r.accountId)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            color: r.color ?? '',
-            account: accountName.get(r.accountId!) ?? r.provider,
-            linked: r.linked,
-            writable: r.writable,
-            // Allow changes is offered on a linked calendar the server did not say is read-only.
-            canAllow: r.linked && !r.writable && r.canWrite !== false,
-            state: [
-              r.linked ? { value: 'linked', tone: 'good' } : { value: 'not linked', tone: 'neutral' },
-              ...(r.writable ? [{ value: 'may change', tone: 'accent' }] : []),
-              ...(r.canWrite === false ? [{ value: 'read-only there', tone: 'neutral' }] : []),
-            ],
-          })),
-        accounts: accounts.map((a) => {
-          const mine = all.filter((c) => c.accountId === a.id);
-          return {
-            id: a.id,
-            kind: a.kind,
-            label: a.label,
-            username: a.username,
-            needsSignIn: a.needsSignIn,
-            canFind: !a.needsSignIn,
-            calendars: `${mine.length} ${mine.length === 1 ? 'calendar' : 'calendars'} · ${mine.filter((c) => c.linked).length} linked`,
-            state: a.needsSignIn
-              ? [{ value: 'sign in again', tone: 'danger' }]
-              : a.lastError
-                ? [{ value: 'cannot sign in', tone: 'danger' }]
-                : [{ value: 'signed in', tone: 'good' }],
-            problem: a.needsSignIn ? '' : (a.lastError ?? ''),
-          };
-        }),
+            : `Google stopped accepting buddi’s sign-in to ${signedOut.map((a) => a.username).join(' and ')}, so agents can’t ` +
+              'read those calendars. Sign in again: your choices stay as they are.',
+        calendars: rows,
+        accounts: accounts.map((a) => ({ id: a.id, kind: a.kind, label: a.label, username: a.username, needsSignIn: a.needsSignIn })),
       };
+    },
+  },
+  {
+    /** The sign-in card's own read, asked every two seconds while it waits. */
+    name: 'sign_in',
+    params: z.object({}),
+    async produce(_params, ctx) {
+      const signIn = await signInState(ctx.buddi!);
+      if (!signIn) return { waiting: false, rows: [] };
+      const line = signIn.renewing
+        ? `Waiting for Google… Sign in as ${signIn.renewing}; this finishes by itself when Google sends you back.`
+        : 'Waiting for Google… This finishes by itself when Google sends you back.';
+      return { waiting: signIn.state === 'waiting', rows: [{ ...signIn, line }] };
     },
   },
 ];
@@ -221,6 +265,21 @@ export const removeCalendarTool: ToolDefinition<z.infer<typeof removeInput>, { n
 };
 
 const settingsRef = { query: 'settings' };
+const signInRef = { query: 'sign_in' };
+
+/** The three-way choice on every calendar's row. */
+const ACCESS_CHOICE = {
+  tool: 'calendar.set_access',
+  label: 'What agents may do with {name}',
+  value: 'access',
+  options: [
+    { value: 'off', label: 'Not linked', when: { path: 'kind', equals: 'account' } },
+    { value: 'read', label: 'Read' },
+    { value: 'change', label: 'Read and change', disabledWhen: { path: 'readOnly', equals: true }, hint: '{why}' },
+  ],
+  done: { path: 'note' },
+  args: { id: { row: 'id' }, access: { choice: true as const } },
+};
 
 export const calendarPages: PageDescriptor[] = [
   {
@@ -233,117 +292,159 @@ export const calendarPages: PageDescriptor[] = [
       { kind: 'notice', text: CALENDAR_NOTICE },
       { kind: 'notice', text: { path: 'signedOut' }, tone: 'warning', when: { path: 'hasSignedOut', equals: true } },
       {
+        // One card: Continue to Google, and it finishes by itself when Google answers.
         kind: 'section',
-        title: 'Signing in to Google',
+        title: 'Sign in with Google',
         when: { path: 'hasGoogleSignIn', equals: true },
-        body: [
-          { kind: 'notice', text: 'Allow buddi on Google’s page, then come back here and finish. buddi asks for the events of your calendars and their list, nothing else.' },
+        actions: [
           {
             kind: 'button',
-            action: { tool: 'calendar.google_cancel', label: 'Cancel', done: { path: 'note' }, then: 'refresh', args: { id: { path: 'googleSignIn.id' } } },
+            when: { path: 'googleSignIn.state', in: ['waiting', 'failed'] },
+            action: { tool: 'calendar.google_cancel', label: 'Cancel', then: 'refresh', args: { id: { path: 'googleSignIn.id' } } },
           },
-          { kind: 'link', label: 'Continue to Google', to: { href: { path: 'googleSignIn.url' } } },
+          { kind: 'link', label: 'Continue to Google', tone: 'accent', when: { path: 'googleSignIn.state', equals: 'waiting' }, to: { href: { path: 'googleSignIn.url' } } },
+        ],
+        body: [
           {
-            kind: 'form',
-            drawer: { title: 'Google’s last page would not load?', button: 'Paste the address instead' },
-            fields: [
+            kind: 'repeat',
+            query: signInRef,
+            rows: 'rows',
+            key: 'id',
+            poll: {
+              seconds: 2,
+              while: { path: 'waiting', equals: true },
+              finish: {
+                when: { path: 'state', equals: 'received' },
+                action: { tool: 'calendar.google_finish', label: 'Finish signing in', busy: 'Signed in. Reading your calendars…', then: 'refresh', args: { id: { row: 'id' } } },
+              },
+            },
+            body: [
+              { kind: 'notice', look: 'quiet', icon: 'clock', text: { path: 'line' }, when: { path: 'state', equals: 'waiting' } },
               {
-                name: 'pasted',
-                label: 'That page’s address',
-                type: 'text',
-                required: true,
-                hint: 'When buddi runs on another computer, Google’s last page cannot load here. Copy its whole address — it starts with http://127.0.0.1 — and paste it.',
+                // Only from another computer: Google's last page cannot reach buddi there.
+                kind: 'form',
+                where: 'remote',
+                when: { path: 'state', equals: 'waiting' },
+                fields: [
+                  {
+                    name: 'pasted',
+                    label: 'Google’s last page',
+                    type: 'text',
+                    required: true,
+                    hint: 'You’re using buddi from another computer, so that page won’t load. Copy its whole address (it starts with http://127.0.0.1) and paste it here.',
+                  },
+                ],
+                submit: {
+                  tool: 'calendar.google_finish',
+                  label: 'Finish signing in',
+                  busy: 'Signing in…',
+                  then: 'refresh',
+                  args: { id: { path: 'id' }, pasted: { field: 'pasted' } },
+                },
+              },
+              {
+                kind: 'notice',
+                tone: 'good',
+                text: { path: 'note' },
+                when: { path: 'state', equals: 'done' },
+                action: { tool: 'calendar.google_dismiss', label: 'Done', then: 'refresh', args: { id: { path: 'id' } } },
+              },
+              {
+                kind: 'notice',
+                tone: 'critical',
+                text: { path: 'problem' },
+                when: { path: 'state', equals: 'failed' },
+                action: { tool: 'calendar.google_sign_in', label: 'Try again', tone: 'accent', busy: 'Starting…', then: 'refresh', args: {} },
               },
             ],
-            submit: {
-              tool: 'calendar.google_finish',
-              label: 'Finish with this address',
-              tone: 'accent',
-              busy: 'Signing in…',
-              done: { path: 'note' },
-              then: 'close',
-              args: { id: { path: 'googleSignIn.id' }, pasted: { field: 'pasted' } },
-            },
-          },
-          {
-            kind: 'button',
-            action: {
-              tool: 'calendar.google_finish',
-              label: 'Finish signing in',
-              tone: 'accent',
-              busy: 'Reading your calendars…',
-              done: { path: 'note' },
-              then: 'refresh',
-              args: { id: { path: 'googleSignIn.id' } },
-            },
           },
         ],
       },
       {
         kind: 'section',
         title: 'Calendars',
-        note: 'What your agents read, at most every ten minutes, when one asks.',
+        actions: [
+          {
+            kind: 'menu',
+            label: 'Add a calendar',
+            tone: 'accent',
+            items: [
+              {
+                label: 'Sign in with Google',
+                hint: 'Read and change your Google calendars',
+                when: { path: 'googleAvailable', equals: true },
+                action: { tool: 'calendar.google_sign_in', label: 'Sign in with Google', busy: 'Starting…', then: 'refresh', args: {} },
+              },
+              { label: 'Link with an app password', hint: 'iCloud, Fastmail or another CalDAV server', open: 'app-password' },
+              { label: 'Paste a private link', hint: 'Any calendar, read only', open: 'private-link' },
+            ],
+          },
+        ],
         body: [
           {
-            kind: 'table',
+            kind: 'list',
             query: settingsRef,
             rows: 'calendars',
-            columns: [
-              { key: 'name', label: 'Name', swatch: 'color' },
-              { key: 'provider', label: 'From' },
-              { key: 'may', label: 'Agents may', pill: {} },
-              { key: 'events', label: 'Events' },
-              { key: 'lastRead', label: 'Last read', type: 'date' },
-              { key: 'state', label: 'State', pill: {} },
-              { key: 'problem', label: 'Problem', fit: 'wrap' },
-            ],
+            key: 'id',
+            groupBy: {
+              key: 'group',
+              label: 'groupLabel',
+              aside: 'groupAside',
+              asideTone: 'groupTone',
+              actions: [
+                {
+                  tool: 'calendar.google_sign_in',
+                  label: 'Sign in again',
+                  tone: 'accent',
+                  when: { path: 'expired', equals: true },
+                  busy: 'Starting…',
+                  then: 'refresh',
+                  args: { account: { row: 'account' } },
+                },
+                {
+                  tool: 'calendar.find_again',
+                  label: 'Find calendars again',
+                  menu: true,
+                  when: { path: 'canFind', equals: true },
+                  done: { path: 'note' },
+                  args: { id: { row: 'account' } },
+                },
+                {
+                  tool: 'calendar.sign_out',
+                  label: 'Remove account…',
+                  tone: 'danger',
+                  menu: true,
+                  when: { path: 'kind', equals: 'account' },
+                  confirm: 'Remove {accountWords}? Its calendars go from buddi, and buddi forgets its sign-in. Nothing changes in the account itself.',
+                  done: { path: 'note' },
+                  args: { id: { row: 'account' } },
+                },
+              ],
+            },
+            item: {
+              title: { path: 'name' },
+              sub: { path: 'line' },
+              swatch: 'color',
+              status: { text: { path: 'problem' }, tone: 'critical' },
+              choice: ACCESS_CHOICE,
+            },
             actions: [
               {
-                tool: 'calendar.link_calendar',
-                label: 'Unlink',
-                when: { path: 'kind', equals: 'account' },
-                confirm: 'Unlink {name}? Agents stop reading it. It stays in your account.',
-                done: { path: 'note' },
-                args: { id: { row: 'id' }, linked: { const: false } },
-              },
-              {
                 tool: 'calendar.remove',
-                label: 'Remove',
+                label: 'Remove…',
                 tone: 'danger',
+                menu: true,
                 when: { path: 'kind', equals: 'link' },
                 confirm: 'Remove {name}? buddi forgets its link. The calendar itself is untouched.',
                 done: { path: 'note' },
                 args: { id: { row: 'id' } },
               },
             ],
-            empty: 'No calendar yet. Sign in with Google, link an iCloud or Fastmail account with an app password, or add any calendar by its private link.',
+            empty: 'No calendar yet. Add one: sign in with Google, link iCloud or Fastmail with an app password, or paste any calendar’s private link.',
           },
           {
             kind: 'form',
-            drawer: { title: 'Add a calendar link', button: 'Add a calendar link' },
-            fields: [
-              { name: 'name', label: 'Name', type: 'text', required: true, hint: 'What you call it: Work, Family.' },
-              {
-                name: 'link',
-                label: 'Private link',
-                type: 'secret',
-                required: true,
-                hint: "The calendar's private ICS address, https:// or webcal://. Read only: agents can't change a linked calendar.",
-              },
-            ],
-            submit: {
-              tool: 'calendar.add',
-              label: 'Add the calendar',
-              tone: 'accent',
-              busy: 'Reading it…',
-              done: { path: 'note' },
-              then: 'close',
-              args: { name: { field: 'name' }, link: { field: 'link' } },
-            },
-          },
-          {
-            kind: 'form',
-            drawer: { title: 'Link with an app password', button: 'Link with an app password' },
+            drawer: { title: 'Link with an app password', id: 'app-password' },
             // The service starts on iCloud, the one most people have.
             initial: settingsRef,
             fields: [
@@ -386,101 +487,27 @@ export const calendarPages: PageDescriptor[] = [
             },
           },
           {
-            kind: 'button',
-            when: { path: 'googleAvailable', equals: true },
-            action: {
-              tool: 'calendar.google_sign_in',
-              label: 'Sign in with Google',
+            kind: 'form',
+            drawer: { title: 'Paste a private link', id: 'private-link' },
+            fields: [
+              { name: 'name', label: 'Name', type: 'text', required: true, hint: 'What you call it: Work, Family.' },
+              {
+                name: 'link',
+                label: 'Private link',
+                type: 'secret',
+                required: true,
+                hint: 'The calendar’s private address, https:// or webcal://. Agents can read it, never change it.',
+              },
+            ],
+            submit: {
+              tool: 'calendar.add',
+              label: 'Add the calendar',
               tone: 'accent',
-              busy: 'Starting…',
+              busy: 'Reading it…',
               done: { path: 'note' },
-              then: 'refresh',
-              args: {},
+              then: 'close',
+              args: { name: { field: 'name' }, link: { field: 'link' } },
             },
-          },
-        ],
-      },
-      {
-        kind: 'section',
-        title: 'From your accounts',
-        note: 'Every calendar your sign-ins found. Link the ones agents should read; allow changes on the ones they may add events to.',
-        when: { path: 'hasAccounts', equals: true },
-        body: [
-          {
-            kind: 'table',
-            query: settingsRef,
-            rows: 'found',
-            columns: [
-              { key: 'name', label: 'Calendar', swatch: 'color' },
-              { key: 'account', label: 'Account' },
-              { key: 'state', label: 'State', pill: {} },
-            ],
-            actions: [
-              {
-                tool: 'calendar.allow_changes',
-                label: 'Allow changes',
-                when: { path: 'canAllow', equals: true },
-                done: { path: 'note' },
-                args: { id: { row: 'id' }, writable: { const: true } },
-              },
-              {
-                tool: 'calendar.allow_changes',
-                label: 'Read only',
-                when: { path: 'writable', equals: true },
-                done: { path: 'note' },
-                args: { id: { row: 'id' }, writable: { const: false } },
-              },
-              {
-                tool: 'calendar.link_calendar',
-                label: 'Unlink',
-                when: { path: 'linked', equals: true },
-                done: { path: 'note' },
-                args: { id: { row: 'id' }, linked: { const: false } },
-              },
-              {
-                tool: 'calendar.link_calendar',
-                label: 'Link',
-                tone: 'accent',
-                when: { path: 'linked', equals: false },
-                done: { path: 'note' },
-                args: { id: { row: 'id' }, linked: { const: true } },
-              },
-            ],
-            empty: 'This account holds no calendar with events.',
-          },
-          {
-            kind: 'table',
-            title: 'Accounts',
-            query: settingsRef,
-            rows: 'accounts',
-            columns: [
-              { key: 'label', label: 'Account' },
-              { key: 'username', label: 'Signed in as' },
-              { key: 'calendars', label: 'Calendars' },
-              { key: 'state', label: 'State', pill: {} },
-              { key: 'problem', label: 'Problem', fit: 'wrap' },
-            ],
-            actions: [
-              {
-                tool: 'calendar.google_sign_in',
-                label: 'Sign in again',
-                tone: 'accent',
-                when: { path: 'needsSignIn', equals: true },
-                busy: 'Starting…',
-                done: { path: 'note' },
-                then: 'refresh',
-                args: { account: { row: 'id' } },
-              },
-              { tool: 'calendar.find_again', label: 'Find calendars again', busy: 'Looking…', when: { path: 'canFind', equals: true }, done: { path: 'note' }, args: { id: { row: 'id' } } },
-              {
-                tool: 'calendar.sign_out',
-                label: 'Sign out',
-                tone: 'danger',
-                confirm: 'Sign out of {label} ({username})? buddi forgets its sign-in and its calendars here. Your calendars there are untouched.',
-                done: { path: 'note' },
-                args: { id: { row: 'id' } },
-              },
-            ],
           },
         ],
       },

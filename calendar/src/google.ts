@@ -160,6 +160,8 @@ export interface GoogleEvent {
   summary?: string;
   location?: string;
   description?: string;
+  /** The event's page on calendar.google.com. */
+  htmlLink?: string;
   start: GoogleTime;
   end: GoogleTime;
   recurrence?: string[];
@@ -233,6 +235,7 @@ export function googleOccurrences(events: readonly GoogleEvent[], from: Date, to
       summary: e.summary?.trim() || '(no title)',
       ...(location ? { location } : {}),
       ...(description ? { description } : {}),
+      ...(typeof e.htmlLink === 'string' && e.htmlLink.startsWith('https://') ? { link: e.htmlLink } : {}),
       start,
       end,
       allDay,

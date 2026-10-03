@@ -14,6 +14,8 @@ export interface Occurrence {
   summary: string;
   location?: string;
   description?: string;
+  /** Where the event can be opened in its calendar's own app (Google's event page). */
+  link?: string;
   start: Date;
   end: Date;
   allDay: boolean;

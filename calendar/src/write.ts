@@ -359,7 +359,8 @@ export const createEventTool: ToolDefinition<CreateInput, { note: string; id: st
     'Add an event to one of the owner’s calendars that allows changes (a Google, iCloud, Fastmail or CalDAV calendar the owner ' +
     'allowed on Settings → Calendar; a private-link calendar is read-only). The owner approves it on a card first. Times ' +
     'are the owner’s unless a timezone is given; an end or a duration in minutes (an hour when neither). Limits: no ' +
-    'attendees and no invitations — the event is the owner’s alone; no repeating events.',
+    'attendees and no invitations — the event is the owner’s alone; no repeating events.' +
+    ' Pick the calendar from calendar.calendars; with one writable calendar, use it without asking.',
   tier: 'gated',
   input: createInput,
   describe: describeCreate,
@@ -551,7 +552,8 @@ export const updateEventTool: ToolDefinition<UpdateInput, { note: string; id: st
     'Change an event in a calendar the owner allows changes on: its title, start, end or duration, all-day, place or ' +
     'notes — give only what changes. The owner approves it on a card showing before and after. Limits: no attendees ' +
     'and no invitations (an event with invitees is left alone); a repeating event changes as a whole series — its time ' +
-    'of day and length, never one occurrence. If the event changed in the calendar since, nothing is written.',
+    'of day and length, never one occurrence. If the event changed in the calendar since, nothing is written.' +
+    ' Pick the calendar from calendar.calendars; with one writable calendar, use it without asking.',
   tier: 'gated',
   input: updateInput,
   describe: describeUpdate,
@@ -632,7 +634,8 @@ export const cancelEventTool: ToolDefinition<CancelInput, { note: string }> = {
     'Cancel (delete) an event in a calendar the owner allows changes on. The owner approves it on a card first. ' +
     'Limits: an event with invitees is left alone (no cancellations are sent); a repeating event is cancelled only as a ' +
     'whole series, and only when the call says series: true — never one occurrence. If the event changed in the ' +
-    'calendar since, nothing is deleted.',
+    'calendar since, nothing is deleted.' +
+    ' Pick the calendar from calendar.calendars; with one writable calendar, use it without asking.',
   tier: 'gated',
   input: cancelInput,
   describe: describeCancel,

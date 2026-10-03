@@ -2,6 +2,19 @@
 
 What changes in @withbuddi/plugin-calendar from one release to the next, newest first.
 
+## 0.3.1 — unreleased
+
+### Added
+
+- `calendar.calendars`: agents read your linked calendars with whether they may change each one and the one to use by default, instead of learning it from a refusal; the write tools say to pick from it, and to use the only writable calendar without asking.
+- On the Calendar page an event opens a sheet on the right: when and how long, its calendar and colour, the place as a map link, its notes, Open in Google Calendar (or iCloud, Fastmail), and Move or change… and Cancel…, which open the corner chat with the request written in.
+
+### Changed
+
+- Settings → Calendar is one list grouped by account, each calendar with one choice: Not linked · Read · Read and change. One Add a calendar menu holds Sign in with Google, Link with an app password and Paste a private link; Sign in again and Remove account sit on the account.
+- Signing in with Google finishes by itself when Google sends you back; the field for the pasted address appears only when buddi is opened from another computer.
+- The Calendar page drops the calendar picker and the count line above the grid: the count sits beside the dates, and adding a calendar lives in Settings → Calendar.
+
 ## 0.3.0 — unreleased
 
 ### Added

@@ -230,6 +230,46 @@ export const allowChangesTool: ToolDefinition<z.infer<typeof changesInput>, { no
   },
 };
 
+const accessInput = z.object({ id: z.string().min(1).max(80), access: z.enum(['off', 'read', 'change']) }).strict();
+
+/**
+ * Settings → Calendar's one choice per calendar: Not linked · Read · Read and
+ * change. An account's calendar takes all three (change only where the
+ * server lets this account write); a private link only reads, so it takes
+ * Read and nothing else — Remove is how it goes.
+ */
+export const setAccessTool: ToolDefinition<z.infer<typeof accessInput>, { note: string }> = {
+  name: 'calendar.set_access',
+  description: 'Set what agents may do with one calendar: not linked, read it, or read and change it (each change approved). The owner’s own.',
+  tier: 'auto',
+  ownerOnly: true,
+  input: accessInput,
+  async execute(input, ctx) {
+    const buddi = ctx.buddi!;
+    const all = await listAllCalendars(buddi.db);
+    const row = all.find((c) => c.id === input.id);
+    if (!row) throw new Error('That calendar is not here any more.');
+    if (!row.accountId) {
+      if (input.access === 'read') return { note: `Agents read ${row.name}.` };
+      throw new Error(input.access === 'change' ? 'A private link only reads: agents can’t change it.' : `To stop reading ${row.name}, remove it.`);
+    }
+    if (input.access === 'off') {
+      await buddi.db.query(`update calendar.calendar set linked = false, writable = false where id = $1`, [row.id]);
+      dropCache(row.id);
+      return { note: `Agents no longer see ${row.name}.` };
+    }
+    if (input.access === 'change' && row.canWrite === false) throw new Error(`${row.name} is read-only in ${row.provider}: agents can only read it.`);
+    let name = row.name;
+    if (!row.linked) {
+      const taken = new Set(all.filter((c) => c.linked && c.id !== row.id).map((c) => c.name.toLowerCase()));
+      name = freeName(row.name, row.provider, taken);
+    }
+    await buddi.db.query(`update calendar.calendar set linked = true, name = $2, writable = $3 where id = $1`, [row.id, name, input.access === 'change']);
+    if (!row.linked) dropCache(row.id);
+    return { note: input.access === 'change' ? `Agents read and change ${name}. Each change asks you first.` : `Agents read ${name}.` };
+  },
+};
+
 export const findAgainTool: ToolDefinition<z.infer<typeof idInput>, { note: string }> = {
   name: 'calendar.find_again',
   description: 'Look for new, renamed or removed calendars in a signed-in account. The owner’s own.',
@@ -257,7 +297,7 @@ export const findAgainTool: ToolDefinition<z.infer<typeof idInput>, { note: stri
 
 export const signOutTool: ToolDefinition<z.infer<typeof idInput>, { note: string }> = {
   name: 'calendar.sign_out',
-  description: 'Forget a signed-in account (CalDAV or Google): its password or sign-in, and its calendars here. The owner’s own.',
+  description: 'Remove a signed-in account (CalDAV or Google): buddi forgets its password or sign-in and its calendars here. The owner’s own.',
   tier: 'auto',
   ownerOnly: true,
   input: idInput,
@@ -272,13 +312,13 @@ export const signOutTool: ToolDefinition<z.infer<typeof idInput>, { note: string
     if (account.kind === 'google') {
       return {
         note:
-          `Signed out of Google (${account.username}): buddi forgot its sign-in. Your calendars there are untouched. ` +
+          `Removed Google (${account.username}): buddi forgot its sign-in and its calendars. Nothing changed in Google. ` +
           'To take buddi off your Google account too, remove it at myaccount.google.com/connections.',
       };
     }
-    return { note: `Signed out of ${account.label} (${account.username}) and forgot its password. Your calendars there are untouched.` };
+    return { note: `Removed ${account.label} (${account.username}): buddi forgot its password and its calendars. Nothing changed in ${account.label}.` };
   },
 };
 
-export const accountTools = [linkAccountTool, linkCalendarTool, allowChangesTool, findAgainTool, signOutTool];
+export const accountTools = [linkAccountTool, linkCalendarTool, allowChangesTool, setAccessTool, findAgainTool, signOutTool];
 

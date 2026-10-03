@@ -22,6 +22,7 @@ export interface FakeEvent {
   summary: string;
   location?: string;
   description?: string;
+  htmlLink?: string;
   start: { date?: string; dateTime?: string; timeZone?: string };
   end: { date?: string; dateTime?: string; timeZone?: string };
   recurrence?: string[];
@@ -71,6 +72,8 @@ export function fakeGoogle(opts: { calendars: FakeCalendarEntry[] }) {
     events: new Map<string, FakeEvent[]>(opts.calendars.map((c) => [c.id, []])),
     /** Google refuses every refresh from now on. */
     revoked: false,
+    /** The calendar list answers 503: a sign-in that cannot read what it signed in to. */
+    calendarsFail: false,
     refreshes: 0,
     signIns: new Map<string, { plugin: string; save(envelope: string): Promise<void>; state: 'waiting' | 'signed-in' | 'failed' }>(),
     finished: [] as Array<{ id: string; pasted: string }>,
@@ -118,6 +121,7 @@ export function fakeGoogle(opts: { calendars: FakeCalendarEntry[] }) {
     if (headers.authorization !== `Bearer ${state.valid}` || state.valid === '') return respond(401, { error: { code: 401, status: 'UNAUTHENTICATED' } });
     const path = url.pathname.replace(/^\/calendar\/v3/, '');
     if (method === 'GET' && path === '/users/me/calendarList') {
+      if (state.calendarsFail) return respond(503, { error: { code: 503, status: 'UNAVAILABLE', message: 'Backend Error' } });
       return respond(200, { items: state.calendars.map((c) => ({ ...c })) });
     }
     const m = /^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(path);

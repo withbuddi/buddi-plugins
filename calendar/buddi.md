@@ -31,9 +31,10 @@ the plugin never reads any of them, and no other plugin can use them.
 
 ## What your agents get
 
-Four tools that only read: `calendar.today`, `calendar.upcoming` (up to 14
-days), `calendar.find` (a search) and `calendar.free` (the free time in a
-day). Three that write, each one an approval card: `calendar.create_event`,
+Five tools that only read: `calendar.today`, `calendar.upcoming` (up to 14
+days), `calendar.find` (a search), `calendar.free` (the free time in a day)
+and `calendar.calendars` (your calendars, which ones they may change, and the
+default). Three that write, each one an approval card: `calendar.create_event`,
 `calendar.update_event` and `calendar.cancel_event`, in calendars you allowed
 changes on. They do not invite anyone, leave events with invitees alone, and
 change or cancel a repeating event only as a whole series. Times are in your

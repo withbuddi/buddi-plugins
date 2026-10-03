@@ -130,13 +130,12 @@ suite('calendar over CalDAV (postgres)', () => {
     expect(JSON.stringify(rows)).not.toContain(PASSWORD);
 
     const page = await settings();
-    expect(page.hasAccounts).toBe(true);
-    expect(page.calendars.map((c: any) => [c.name, c.color, c.provider, c.may[0].value, c.kind])).toEqual([
-      ['Work', '#1f6feb', 'iCloud · sam@icloud.com', 'read', 'account'],
-      ['Family', '#e5534b', 'iCloud · sam@icloud.com', 'read', 'account'],
+    expect(page.hasCalendars).toBe(true);
+    expect(page.calendars.map((c: any) => [c.name, c.color, c.groupLabel, c.groupAside, c.access, c.kind, c.readOnly])).toEqual([
+      ['Work', '#1f6feb', 'iCloud · sam@icloud.com', '2 calendars · 2 linked', 'read', 'account', false],
+      ['Family', '#e5534b', 'iCloud · sam@icloud.com', '2 calendars · 2 linked', 'read', 'account', false],
     ]);
-    expect(page.found.map((c: any) => [c.name, c.linked, c.canAllow])).toEqual([['Work', true, true], ['Family', true, true]]);
-    expect(page.accounts).toEqual([expect.objectContaining({ label: 'iCloud', username: 'sam@icloud.com', calendars: '2 calendars · 2 linked' })]);
+    expect(page.accounts).toEqual([expect.objectContaining({ label: 'iCloud', username: 'sam@icloud.com' })]);
 
     // The same account twice is said, not duplicated.
     await expect(link()).rejects.toThrow(/iCloud as sam@icloud.com is already linked/);
@@ -162,7 +161,16 @@ suite('calendar over CalDAV (postgres)', () => {
     expect(report.headers.depth).toBe('1');
     expect(report.body).toContain('<c:comp-filter name="VEVENT"><c:time-range start="');
 
-    await owner('calendar.allow_changes', { id: 'work', writable: true });
+    // Read and change: the row's third choice.
+    expect((await owner('calendar.set_access', { id: 'work', access: 'change' })).note).toBe('Agents read and change Work. Each change asks you first.');
+    expect((await settings()).calendars[0]).toMatchObject({ access: 'change', line: expect.stringMatching(/ · changes ask you first$/) });
+    // Agents see which calendars they may write to, and the one to use without asking.
+    expect(await read('calendar.calendars')).toEqual({
+      calendars: [
+        { name: 'Work', account: 'iCloud · sam@icloud.com', colour: '#1f6feb', mayWrite: true, default: true },
+        { name: 'Family', account: 'iCloud · sam@icloud.com', colour: '#e5534b', mayWrite: false, default: false },
+      ],
+    });
     dropCache();
     const again = await read('calendar.today');
     expect(again.forAgent.changeable).toEqual([{ id: 'work/lunch', event: 'Mon 5 Oct 14:00–15:00 Team lunch (Work, Café Lou)' }]);
@@ -170,9 +178,15 @@ suite('calendar over CalDAV (postgres)', () => {
     await expect(owner('calendar.allow_changes', { id: 'nope', writable: true })).rejects.toThrow(/not here any more/);
 
     // Unlinked, agents stop reading it; the account still lists it.
-    await owner('calendar.link_calendar', { id: 'family', linked: false });
+    expect((await owner('calendar.set_access', { id: 'family', access: 'off' })).note).toBe('Agents no longer see Family.');
     expect((await read('calendar.today')).events).toEqual(['14:00–15:00 Team lunch (Café Lou)']);
-    expect((await settings()).found.find((c: any) => c.id === 'family')).toMatchObject({ linked: false, canAllow: false });
+    expect((await settings()).calendars.find((c: any) => c.id === 'family')).toMatchObject({ access: 'off', line: 'Agents don’t see it', groupAside: '2 calendars · 1 linked' });
+    // And back to Read; Read and change back to Read keeps it linked.
+    expect((await owner('calendar.set_access', { id: 'family', access: 'read' })).note).toBe('Agents read Family.');
+    await owner('calendar.set_access', { id: 'work', access: 'read' });
+    expect((await settings()).calendars.map((c: any) => c.access)).toEqual(['read', 'read']);
+    // A private link's calendar: only Read.
+    await expect(owner('calendar.set_access', { id: 'nope', access: 'read' })).rejects.toThrow(/not here any more/);
   });
 
   it('adds an event only once the owner approves the card, in the owner’s zone with its VTIMEZONE', async () => {
@@ -285,7 +299,7 @@ suite('calendar over CalDAV (postgres)', () => {
   it('signs out: the password and its calendars go, the account’s calendars stay where they are', async () => {
     await link();
     const { note } = await owner('calendar.sign_out', { id: (await settings()).accounts[0].id });
-    expect(note).toBe('Signed out of iCloud (sam@icloud.com) and forgot its password. Your calendars there are untouched.');
+    expect(note).toBe('Removed iCloud (sam@icloud.com): buddi forgot its password and its calendars. Nothing changed in iCloud.');
     expect(await secretsKept()).toEqual([]);
     expect((await pool.query('select count(*)::int as n from calendar.calendar')).rows[0].n).toBe(0);
     expect(await read('calendar.today')).toEqual({ linked: false, message: 'No calendar is linked yet. Add one on Settings → Calendar.' });
