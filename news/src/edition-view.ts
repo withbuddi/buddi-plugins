@@ -12,9 +12,14 @@
  * edition told by its link, and that story's outlets give the logos (keys of
  * this plugin's assets). A story that matches none keeps its words and draws
  * its outlet's letter. Nothing here invents a story, a line or a link.
+ *
+ * A matched story also carries its ⋯ menu as declared page actions (the
+ * page grammar's tool, label, args, done and undo — the News page's ways out,
+ * resolved for this story), so the card runs whatever it is handed and knows
+ * no tool of this plugin's by name.
  */
 import type { BuddiHost } from '@buddi/core/plugin';
-import { clock } from './format.js';
+import { clock, weekHence } from './format.js';
 import { visibleArticles, type ArticleRow } from './reads.js';
 
 type Db = BuddiHost['db'];
@@ -39,6 +44,65 @@ export interface EditionStoryView {
   topicName?: string;
   /** The matched story's outlets that can be muted (up to four, the named one first). */
   mutable?: Array<{ id: string; name: string }>;
+  /** The story's ⋯ menu, in order: Not interested · Mute an outlet · Quiet and Mute the topic. */
+  actions?: EditionAction[];
+}
+
+/** A literal argument, in the page grammar's `{ const }` form. */
+type Const = { const: unknown };
+
+/**
+ * One item of a story's ⋯ menu, as a page action: the tool it runs and its
+ * arguments, the line under it (`hint`), the heading above its group
+ * (`group`), what the card says once it worked (`done`) and the call that
+ * takes it back (`undo`). An item without `group` is grouped with the items
+ * of the same tool.
+ */
+export interface EditionAction {
+  tool: string;
+  label: string;
+  hint?: string;
+  group?: string;
+  args: Record<string, Const>;
+  done: string;
+  confirm?: string;
+  undo?: { tool: string; label: string; args: Record<string, Const> };
+}
+
+const lit = (args: Record<string, unknown>): Record<string, Const> =>
+  Object.fromEntries(Object.entries(args).map(([key, value]) => [key, { const: value }]));
+
+/** The ways out of a told story: the News page's, with its ids written in. */
+export function storyActions(
+  story: { storyId: string; topicId?: string; topicName?: string; mutable?: Array<{ id: string; name: string }> },
+  ctx: { now: Date; zone: string },
+): EditionAction[] {
+  const actions: EditionAction[] = [{
+    tool: 'news.hide_story', label: 'Not interested', hint: 'Hides it and shows fewer like it',
+    args: lit({ id: story.storyId, action: 'not_interested' }), done: 'Hidden. It won’t come back.',
+    undo: { tool: 'news.hide_story', label: 'Undo', args: lit({ id: story.storyId, action: 'undo' }) },
+  }];
+  for (const o of story.mutable ?? []) {
+    actions.push({
+      tool: 'news.mute_outlet', label: `Mute ${o.name}`, group: 'Mute an outlet',
+      args: lit({ outlet: o.id, muted: true }), done: `Muted ${o.name}. Its stories are hidden.`,
+      undo: { tool: 'news.mute_outlet', label: 'Undo', args: lit({ outlet: o.id, muted: false }) },
+    });
+  }
+  if (story.topicId) {
+    const t = story.topicName ?? story.topicId;
+    actions.push({
+      tool: 'news.set_topic', label: `Quiet ${t} for a week`, hint: weekHence(ctx.now, ctx.zone).hint,
+      args: lit({ topic: story.topicId, mutedForHours: 168 }), done: `${t} is quiet for a week.`,
+      undo: { tool: 'news.set_topic', label: 'Undo', args: lit({ topic: story.topicId, mutedForHours: 0 }) },
+    });
+    actions.push({
+      tool: 'news.set_topic', label: `Mute ${t}`, hint: 'Undo it in Sources',
+      args: lit({ topic: story.topicId, muted: true }), done: `Muted ${t}. Anchor leaves it out too.`,
+      undo: { tool: 'news.set_topic', label: 'Undo', args: lit({ topic: story.topicId, muted: false }) },
+    });
+  }
+  return actions;
 }
 
 export interface EditionView {
@@ -259,6 +323,7 @@ export async function editionView(buddi: BuddiHost, id: string): Promise<Edition
   const topicOf = new Map(topicRows.map((t) => [t.id, t]));
   const format = (await buddi.owner.formats?.().catch(() => null))?.time ?? null;
   const at = clock(row.created_at, buddi.owner.timezone, format);
+  const now = buddi.clock.now();
   return {
     id: row.id,
     kind: row.kind,
@@ -274,12 +339,16 @@ export async function editionView(buddi: BuddiHost, id: string): Promise<Edition
         const logos = outlets.length > 0 ? outlets.slice(0, 3).map(({ name, logo }) => ({ name, ...(logo ? { logo } : {}) })) : s.outlet ? [{ name: s.outlet }] : [];
         const topic = storyId ? topicOf.get(storyId) : undefined;
         const mutable = outlets.filter((o) => o.id !== null).slice(0, 4).map((o) => ({ id: o.id!, name: o.name }));
+        const ways = {
+          ...(topic ? { topicId: topic.topic_id, topicName: topic.name } : {}),
+          ...(storyId && mutable.length > 0 ? { mutable } : {}),
+        };
         return {
           ...s,
           ...(storyId ? { storyId } : {}),
           logos,
-          ...(topic ? { topicId: topic.topic_id, topicName: topic.name } : {}),
-          ...(storyId && mutable.length > 0 ? { mutable } : {}),
+          ...ways,
+          ...(storyId ? { actions: storyActions({ storyId, ...ways }, { now, zone: buddi.owner.timezone }) } : {}),
         };
       }),
     })),

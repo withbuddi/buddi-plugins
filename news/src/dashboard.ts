@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { editionView } from './edition-view.js';
 import type { BuddiHost, PageDescriptor, PageQuery } from '@buddi/core/plugin';
-import { ago, clock, languageMark, languageName, shortDate, stamp, startOfDay, whenWords } from './format.js';
+import { ago, clock, languageMark, languageName, shortDate, stamp, startOfDay, weekHence, whenWords } from './format.js';
 import { rankedStories, sourceHealth, type ArticleRow, type RankedStory } from './reads.js';
 import { STARTER_TOPICS, starterSources } from './starter.js';
 
@@ -168,13 +168,6 @@ async function toldEvents(db: Db, ids: string[]): Promise<Map<string, Array<{ ki
   );
   for (const r of rows) out.set(r.story_id, [...(out.get(r.story_id) ?? []), { kind: r.kind, at: r.told_at }]);
   return out;
-}
-
-/** "Back on its own next Saturday": a week from now, by its weekday. */
-function weekHence(now: Date, zone: string): { hint: string; until: string } {
-  const at = new Date(now.getTime() + 7 * 86_400_000);
-  const weekday = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long' }).format(at);
-  return { hint: `Back on its own next ${weekday}`, until: `next ${weekday}` };
 }
 
 export function storyCard(

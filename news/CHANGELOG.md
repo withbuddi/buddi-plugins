@@ -9,7 +9,7 @@ What changes in @withbuddi/plugin-news from one release to the next, newest firs
 - The widget gives withbuddi.com and buddi's Browse a sample to draw before anyone installs it (`preview`, one per size), so the listing shows it at both sizes; buddi reads it only for the market.
 - An `edition` page query: one saved edition read back for buddi's chat, which draws it as the edition card — the edition's name and time, its first sentence, each topic with its stories (Anchor's headline and line, UPDATE or OPINION, the outlet's logo with up to two more, "and N more" and the link). It reads both the Markdown Anchor writes from 1.0.1 and the plain editions before it; a story is matched to one the edition told by its link, for the logos.
 
-- The `edition` query names each told story's topic and the outlets that can be muted, so the chat's card can offer its ways out (Not interested, Mute an outlet, Quiet the topic for a week, Mute the topic).
+- The `edition` query names each told story's topic and the outlets that can be muted, and hands the chat's card its ways out (Not interested, Mute an outlet, Quiet the topic for a week, Mute the topic) as declared page actions (`actions`: tool, label, args, hint, group, done, undo), so buddi runs them without knowing this plugin's tools.
 
 ### Changed
 

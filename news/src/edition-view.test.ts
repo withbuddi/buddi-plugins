@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseEdition } from './edition-view.js';
+import { parseEdition, storyActions } from './edition-view.js';
 
 const MARKDOWN = `Morning edition · Sat 3 Oct
 Seven stories. West African leaders meet in Lomé today; Congress kept the government open overnight.
@@ -61,5 +61,21 @@ describe('reading an edition back from its text', () => {
   it('gives no groups for a text it does not recognise, and never throws', () => {
     expect(parseEdition('Just a sentence.').groups).toEqual([]);
     expect(parseEdition('').groups).toEqual([]);
+  });
+});
+
+describe('a told story\'s ways out', () => {
+  it('are page actions with the ids written in, grouped as the News page groups them', () => {
+    const actions = storyActions(
+      { storyId: 's1', topicId: 'economy', topicName: 'Economy', mutable: [{ id: 'rfi.fr', name: 'RFI' }] },
+      { now: new Date('2026-10-03T08:00:00Z'), zone: 'Europe/Paris' },
+    );
+    expect(actions.map((a) => a.label)).toEqual(['Not interested', 'Mute RFI', 'Quiet Economy for a week', 'Mute Economy']);
+    expect(actions[1]).toMatchObject({
+      tool: 'news.mute_outlet', group: 'Mute an outlet', args: { outlet: { const: 'rfi.fr' }, muted: { const: true } },
+      done: 'Muted RFI. Its stories are hidden.', undo: { tool: 'news.mute_outlet', label: 'Undo', args: { outlet: { const: 'rfi.fr' }, muted: { const: false } } },
+    });
+    expect(actions[2]).toMatchObject({ hint: 'Back on its own next Saturday', args: { topic: { const: 'economy' }, mutedForHours: { const: 168 } }, done: 'Economy is quiet for a week.' });
+    expect(storyActions({ storyId: 's2' }, { now: new Date(), zone: 'UTC' }).map((a) => a.tool)).toEqual(['news.hide_story']);
   });
 });

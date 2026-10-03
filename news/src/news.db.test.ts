@@ -513,6 +513,15 @@ suite('news (postgres)', () => {
     expect(told.mutable.length).toBeLessThanOrEqual(4);
     expect(stray.topicId).toBeUndefined();
     expect(stray.mutable).toBeUndefined();
+    // …handed to the card as declared page actions, ids written in; none for the stray.
+    expect(told.actions.map((a: { tool: string }) => a.tool)).toEqual([
+      'news.hide_story', ...told.mutable.map(() => 'news.mute_outlet'), 'news.set_topic', 'news.set_topic',
+    ]);
+    expect(told.actions[0]).toMatchObject({
+      label: 'Not interested', args: { id: { const: fed.id }, action: { const: 'not_interested' } },
+      undo: { tool: 'news.hide_story', label: 'Undo', args: { id: { const: fed.id }, action: { const: 'undo' } } },
+    });
+    expect(stray.actions).toBeUndefined();
     expect(await query('edition', { id: 'e_gone' })).toEqual({ edition: null });
     const next = await run('news.edition_material', { edition: 'midday' });
     expect(next.alreadyTold.map((t: { id: string }) => t.id)).toContain(fed.id);

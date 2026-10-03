@@ -121,3 +121,10 @@ export function languageMark(languages: readonly string[]): string | undefined {
 export function languageName(language: string): string {
   return language.startsWith('fr') ? 'French' : 'English';
 }
+
+/** "Back on its own next Saturday": a week from now, by its weekday. */
+export function weekHence(now: Date, zone: string): { hint: string; until: string } {
+  const at = new Date(now.getTime() + 7 * 86_400_000);
+  const weekday = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long' }).format(at);
+  return { hint: `Back on its own next ${weekday}`, until: `next ${weekday}` };
+}
