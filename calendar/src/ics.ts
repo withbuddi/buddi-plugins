@@ -22,6 +22,12 @@ export interface Occurrence {
   endDate?: string;
   /** Counts against free time: timed, not cancelled, not marked free. */
   busy: boolean;
+  /** The calendar's id, set by whoever gathered it. */
+  calendarId?: string;
+  /** Its calendar lets agents change events: it may be named to the write tools. */
+  writable?: boolean;
+  /** It is one occurrence of a repeating event. */
+  recurring?: boolean;
 }
 
 
@@ -101,6 +107,7 @@ export function occurrences(events: readonly VEvent[], from: Date, to: Date, tim
         allDay,
         ...(startDate ? { startDate, endDate } : {}),
         busy: !allDay && String(source.transparency ?? '').toUpperCase() !== 'TRANSPARENT',
+        ...(event.rrule ? { recurring: true } : {}),
       });
     }
   }

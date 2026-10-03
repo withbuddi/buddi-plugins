@@ -1,6 +1,8 @@
 /**
- * The four tools a model sees, all `auto` and read-only: today, the coming
- * days, a search, and the free time in a day. Times are the owner's; answers
+ * The four reading tools a model sees, all `auto`: today, the coming days, a
+ * search, and the free time in a day. An event in a calendar the owner lets
+ * agents change comes with its id under `forAgent` (never drawn), for the
+ * write tools in `write.ts`. Times are the owner's; answers
  * are short plain lines. A calendar that cannot be read is named in
  * `problems` and the rest still answer. Today and the coming days also carry
  * `tiles`, the same events as data the canvas draws (`views.ts`).
@@ -66,7 +68,12 @@ export async function gather(
   const problems: string[] = [];
   for (const row of calendars) {
     try {
-      items.push(...occurrences(await eventsOf(buddi, row), from, to, buddi.owner.timezone, row.name));
+      const found = occurrences(await eventsOf(buddi, row, { from, to }), from, to, buddi.owner.timezone, row.name);
+      for (const o of found) {
+        o.calendarId = row.id;
+        if (row.writable && row.accountId) o.writable = true;
+      }
+      items.push(...found);
     } catch (err) {
       problems.push(`${row.name} could not be read: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -93,7 +100,29 @@ export function line(o: Occurrence, timezone: string, many: boolean, withDay = f
 const withProblems = <T extends object>(body: T, problems: string[]): T & { problems?: string[] } =>
   problems.length > 0 ? { ...body, problems } : body;
 
-export const todayTool: ToolDefinition<Record<string, never>, { date: string; events: string[]; tiles: EventTile[]; problems?: string[] } | NotLinked> = {
+/** An event as the write tools name it: its calendar's id, a slash, its UID. A repeating event is its series. */
+export const eventId = (calendarId: string, uid: string): string => `${calendarId}/${uid}`;
+
+/** For the model only: the events in this answer it may change, with their ids. */
+export interface Changeable {
+  forAgent?: { changeable: Array<{ id: string; event: string }>; note: string };
+}
+
+export const CHANGEABLE_NOTE =
+  'Ids for calendar.update_event and calendar.cancel_event. A repeating event has one id: changing or cancelling it is the whole series.';
+
+/** The events in a calendar the owner lets agents change, once each, with their ids. */
+export function changeable(items: readonly Occurrence[], timezone: string, many: boolean): Changeable {
+  const seen = new Map<string, string>();
+  for (const o of items) {
+    if (!o.writable || !o.calendarId || !o.uid) continue;
+    const id = eventId(o.calendarId, o.uid);
+    if (!seen.has(id)) seen.set(id, `${line(o, timezone, many, true)}${o.recurring ? ' (repeats)' : ''}`);
+  }
+  return seen.size === 0 ? {} : { forAgent: { changeable: [...seen].map(([id, event]) => ({ id, event })), note: CHANGEABLE_NOTE } };
+}
+
+export const todayTool: ToolDefinition<Record<string, never>, ({ date: string; events: string[]; tiles: EventTile[]; problems?: string[] } & Changeable) | NotLinked> = {
   name: 'calendar.today',
   description:
     "Today's events from the owner's linked calendars, in their time: all-day events first, then each meeting with its " +
@@ -110,7 +139,12 @@ export const todayTool: ToolDefinition<Record<string, never>, { date: string; ev
     const many = new Set(items.map((i) => i.calendar)).size > 1;
     const events = items.map((o) => line(o, tz, many));
     return withProblems(
-      { date: `${dayLabel(date)} (${date})`, events: events.length > 0 ? events : ['No events today.'], tiles: items.map((o) => eventTile(o, tz)) },
+      {
+        date: `${dayLabel(date)} (${date})`,
+        events: events.length > 0 ? events : ['No events today.'],
+        tiles: items.map((o) => eventTile(o, tz)),
+        ...changeable(items, tz, many),
+      },
       problems,
     );
   },
@@ -122,7 +156,7 @@ const upcomingInput = z
 
 export const upcomingTool: ToolDefinition<
   z.infer<typeof upcomingInput>,
-  { days: Array<{ date: string; events: string[] }>; tiles: EventTile[]; problems?: string[] } | NotLinked
+  ({ days: Array<{ date: string; events: string[] }>; tiles: EventTile[]; problems?: string[] } & Changeable) | NotLinked
 > = {
   name: 'calendar.upcoming',
   description:
@@ -150,7 +184,7 @@ export const upcomingTool: ToolDefinition<
       // One card per event per day it falls on, with that day under the title.
       for (const o of events) tiles.push({ ...eventTile(o, tz), day: dayLabel(date) });
     }
-    return withProblems({ days, tiles }, problems);
+    return withProblems({ days, tiles, ...changeable(items, tz, many) }, problems);
   },
 };
 
@@ -164,7 +198,7 @@ const findInput = z
 
 export const MAX_FOUND = 25;
 
-export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string[]; more?: number; problems?: string[] } | NotLinked> = {
+export const findTool: ToolDefinition<z.infer<typeof findInput>, ({ found: string[]; more?: number; problems?: string[] } & Changeable) | NotLinked> = {
   name: 'calendar.find',
   description:
     "Search the owner's calendars for events whose title, place or notes contain the words, from 30 days ago to 180 " +
@@ -191,7 +225,11 @@ export const findTool: ToolDefinition<z.infer<typeof findInput>, { found: string
     const many = new Set(items.map((i) => i.calendar)).size > 1;
     const found = matches.slice(0, MAX_FOUND).map((o) => line(o, tz, many, true));
     return withProblems(
-      { found: found.length > 0 ? found : [`Nothing matching "${input.query}" between ${fromDay} and ${toDay}.`], ...(matches.length > MAX_FOUND ? { more: matches.length - MAX_FOUND } : {}) },
+      {
+        found: found.length > 0 ? found : [`Nothing matching "${input.query}" between ${fromDay} and ${toDay}.`],
+        ...(matches.length > MAX_FOUND ? { more: matches.length - MAX_FOUND } : {}),
+        ...changeable(matches.slice(0, MAX_FOUND), tz, many),
+      },
       problems,
     );
   },

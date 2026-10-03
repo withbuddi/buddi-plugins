@@ -1,18 +1,23 @@
 /**
- * @withbuddi/plugin-calendar — the owner's calendars, read from their private
- * ICS links, so agents know the day.
+ * @withbuddi/plugin-calendar — the owner's calendars, so agents know the day,
+ * and — in the calendars the owner allows — add, change and cancel events,
+ * each one approved on a card.
  *
- * A private link is a credential: anyone with it reads the calendar. So it is
- * an owner secret from the moment it is typed, bound to core's `http.url`
- * destination for this plugin and the link's host, and fetched through
- * `ctx.buddi.http` with `auth: { secret, as: 'url' }` (host API 1.9): core
- * inserts it, this plugin never reads it, and no other plugin can fetch it.
+ * A calendar is read from its private ICS link, or from a CalDAV account
+ * (iCloud, Fastmail, any CalDAV server) signed in with an app password. Both
+ * are credentials, so both are owner secrets from the moment they are typed:
+ * the link bound to core's `http.url` (host API 1.9), the password to
+ * `http.basic` (1.26), each for this plugin and its host. Core inserts them
+ * into the requests; this plugin never reads them, and no other plugin can
+ * use them.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginManifest } from '@buddi/core/plugin';
 import { addCalendarTool, calendarPages, calendarQueries, removeCalendarTool } from './settings.js';
 import { calendarTools } from './tools.js';
+import { writeTools } from './write.js';
+import { accountTools } from './accounts.js';
 import { nextMeetingGlance, todayWidget } from './home.js';
 import { calendarViews } from './views.js';
 import { agendaPage, agendaQuery } from './agenda.js';
@@ -28,16 +33,18 @@ export const manifest: PluginManifest = {
   migrationsDir: MIGRATIONS_DIR,
   author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
-    'Reads your Google, iCloud or Outlook calendars from their private links, kept like passwords, so your agents ' +
-    'know today, the coming days and your free time. Read-only.',
+    'Reads your calendars — iCloud, Fastmail or any CalDAV account linked with an app password, or Google and Outlook ' +
+    'by their private links — so your agents know today, the coming days and your free time; in the calendars you ' +
+    'allow, they add, change and cancel events, each one approved by you first.',
   network: [
     { host: 'calendar.google.com', why: 'Google calendars: buddi reads the secret iCal address you linked. Nothing is sent.' },
-    { host: '*.icloud.com', why: 'iCloud calendars: buddi reads the public calendar link you linked. Nothing is sent.' },
+    { host: '*.icloud.com', why: 'iCloud calendars: buddi reads the calendars you linked, and writes the events you approve.' },
+    { host: 'caldav.fastmail.com', why: 'Fastmail calendars: buddi reads the calendars you linked, and writes the events you approve.' },
     { host: 'outlook.office365.com', why: 'Outlook calendars (work or school): buddi reads the published ICS link. Nothing is sent.' },
     { host: 'outlook.live.com', why: 'Outlook calendars (personal): buddi reads the published ICS link. Nothing is sent.' },
   ],
   uses: ['http', 'secrets'],
-  tools: [...calendarTools, addCalendarTool, removeCalendarTool],
+  tools: [...calendarTools, ...writeTools, addCalendarTool, removeCalendarTool, ...accountTools],
   pages: [...calendarPages, agendaPage],
   queries: [...calendarQueries, agendaQuery],
   views: calendarViews,
@@ -62,3 +69,9 @@ export * from './settings.js';
 export * from './views.js';
 export * from './home.js';
 export * from './agenda.js';
+export * from './write.js';
+export * from './accounts.js';
+export * from './caldav.js';
+export * from './icalwrite.js';
+export * from './xml.js';
+export * from './ids.js';

@@ -32,7 +32,7 @@ export const nextMeetingGlance: HomeGlanceContribution = {
  * The glance's time format: the owner's Profile, else — on Auto, where a
  * glance has no browser to ask — what their language reads, else 24-hour.
  */
-async function glanceFormat(buddi: NonNullable<ToolContext['buddi']>): Promise<'12h' | '24h'> {
+export async function glanceFormat(buddi: Pick<NonNullable<ToolContext['buddi']>, 'owner'>): Promise<'12h' | '24h'> {
   try {
     const time = (await buddi.owner.formats?.())?.time;
     if (time === '12h' || time === '24h') return time;

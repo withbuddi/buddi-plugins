@@ -11,16 +11,33 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 };
 
 describe('calendar manifest', () => {
-  it('registers, with four read tools shown and the settings tools kept from models', () => {
+  it('registers: four read tools and three writes shown, the writes asked every time, the settings tools kept from models', () => {
     const registry = new ToolRegistry();
     expect(() => registry.register(manifest)).not.toThrow();
-    expect(registry.list().map((t) => t.name).sort()).toEqual(['calendar.find', 'calendar.free', 'calendar.today', 'calendar.upcoming']);
-    for (const tool of manifest.tools) expect(tool.tier).toBe('auto');
-    expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name)).toEqual(['calendar.add', 'calendar.remove']);
+    expect(registry.list().map((t) => t.name).sort()).toEqual([
+      'calendar.cancel_event', 'calendar.create_event', 'calendar.find', 'calendar.free', 'calendar.today', 'calendar.upcoming', 'calendar.update_event',
+    ]);
+    const tiers = Object.fromEntries(manifest.tools.map((t) => [t.name, t.tier]));
+    for (const name of ['calendar.create_event', 'calendar.update_event', 'calendar.cancel_event']) {
+      expect(tiers[name], name).toBe('gated');
+      const tool = manifest.tools.find((t) => t.name === name)!;
+      expect(tool.describe, name).toBeTypeOf('function');
+      expect(tool.reusableApproval, name).toBeUndefined();
+      // The limits are said where a model reads them.
+      expect(tool.description, name).toMatch(/approves it on a card/);
+      expect(tool.description, name).toMatch(/invit/);
+    }
+    expect(manifest.tools.find((t) => t.name === 'calendar.create_event')!.description).toMatch(/no repeating events/);
+    expect(manifest.tools.find((t) => t.name === 'calendar.update_event')!.description).toMatch(/whole series/);
+    expect(manifest.tools.find((t) => t.name === 'calendar.cancel_event')!.description).toMatch(/series: true/);
+    for (const name of ['calendar.today', 'calendar.upcoming', 'calendar.find', 'calendar.free']) expect(tiers[name], name).toBe('auto');
+    expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name)).toEqual([
+      'calendar.add', 'calendar.remove', 'calendar.link_account', 'calendar.link_calendar', 'calendar.allow_changes', 'calendar.find_again', 'calendar.sign_out',
+    ]);
   });
 
-  it('needs host API 1.11 for its calendar page, tiles and glance, and says what it uses and where it reads', () => {
-    expect(pkg.buddi.hostApi).toBe('^1.11');
+  it('needs host API 1.26 for its CalDAV sign-ins, and says what it uses and where it reads and writes', () => {
+    expect(pkg.buddi.hostApi).toBe('^1.26');
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe('calendar');
     expect(pkg.license).toBe('Apache-2.0');
@@ -57,9 +74,9 @@ describe('the dashboard', () => {
     expect(JSON.stringify(page.body)).toContain('{"page":"settings"}');
   });
 
-  it('says how to find the link in a fold, and keeps the link in the vault, not a keychain', () => {
+  it('says how to make an app password and find a link in folds, and keeps both in the vault, not a keychain', () => {
     const body = manifest.pages![0]!.body;
-    expect(body.some((c) => c.kind === 'expand' && c.label === 'How to find the link')).toBe(true);
+    expect(body.filter((c) => c.kind === 'expand').map((c) => (c as { label: string }).label)).toEqual(['How to make an app password', 'How to find a private link']);
     expect(JSON.stringify(body)).toMatch(/buddi's vault/);
     expect(JSON.stringify(body)).not.toMatch(/keychain/);
   });
@@ -82,5 +99,41 @@ describe('a link', () => {
     expect(providerOf('p12-caldav.icloud.com')).toBe('iCloud');
     expect(providerOf('outlook.office365.com')).toBe('Outlook');
     expect(providerOf('cal.example.org')).toBe('Calendar link');
+  });
+});
+
+describe('Settings → Calendar', () => {
+  const registry = new ToolRegistry();
+  registry.register(manifest);
+  const page = registry.pages().find((p) => p.id === 'settings')!;
+  const sections = page.body.filter((c) => c.kind === 'section') as Array<Extract<Component, { kind: 'section' }>>;
+
+  it('lists the calendars with their colour and what agents may do, and links with an app password from a sheet', () => {
+    const [calendars] = sections;
+    const table = calendars!.body[0] as Extract<Component, { kind: 'table' }>;
+    expect(table.columns[0]).toEqual({ key: 'name', label: 'Name', swatch: 'color' });
+    expect(table.columns.map((c) => c.label)).toEqual(['Name', 'From', 'Agents may', 'Events', 'Last read', 'State', 'Problem']);
+    expect(table.actions!.map((a) => [a.label, a.when])).toEqual([['Unlink', { path: 'kind', equals: 'account' }], ['Remove', { path: 'kind', equals: 'link' }]]);
+    const forms = calendars!.body.filter((c) => c.kind === 'form') as Array<Extract<Component, { kind: 'form' }>>;
+    expect(forms.map((f) => f.drawer!.button)).toEqual(['Add a calendar link', 'Link with an app password']);
+    const linkForm = forms[1]!;
+    expect(linkForm.fields.map((f) => [f.name, f.type])).toEqual([['service', 'select'], ['server', 'text'], ['username', 'text'], ['password', 'secret']]);
+    expect(linkForm.fields[0]!.options!.map((o) => o.label)).toEqual(['iCloud', 'Fastmail', 'Another CalDAV server']);
+    expect(linkForm.fields[1]!.when).toEqual({ path: 'service', equals: 'other' });
+    expect(linkForm.submit).toMatchObject({ tool: 'calendar.link_account', label: 'Sign in and find calendars', then: 'close' });
+  });
+
+  it('offers the account calendars to link and allow changes on, only once there is an account', () => {
+    const accounts = sections[1]!;
+    expect(accounts).toMatchObject({ title: 'From your accounts', when: { path: 'hasAccounts', equals: true } });
+    const found = accounts.body[0] as Extract<Component, { kind: 'table' }>;
+    expect(found.actions!.map((a) => [a.label, a.when])).toEqual([
+      ['Allow changes', { path: 'canAllow', equals: true }],
+      ['Read only', { path: 'writable', equals: true }],
+      ['Unlink', { path: 'linked', equals: true }],
+      ['Link', { path: 'linked', equals: false }],
+    ]);
+    const list = accounts.body[1] as Extract<Component, { kind: 'table' }>;
+    expect(list.actions!.map((a) => a.label)).toEqual(['Find calendars again', 'Sign out']);
   });
 });
