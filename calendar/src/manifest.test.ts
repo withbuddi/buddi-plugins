@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
 import { parseViewDescriptors, type Component } from '@buddi/core/plugin';
-import { parseWidgets } from '@buddi/core';
+import { parseWidgets } from '@buddi/core/plugin';
 import { manifest } from './index.js';
 import { normaliseLink, providerOf } from './store.js';
 import { mapHrefOf } from './agenda.js';

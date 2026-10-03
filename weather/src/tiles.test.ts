@@ -1,7 +1,7 @@
 /** The canvas side of the weather: glyphs from WMO codes, a day as a card, and the views passing core's checks. */
 import { describe, expect, it } from 'vitest';
 import { parseViewDescriptors } from '@buddi/core/plugin';
-import { parseWidgets } from '@buddi/core';
+import { parseWidgets } from '@buddi/core/plugin';
 import { glyphOf } from './open-meteo.js';
 import { dayTile, weekdayOf } from './tools.js';
 import { manifest } from './index.js';
