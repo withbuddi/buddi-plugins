@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-news",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The news on the topics you follow, from feeds you can see, grouped into stories on your own machine.",
   "keywords": [
     "buddi-plugin"

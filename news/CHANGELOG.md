@@ -2,6 +2,10 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
+## 0.2.2
+
+Same as 0.2.1, published from the repository workflow so the market can list it with provenance.
+
 ## 0.2.1 — unreleased
 
 ### Changed
