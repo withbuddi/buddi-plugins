@@ -6,6 +6,7 @@ directory each, published to npm as `@withbuddi/plugin-<name>`:
 | Plugin | npm | License |
 | --- | --- | --- |
 | [calendar](calendar/README.md) | `@withbuddi/plugin-calendar` | Apache-2.0 (needs host API 1.11) |
+| [computer](computer/README.md) | `@withbuddi/plugin-computer` | Apache-2.0 (macOS; needs host API 1.29) |
 | [developer](developer/README.md) | `@withbuddi/plugin-developer` | Apache-2.0 |
 | [finance](finance/README.md) | `@withbuddi/plugin-finance` | Apache-2.0 |
 | [image](image/README.md) | `@withbuddi/plugin-image` | Apache-2.0 |

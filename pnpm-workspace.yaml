@@ -6,6 +6,7 @@ packages:
   - 'weather'
   - 'calendar'
   - 'news'
+  - 'computer'
   # Future plugins sit beside it, one directory each.
 
 # The core these plugins are developed against: a buddi checkout beside this

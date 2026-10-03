@@ -18,12 +18,45 @@
 # → Trusted publisher: GitHub Actions, owner `withbuddi`, repository
 # `buddi-plugins`, workflow `publish.yml`, environment `npm` (README.md,
 # "Publishing").
+#
+# The computer plugin carries a native macOS helper, which only a Mac can
+# build: for a `computer@<version>` tag a macOS job builds it universal
+# (arm64 + x86_64, joined with lipo, signed ad hoc after the join), checks
+# it, and uploads it; the publish job drops it into computer/helper before
+# packing, and the pack refuses to go without it (BUDDI_REQUIRE_HELPER=1).
+# Every other tag skips that job. No pnpm install there: the build script
+# needs Node and the Xcode command line tools only.
 name: publish
 on:
   push:
     tags: ['*@*']
 jobs:
+  native:
+    if: startsWith(github.ref_name, 'computer@')
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node computer/scripts/build-native.mjs --universal
+      - name: Universal, signed, and answering
+        run: |
+          f=computer/helper/buddi-computer
+          archs=$(lipo -archs "$f"); echo "archs: $archs"
+          case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "::error::not universal: $archs"; exit 1;; esac
+          codesign --verify --verbose "$f"
+          echo '{"operation":"version"}' | "$f" | tee /dev/stderr | grep -q '"version"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: buddi-computer
+          path: computer/helper/buddi-computer
+          if-no-files-found: error
+          retention-days: 7
   publish:
+    needs: [native]
+    # Runs after the helper for computer, and at once (native skipped) for every other plugin.
+    if: ${{ !cancelled() && (needs.native.result == 'success' || needs.native.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: npm
@@ -93,8 +126,31 @@ jobs:
         run: node scripts/check-plugin-imports.mjs
       - working-directory: buddi-plugins/${{ steps.tag.outputs.name }}
         run: pnpm build && pnpm typecheck && pnpm test
+      # The computer plugin's helper, from the macOS job. check-helper.mjs (its
+      # prepack) restores the execute bit the artifact drops.
+      - if: steps.tag.outputs.name == 'computer'
+        uses: actions/download-artifact@v4
+        with:
+          name: buddi-computer
+          path: buddi-plugins/computer/helper
+      - name: The tarball carries the helper, executable
+        if: steps.tag.outputs.name == 'computer'
+        working-directory: buddi-plugins/computer
+        env:
+          BUDDI_REQUIRE_HELPER: '1'
+        run: |
+          npm pack --dry-run --json | node -e '
+            let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => {
+              const files = JSON.parse(s)[0].files;
+              const helper = files.find((f) => f.path === "helper/buddi-computer");
+              if (!helper || (helper.mode & 0o111) === 0) { console.error("::error::the tarball has no executable helper/buddi-computer"); process.exit(1); }
+              console.log("helper/buddi-computer", helper.mode.toString(8), helper.size, "bytes");
+            });'
       - name: Publish to npm
         working-directory: buddi-plugins/${{ steps.tag.outputs.name }}
+        env:
+          # Only the computer plugin reads it: its pack refuses to go without the helper.
+          BUDDI_REQUIRE_HELPER: ${{ steps.tag.outputs.name == 'computer' && '1' || '' }}
         # prepack builds dist/ afresh; --provenance attests the tarball to this
         # public repository and this run.
         run: npm publish --provenance --access public --tag "${{ steps.tag.outputs.dist }}"

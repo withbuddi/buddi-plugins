@@ -1,0 +1,71 @@
+{
+  "name": "@withbuddi/plugin-computer",
+  "version": "0.1.0",
+  "description": "Agents work in the apps on your Mac that you allow, through a small native helper: macOS accessibility, the app's own window, your sign-ins.",
+  "keywords": [
+    "buddi-plugin"
+  ],
+  "author": {
+    "name": "withbuddi",
+    "url": "https://withbuddi.com"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://withbuddi.com/plugins/computer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/withbuddi/buddi-plugins.git",
+    "directory": "computer"
+  },
+  "bugs": "https://github.com/withbuddi/buddi-plugins/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "buddi": {
+    "name": "computer",
+    "manifest": "manifest",
+    "core": ">=0.1.0",
+    "uses": [],
+    "hostApi": "^1.29"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-native.mjs",
+    "build:native": "node scripts/build-native.mjs",
+    "typecheck": "tsc -p tsconfig.json --emitDeclarationOnly && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/check-helper.mjs"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@buddi/core": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@buddi/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "!dist/**/*.tsbuildinfo",
+    "!dist/.tsbuildinfo",
+    "helper",
+    "native",
+    "buddi.md"
+  ]
+}
