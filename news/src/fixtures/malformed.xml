@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Sloppy</title>
+<item><title>First</title><link>https://sloppy.example.com/1</link><description>An <b>unclosed bold</description></item>
+<item><title>Second &nbsp;&rsquo;quoted&rsquo;</title><link>https://sloppy.example.com/2</link></p></item>
+</channel></rss>

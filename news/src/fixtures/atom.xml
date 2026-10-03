@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="fr" xml:base="https://blog.example.fr/">
+  <title type="text">Le Blog Tech</title>
+  <link rel="self" href="https://blog.example.fr/feed.atom"/>
+  <link rel="alternate" type="text/html" href="/"/>
+  <updated>2026-10-02T10:00:00Z</updated>
+  <entry>
+    <title type="html">L&#39;IA &amp;amp; la loi</title>
+    <link rel="alternate" type="text/html" href="articles/ia-loi"/>
+    <link rel="enclosure" href="https://cdn.example.fr/a.mp3"/>
+    <id>tag:blog.example.fr,2026:1</id>
+    <published>2026-10-02T09:00:00+02:00</published>
+    <updated>2026-10-02T10:00:00+02:00</updated>
+    <summary type="html">&lt;p&gt;Le Parlement européen a voté.&lt;/p&gt;</summary>
+    <category term="ia" label="Intelligence artificielle"/>
+  </entry>
+  <entry xml:base="https://autre.example.fr/rubrique/">
+    <title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">Un <em>nouveau</em> processeur</div></title>
+    <link href="processeur"/>
+    <id>tag:blog.example.fr,2026:2</id>
+    <updated>2026-10-01T08:00:00Z</updated>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Plus rapide et moins cher.</p></div></content>
+  </entry>
+</feed>

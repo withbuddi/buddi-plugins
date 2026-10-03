@@ -1,0 +1,68 @@
+{
+  "fedCut": [
+    { "outlet": "CNBC", "lang": "en", "at": "2026-09-17T18:05:00Z",
+      "title": "Fed cuts interest rates by a quarter point, signals more cuts ahead",
+      "lead": "The Federal Reserve on Wednesday lowered its benchmark interest rate by a quarter percentage point, its second cut this year, as inflation eased and the labor market cooled." },
+    { "outlet": "NPR", "lang": "en", "at": "2026-09-17T18:20:00Z",
+      "title": "The Federal Reserve lowers interest rates again as the job market slows",
+      "lead": "The Fed cut its key interest rate by 0.25 percentage point on Wednesday, citing a slowing job market and inflation that has come down." },
+    { "outlet": "BBC", "lang": "en", "at": "2026-09-17T19:00:00Z",
+      "title": "US Federal Reserve cuts rates for second time this year",
+      "lead": "The US central bank has cut interest rates by a quarter point, to a range of 3.75% to 4%, saying inflation has eased." },
+    { "outlet": "Le Monde", "lang": "fr", "at": "2026-09-17T19:30:00Z",
+      "title": "La Réserve fédérale américaine abaisse ses taux d'un quart de point",
+      "lead": "La banque centrale des Etats-Unis a réduit mercredi ses taux directeurs de 0,25 point, la deuxième baisse de l'année, l'inflation ayant ralenti." },
+    { "outlet": "France 24", "lang": "fr", "at": "2026-09-17T20:10:00Z",
+      "title": "États-Unis : la Fed baisse ses taux d'intérêt pour la deuxième fois cette année",
+      "lead": "La Réserve fédérale a annoncé mercredi une baisse d'un quart de point de ses taux, dans une fourchette de 3,75% à 4%, face au ralentissement de l'emploi." },
+    { "outlet": "RFI", "lang": "fr", "at": "2026-09-17T21:00:00Z",
+      "title": "La Fed réduit de nouveau ses taux directeurs face au ralentissement de l'emploi",
+      "lead": "La banque centrale américaine a abaissé ses taux d'intérêt de 0,25 point mercredi, sa deuxième baisse cette année." }
+  ],
+  "togoVote": [
+    { "outlet": "RFI", "lang": "fr", "at": "2026-09-20T08:00:00Z",
+      "title": "Togo : les Togolais aux urnes pour des élections municipales sous tension",
+      "lead": "Au Togo, les électeurs sont appelés ce samedi à élire leurs conseillers municipaux, un scrutin boycotté par une partie de l'opposition à Lomé." },
+    { "outlet": "BBC Africa", "lang": "en", "at": "2026-09-20T09:30:00Z",
+      "title": "Togo votes in tense municipal elections as opposition boycotts",
+      "lead": "Voters in Togo are electing municipal councillors on Saturday in a poll that part of the opposition in Lomé is boycotting." },
+    { "outlet": "icilome", "lang": "fr", "at": "2026-09-20T10:00:00Z",
+      "title": "Municipales 2026 au Togo : faible affluence dans les bureaux de vote à Lomé",
+      "lead": "Les bureaux de vote de Lomé ont ouvert à 7 heures pour les élections municipales, une partie de l'opposition ayant appelé au boycott." },
+    { "outlet": "Africanews", "lang": "en", "at": "2026-09-20T11:15:00Z",
+      "title": "Togo holds municipal elections amid opposition boycott",
+      "lead": "Togolese voters went to the polls on Saturday to elect municipal councils, with part of the opposition boycotting the vote in Lomé." },
+    { "outlet": "France 24", "lang": "fr", "at": "2026-09-20T12:00:00Z",
+      "title": "Élections municipales au Togo : l'opposition appelle au boycott",
+      "lead": "Les Togolais votent ce samedi pour les municipales. Une partie de l'opposition a appelé au boycott du scrutin à Lomé." },
+    { "outlet": "Le Monde Afrique", "lang": "fr", "at": "2026-09-20T13:40:00Z",
+      "title": "Au Togo, des municipales boudées par l'opposition",
+      "lead": "Le scrutin municipal de samedi au Togo s'est tenu sans une partie de l'opposition, qui avait appelé au boycott, notamment à Lomé." }
+  ],
+  "similarButDifferent": [
+    [
+      { "outlet": "The Verge", "lang": "en", "at": "2026-09-09T17:00:00Z",
+        "title": "Apple unveils new iPhone with faster chip at September event",
+        "lead": "Apple announced its new iPhone on Tuesday with a faster chip, a better camera and a higher price." },
+      { "outlet": "Ars Technica", "lang": "en", "at": "2026-09-09T19:00:00Z",
+        "title": "Google unveils new Pixel phone with faster chip at its October event",
+        "lead": "Google announced its new Pixel phone on Tuesday with a faster chip, a better camera and a higher price." }
+    ],
+    [
+      { "outlet": "BBC", "lang": "en", "at": "2026-09-12T06:00:00Z",
+        "title": "Storm kills 12 in the Philippines as floods hit Manila",
+        "lead": "At least 12 people were killed as a storm brought floods to Manila and the surrounding provinces." },
+      { "outlet": "Al Jazeera", "lang": "en", "at": "2026-09-12T09:00:00Z",
+        "title": "Storm kills five in Vietnam as floods hit Hanoi",
+        "lead": "At least five people were killed as a storm brought floods to Hanoi and northern provinces." }
+    ],
+    [
+      { "outlet": "NPR", "lang": "en", "at": "2026-09-15T14:00:00Z",
+        "title": "Trump signs executive order on tariffs for imported steel",
+        "lead": "President Trump signed an executive order on Monday raising tariffs on imported steel to 50%." },
+      { "outlet": "Politico", "lang": "en", "at": "2026-09-15T16:00:00Z",
+        "title": "Trump fires FBI director in surprise move",
+        "lead": "President Trump fired the director of the FBI on Monday, a surprise move that drew criticism from lawmakers." }
+    ]
+  ]
+}

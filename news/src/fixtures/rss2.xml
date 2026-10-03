@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel xml:base="https://www.example-news.com/world/">
+    <title>Example News &#8211; World</title>
+    <link>/world</link>
+    <language>en-gb</language>
+    <item>
+      <title><![CDATA[Leaders meet in Geneva for <b>ceasefire</b> talks]]></title>
+      <link>2026/10/02/geneva-talks?utm_source=rss&amp;utm_medium=feed</link>
+      <description><![CDATA[<p>Delegations arrived on Friday &amp; talks began at noon.</p><img src="x.jpg">]]></description>
+      <pubDate>Fri, 02 Oct 2026 12:30:00 +0000</pubDate>
+      <category>World</category>
+      <guid isPermaLink="false">abc-123</guid>
+    </item>
+    <item>
+      <title>It&amp;#8217;s the economy: markets rally</title>
+      <guid>https://www.example-news.com/business/markets-rally</guid>
+      <content:encoded><![CDATA[<div>Stocks rose for a third day.</div>]]></content:encoded>
+      <dc:date>2026-10-02T15:00:00Z</dc:date>
+    </item>
+    <item>
+      <title>Opinion: Why the summit will fail</title>
+      <link>https://www.example-news.com/opinion/summit-will-fail</link>
+      <pubDate>Thu, 01 Oct 2026 09:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title></title>
+      <link>https://www.example-news.com/untitled</link>
+    </item>
+    <item>
+      <title>No link at all</title>
+      <guid isPermaLink="false">only-an-id</guid>
+    </item>
+  </channel>
+</rss>

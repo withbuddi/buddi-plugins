@@ -9,6 +9,7 @@ directory each, published to npm as `@withbuddi/plugin-<name>`:
 | [developer](developer/README.md) | `@withbuddi/plugin-developer` | Apache-2.0 |
 | [finance](finance/README.md) | `@withbuddi/plugin-finance` | Apache-2.0 |
 | [image](image/README.md) | `@withbuddi/plugin-image` | Apache-2.0 |
+| [news](news/README.md) | `@withbuddi/plugin-news` | Apache-2.0 (needs host API 1.18) |
 | [speech](speech/README.md) | `@withbuddi/plugin-speech` | GPL-3.0-only (its local voice runs eSpeak NG) |
 | [weather](weather/README.md) | `@withbuddi/plugin-weather` | Apache-2.0 |
 
