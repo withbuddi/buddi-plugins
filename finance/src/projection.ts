@@ -16,6 +16,12 @@ export interface RecurringItem {
   cadence: Cadence;
   /** First (or only, for 'once') occurrence, `YYYY-MM-DD`. */
   anchorDate: string;
+  /**
+   * The last occurrence the owner marked paid (`YYYY-MM-DD`): it and every
+   * earlier one never happen again here, so a bill paid ahead of its date is
+   * not spent twice. Absent or null: nothing marked.
+   */
+  paidThrough?: string | null;
 }
 
 export interface Hypothetical {
@@ -125,11 +131,13 @@ export function occurrencesBetween(item: RecurringItem, from: string, to: string
   const toMs = parseDate(to);
   const anchorMs = parseDate(item.anchorDate);
   if (toMs < fromMs) return [];
+  // An occurrence marked paid is behind the owner: never again an occurrence.
+  const paidMs = item.paidThrough ? parseDate(item.paidThrough) : Number.NEGATIVE_INFINITY;
 
   const out: string[] = [];
   const push = (date: string): void => {
     const ms = parseDate(date);
-    if (ms >= anchorMs && ms >= fromMs && ms <= toMs) out.push(date);
+    if (ms >= anchorMs && ms > paidMs && ms >= fromMs && ms <= toMs) out.push(date);
   };
 
   switch (item.cadence) {

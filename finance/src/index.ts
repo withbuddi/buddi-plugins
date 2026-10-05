@@ -21,6 +21,9 @@ import { financeSkills } from './skills.js';
 import { financeViews } from './views.js';
 import { financeHome } from './home.js';
 import { financeMetrics } from './metrics.js';
+import { moneyPages, moneyQueries } from './money.js';
+import { financeWidgets } from './widget.js';
+import { markPaid, moneyTools, setMoneySettings, setupTool } from './tools/money.js';
 import { listAccounts, mergeAccounts, removeAccount, setBalance, updateAccount } from './tools/accounts.js';
 import { spendingBaseline } from './tools/baseline.js';
 import { cardActivity, statementForecastTool } from './tools/cards.js';
@@ -120,6 +123,7 @@ export const manifest: PluginManifest & { sentinels: NonNullable<PluginManifest[
     upcomingStatementsTool,
     cardActivity,
     statementForecastTool,
+    ...moneyTools,
   ],
   metrics: financeMetrics,
   sentinels: financeSentinels,
@@ -130,7 +134,12 @@ export const manifest: PluginManifest & { sentinels: NonNullable<PluginManifest[
   // missions address roles, so they reach whoever holds them.
   views: financeViews,
   home: [financeHome],
-  uses: ['files:library'],
+  // The Money page on the rail (`#/p/finance/money`) and Settings → Money.
+  pages: moneyPages,
+  queries: moneyQueries,
+  widgets: financeWidgets,
+  // `schedule`: the first-run sheet hands a dropped statement to the CFO (finance.setup).
+  uses: ['files:library', 'schedule'],
 };
 
 export default manifest;
@@ -177,6 +186,9 @@ export {
   upcomingStatementsTool,
   cardActivity,
   statementForecastTool,
+  markPaid,
+  setMoneySettings,
+  setupTool,
 };
 
 export { financeSentinels } from './sentinels/index.js';
@@ -195,3 +207,6 @@ export * from './cards.js';
 export * from './metrics.js';
 export { loadStatementForecast } from './tools/cards.js';
 export { financeViews } from './views.js';
+export * from './money.js';
+export * from './widget.js';
+export { MONEY_ROUTE, statementPrompt, lockScreenAmounts, type SetupInput, type SetupResult } from './tools/money.js';

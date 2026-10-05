@@ -23,6 +23,7 @@ export const FRIDAY_RECAP_PROMPT = `Produce the weekly recap. Use the finance to
 3. 60-day projection: the minimum projected balance and the exact date it happens, the first floor breach if there is one, and whether the safety floor holds. If no safety floor is set, say so in one line.
 4. What changed since last week, if the tools can tell: this month's spending summary against the previous month's.
 5. One concrete recommendation, in a single line.
+6. End with one line naming the Money page, where all of it is: "Everything is on your Money page: #/p/finance/money".
 
 Keep the whole message under 1500 characters, plain text, no markdown.`;
 
@@ -39,7 +40,7 @@ Then decide, and stay silent unless something is genuinely urgent. Urgent means 
 - a minimum payment or a charge falls due within 3 days with no payment recorded;
 - an account balance is already below the floor.
 
-If none of that is true, call mission.silent with the one-line reason. If something is urgent, call mission.report with urgency 'urgent', at most 600 characters, plain text, and exactly one recommended action.`;
+If none of that is true, call mission.silent with the one-line reason. If something is urgent, call mission.report with urgency 'urgent', at most 600 characters, plain text, and exactly one recommended action, ending with "See your Money page: #/p/finance/money".`;
 
 export const WEEKLY_CONSOLIDATION_ID = 'weekly-consolidation';
 export const WEEKLY_CONSOLIDATION_CRON = '0 20 * * SUN';

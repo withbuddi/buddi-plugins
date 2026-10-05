@@ -26,7 +26,7 @@ import {
 /** Active recurring items billed to this card. */
 async function loadCardItems(db: DbArea, liabilityId: string): Promise<RecurringItem[]> {
   const { rows } = await db.query(
-    `select kind, name, amount, cadence, anchor_date
+    `select kind, name, amount, cadence, anchor_date, paid_through
        from finance.recurring_items
       where active and liability_id = $1
       order by anchor_date`,
@@ -38,6 +38,7 @@ async function loadCardItems(db: DbArea, liabilityId: string): Promise<Recurring
     amount: num(r.amount),
     cadence: r.cadence as RecurringItem['cadence'],
     anchorDate: toDateString(r.anchor_date),
+    paidThrough: r.paid_through ? toDateString(r.paid_through) : null,
   }));
 }
 
@@ -52,7 +53,7 @@ async function loadPaymentItems(
   liabilityName: string,
 ): Promise<RecurringItem[]> {
   const { rows } = await db.query(
-    `select kind, name, amount, cadence, anchor_date
+    `select kind, name, amount, cadence, anchor_date, paid_through
        from finance.recurring_items
       where active and kind = 'charge' and liability_id is null
       order by anchor_date`,
@@ -65,6 +66,7 @@ async function loadPaymentItems(
       amount: num(r.amount),
       cadence: r.cadence as RecurringItem['cadence'],
       anchorDate: toDateString(r.anchor_date),
+      paidThrough: r.paid_through ? toDateString(r.paid_through) : null,
     }));
 }
 

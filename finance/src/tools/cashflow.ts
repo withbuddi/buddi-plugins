@@ -133,13 +133,13 @@ export const projectCashflow: ToolDefinition<z.infer<typeof input>, unknown> = {
     // both would spend the same money twice.
     const { rows: itemRows } = accountId
       ? await ctx.buddi!.db.query(
-          `select kind, name, amount, cadence, anchor_date from finance.recurring_items
+          `select kind, name, amount, cadence, anchor_date, paid_through from finance.recurring_items
             where active and account_id = $1 and liability_id is null
             order by anchor_date`,
           [accountId],
         )
       : await ctx.buddi!.db.query(
-          `select r.kind, r.name, r.amount, r.cadence, r.anchor_date
+          `select r.kind, r.name, r.amount, r.cadence, r.anchor_date, r.paid_through
              from finance.recurring_items r
              left join finance.accounts a on a.id = r.account_id
             where r.active and r.liability_id is null
@@ -153,6 +153,7 @@ export const projectCashflow: ToolDefinition<z.infer<typeof input>, unknown> = {
       amount: num(r.amount),
       cadence: r.cadence as RecurringItem['cadence'],
       anchorDate: toDateString(r.anchor_date),
+      paidThrough: r.paid_through ? toDateString(r.paid_through) : null,
     }));
 
     const startDate = today(ctx);

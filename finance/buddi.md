@@ -11,6 +11,92 @@ pre-statement review and a disabled weekly consolidation. It also tidies the
 account list itself: the same real account recorded twice can be merged into
 one, and an account recorded by mistake and holding nothing can be deleted.
 
+## The Money page
+
+A place on the rail, **Money** (`#/p/finance/money`), and a Settings entry,
+**Settings → Money** (`#/settings/p.finance`). Every figure is read through
+the same tools an agent reads, so the page and the CFO never disagree, and
+every read that carries an amount is masked until the owner presses Show.
+
+- **Accounts**: one line per account — its name, kind, bank, what it holds and
+  the day that was read ("as of 3 Oct"), marked when it is older than a week.
+  Update records today's balance (`finance.set_balance`). Empty: "No accounts
+  yet", with the first-run sheet in place.
+- **Coming up**: the recurring charges due in the next 30 days, soonest first,
+  each with its account or the card it is billed to. **Mark paid**
+  (`finance.mark_paid`) marks that occurrence and every earlier one paid, and
+  takes what the account holds now when the money has already left: Coming up,
+  the cash-flow projection and the card's statement forecast then leave it out,
+  so a bill paid early is not spent twice.
+- **Cards & debts**: the credit overview — per card the share of its limit on
+  course to report, the closing day, the minimum and when it is due, and on a
+  card over its target the overview's own sentence; loans with their APR. **I
+  paid it** records the minimum (`finance.record_payment`).
+- **Statements read**: the last eight statements read into an account, with
+  the day, the account and what they added ("12 new lines · −€1,240 out ·
+  +€2,100 in · 1 Sep – 30 Sep"), and the file to open.
+- The head: **Upload a statement** opens the CFO's chat (whoever holds
+  `overview`), where a dropped statement is read and staged and the import
+  waits on its approval card as before; **Add** → An account (name, kind,
+  opening balance: `finance.set_balance`) or A bill or an income
+  (`finance.add_recurring`).
+- Settings → Money: the currency, the safety floor, and **Show amounts on the
+  lock screen** (`finance.set_money_settings`, the owner's alone).
+
+Two widgets open the page. **Money** (`finance.money`) is the cash across
+accounts and the next three bills; it carries amounts, so it is sensitive:
+hidden on Home until Show and never on a lock screen. **Coming up**
+(`finance.due`) is made for the lock screen: what is due and when, and how
+much only once the owner ticks Show amounts on the lock screen.
+
+The watchers' findings (a breached floor, a minimum due, a card closing over
+target, a stale balance) carry **Open Money**, and their brief asks the agent
+to name the page; the Friday recap and the daily check end with it.
+
+## First run: `finance.setup`
+
+"Which bank or account?" — the sheet the host's first-run bank row opens. On
+the page it is the drawer `setup`: `#/p/finance/money?open=setup`. Through
+the page act route, `POST /api/pages/finance/act` with
+`{ tool: "finance.setup", args }`; it is `ownerOnly` (no model sees it) and
+`auto`.
+
+```ts
+// args
+{
+  name: string;                 // 1–80, required: "Checking", "Revolut"
+  kind?: 'cash' | 'savings' | 'retirement' | 'investment' | 'hsa' | 'other' | '';  // '' or absent: cash
+  balance?: number;             // required unless artifactId is given
+  asOf?: 'YYYY-MM-DD' | '';     // the day the balance is from; today when absent
+  institution?: string | '';    // the bank, when it is not in the name
+  artifactId?: string | '';     // a statement already in the Files library (uuid)
+}
+// answer
+{
+  accountId: string;            // the account, created or found by name (case-insensitive)
+  name: string;
+  kind: string;
+  balance: number | null;       // null: a new account set up from a statement alone
+  balanceAsOf: string | null;
+  created: boolean;             // false: an account of that name was updated
+  statement?: { artifactId: string; handedTo: string | null };
+  message: string;              // the sentence to show: "Revolut is added."
+  link: '#/p/finance/money';
+}
+```
+
+Without a balance and without a statement it refuses ("say what the account
+holds, or hand in a statement"); an `artifactId` that is not in the library is
+refused too. With a statement, the plugin starts one run (`schedule`,
+`enqueueRun`, deduplicated on the file) for the agent holding `overview`,
+asking it to stage the statement into that account with
+`finance.stage_import`, record the balance it states, and show the owner the
+summary before committing: the import waits on its approval card as any
+other. With nobody holding `overview`, or a buddi that starts no runs, the
+file stays in Files and `handedTo` is null. This is why the plugin now
+declares `schedule` ("starts agent runs by itself"): only this sheet uses it,
+only when the owner hands in a statement.
+
 ## Who uses it
 
 Installing the plugin gives tools and proposes no agent. The advisor is the

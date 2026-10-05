@@ -40,6 +40,12 @@ function money(amount: number, currency: string): string {
   return `${amount.toFixed(2)} ${currency}`;
 }
 
+/** Every money finding opens the Money page, where the figures behind it are. */
+export const OPEN_MONEY = { kind: 'open', label: 'Open Money', page: 'money' } as const;
+
+/** The brief's last sentence: the agent names the page when it reports. */
+export const MONEY_PAGE_NOTE = ' The owner sees all of this on the Money page (#/p/finance/money): name it when you report.';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** `2026-09-14` → `14 Sep`: how an owner line names a day. The brief keeps the ISO date. */
@@ -108,11 +114,12 @@ export function floorBreachFinding(input: FloorBreachInput): Finding | null {
       `Your cash is on course to drop below ${floorPhrase} on ${shortDay(firstBreachDate)}, ` +
       `${daysAway === 0 ? 'today' : `in ${daysAway} day${daysAway === 1 ? '' : 's'}`}: something needs moving before then.`,
     kind: 'floor-breach',
-    actions: [{ kind: 'ask' }],
+    actions: [OPEN_MONEY, { kind: 'ask' }],
     detail:
       `The projection crosses ${floorPhrase} on ${firstBreachDate}, ` +
       `${daysAway} day${daysAway === 1 ? '' : 's'} from ${input.startDate}. ` +
-      `The low point is ${money(input.minBalance, input.currency)} on ${input.minBalanceDate}.`,
+      `The low point is ${money(input.minBalance, input.currency)} on ${input.minBalanceDate}.` +
+      MONEY_PAGE_NOTE,
     ...addressed(input.agentId),
     data: {
       firstBreachDate,
@@ -222,12 +229,14 @@ export function minimumDueFindings(
             hint: `minimum due ${shortDay(dueDate)}`,
           },
         },
+        OPEN_MONEY,
         { kind: 'ask' },
       ],
       detail:
         `The minimum payment on ${liability.name} is due on ${dueDate} ` +
         `(${daysAway === 0 ? 'today' : `in ${daysAway} day${daysAway === 1 ? '' : 's'}`}). ` +
-        'No payment is recorded for it and no modelled autopay covers it.',
+        'No payment is recorded for it and no modelled autopay covers it.' +
+        MONEY_PAGE_NOTE,
       ...addressed(opts.agentId),
       data: {
         liability: liability.name,
@@ -314,7 +323,7 @@ export function statementClosingFindings(
       kind: 'statement',
       subject: { id: card.name, label: card.name },
       group: { title: '{count} cards close soon over their target' },
-      actions: [{ kind: 'ask' }],
+      actions: [OPEN_MONEY, { kind: 'ask' }],
       detail:
         `${card.name} closes on ${closeDate}, ` +
         `${view.daysUntilClosing === 0 ? 'today' : `in ${view.daysUntilClosing} day${view.daysUntilClosing === 1 ? '' : 's'}`}` +
@@ -326,7 +335,8 @@ export function statementClosingFindings(
           : `It is on course to report ${money(view.reportedBalanceEstimate, opts.currency)} of a ${money(card.creditLimit as number, opts.currency)} limit once the charges billed to it have landed. `) +
         `Paying ${money(view.paymentToTarget as number, opts.currency)} on or before ${view.payBy} ` +
         `brings the reported figure to ${view.utilizationTarget}%. ` +
-        'A payment made after the closing day changes nothing until the next cycle.',
+        'A payment made after the closing day changes nothing until the next cycle.' +
+        MONEY_PAGE_NOTE,
       ...addressed(opts.agentId),
       data: {
         card: card.name,
@@ -403,11 +413,13 @@ export function staleBalanceFindings(
             hint: `${money(account.balance, opts.currency)} on ${shortDay(account.balanceAsOf)}`,
           },
         },
+        OPEN_MONEY,
         { kind: 'ask' },
       ],
       detail:
         `${account.name} was last confirmed at ${money(account.balance, opts.currency)} ` +
-        `on ${account.balanceAsOf}, ${age} days ago. Every projection starts from that number.`,
+        `on ${account.balanceAsOf}, ${age} days ago. Every projection starts from that number.` +
+        MONEY_PAGE_NOTE,
       ...addressed(opts.agentId),
       data: {
         account: account.name,

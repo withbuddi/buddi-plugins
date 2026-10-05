@@ -12,6 +12,16 @@ cash-flow advisor with a daily check and a Friday recap. If you accepted
 **Ledger** (`@ledger`) from an earlier version, it keeps working as it is, and
 buddi offers it the CFO's updates while you have not edited it.
 
+## Where you see it
+
+**Money** on buddi's rail: your accounts with what each holds and when it was
+read, the bills coming up in the next 30 days (Mark paid when one went out
+early), your cards and loans, and the statements your CFO has read. Add an
+account or a bill from the page; Upload a statement opens your CFO's chat.
+Two widgets for Home and the lock screen: **Money** (your cash and the next
+bills, hidden until you tap Show) and **Coming up** (what is due and when,
+amounts only if you allow them in Settings → Money).
+
 ## What it needs
 
 Nothing to sign up for. You tell buddi your balances, or hand it a statement

@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-finance",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Accounts, recurring charges, receipts and a cashflow projection, for buddi.",
   "keywords": [
     "buddi-plugin"
@@ -34,9 +34,10 @@
     "manifest": "manifest",
     "core": ">=0.1.0",
     "uses": [
-      "files:library"
+      "files:library",
+      "schedule"
     ],
-    "hostApi": "^1.0"
+    "hostApi": "^1.28"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
