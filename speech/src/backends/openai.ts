@@ -107,8 +107,8 @@ type Side = 'listening' | 'speaking';
 
 async function send(options: OpenAIAudioOptions, route: string, init: { headers?: Record<string, string>; body: FormData | string }, side: Side): Promise<Response> {
   const { provider } = options;
-  if (isOllamaCloud(provider)) {
-    throw new SpeechRefusal(`refused: an Ollama Cloud account serves no audio routes. Choose an OpenAI or OpenAI-compatible account in Settings → Speech.`);
+  if (provider.deviceKey) {
+    throw new SpeechRefusal('refused: an Ollama account connected with a device key signs each request in a way only buddi\'s chat does, so it cannot be used for audio. Connect it with an API key, or choose another account in Settings → Speech.');
   }
   const base = provider.baseUrl.replace(/\/+$/, '');
   const doFetch = directForOwnEndpoint(options.fetch, base);
@@ -189,7 +189,7 @@ export async function accountModelIds(
   const hit = modelCache.get(cacheKey);
   if (hit && now - hit.at < MODELS_TTL_MS) return hit.ids;
   const { provider } = options;
-  if (isOllamaCloud(provider)) return [];
+  if (provider.deviceKey) return [];
   const timeout = AbortSignal.timeout(options.timeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   try {
@@ -214,6 +214,33 @@ export async function accountModelIds(
 export function modelsFor(side: Side, ids: readonly string[], defaultModel: string): string[] {
   const found = [...new Set(ids.filter((id) => MODEL_PATTERNS[side].test(id) && id !== defaultModel))].sort();
   return [defaultModel, ...found];
+}
+
+/**
+ * OpenAI's audio families, for an account the page cannot ask yet: a page's
+ * query may not bind an account, and an unbound one does not resolve, so
+ * until Save or Test binds it the list is these. The account's own list
+ * replaces them once it answers.
+ */
+export const OPENAI_KNOWN_MODELS: Record<Side, readonly string[]> = {
+  listening: [DEFAULT_TRANSCRIBE_MODEL, 'gpt-4o-transcribe', 'whisper-1'],
+  speaking: [DEFAULT_SPEECH_MODEL, 'tts-1', 'tts-1-hd'],
+};
+
+/** The most ids a compatible server's list offers; "Other…" takes the rest. */
+export const COMPATIBLE_MODELS_SHOWN = 40;
+
+/**
+ * A compatible server's ids for one side: the ones named for it first
+ * (whisper, transcribe; tts, speech), then the rest, since only trying tells
+ * what such a server does. No default it does not list.
+ */
+export function compatibleModelsFor(side: Side, ids: readonly string[]): string[] {
+  const unique = [...new Set(ids)];
+  const named = unique.filter((id) => MODEL_PATTERNS[side].test(id)).sort();
+  const other = MODEL_PATTERNS[side === 'listening' ? 'speaking' : 'listening'];
+  const rest = unique.filter((id) => !MODEL_PATTERNS[side].test(id) && !other.test(id)).sort();
+  return [...named, ...rest].slice(0, COMPATIBLE_MODELS_SHOWN);
 }
 
 async function provider(ctx: BackendContext): Promise<ResolvedProvider> {
@@ -251,18 +278,20 @@ function openaiFamily(kind: 'openai' | 'openai-compatible', label: string, where
     voices,
     async models(side, ctx) {
       const fallback = side === 'listening' ? DEFAULT_TRANSCRIBE_MODEL : DEFAULT_SPEECH_MODEL;
-      if (!ctx.accounts || !ctx.account) return [fallback];
+      const known = kind === 'openai' ? [...OPENAI_KNOWN_MODELS[side]] : [];
+      if (!ctx.accounts || !ctx.account) return known;
       let resolved: ResolvedProvider;
       try {
         resolved = await ctx.accounts.resolve(ctx.account.id, fallback, ctx.signal);
       } catch {
-        // Not bound yet, a locked vault: the default, and the field still takes a typed id.
-        return [fallback];
+        // Not bound yet, a locked vault: OpenAI's families, and the field still takes a typed id.
+        return known;
       }
       const ids = await accountModelIds(ctx.account.id, {
         provider: resolved, timeoutMs: ctx.timeoutMs, signal: ctx.signal, ...(ctx.fetch ? { fetch: ctx.fetch } : {}),
       });
-      return modelsFor(side, ids, fallback);
+      if (kind !== 'openai') return compatibleModelsFor(side, ids);
+      return ids.length > 0 ? modelsFor(side, ids, fallback) : known;
     },
   };
 }

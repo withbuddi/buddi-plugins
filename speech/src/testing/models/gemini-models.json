@@ -1,0 +1,18 @@
+{
+  "models": [
+    { "name": "models/embedding-gecko-001", "version": "001", "displayName": "Embedding Gecko", "supportedGenerationMethods": ["embedText", "countTextTokens"] },
+    { "name": "models/gemini-2.5-pro", "version": "2.5", "displayName": "Gemini 2.5 Pro", "inputTokenLimit": 1048576, "outputTokenLimit": 65536, "supportedGenerationMethods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"] },
+    { "name": "models/gemini-2.5-flash", "version": "001", "displayName": "Gemini 2.5 Flash", "inputTokenLimit": 1048576, "outputTokenLimit": 65536, "supportedGenerationMethods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"] },
+    { "name": "models/gemini-2.5-flash-lite", "version": "001", "displayName": "Gemini 2.5 Flash-Lite", "inputTokenLimit": 1048576, "outputTokenLimit": 65536, "supportedGenerationMethods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"] },
+    { "name": "models/gemini-2.0-flash", "version": "2.0", "displayName": "Gemini 2.0 Flash", "inputTokenLimit": 1048576, "outputTokenLimit": 8192, "supportedGenerationMethods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"] },
+    { "name": "models/gemini-2.5-flash-image", "version": "2.0", "displayName": "Nano Banana", "supportedGenerationMethods": ["generateContent", "countTokens", "batchGenerateContent"] },
+    { "name": "models/gemini-2.5-flash-preview-tts", "version": "gemini-2.5-flash-exp-tts-2025-05-19", "displayName": "Gemini 2.5 Flash Preview TTS", "inputTokenLimit": 8192, "outputTokenLimit": 16384, "supportedGenerationMethods": ["countTokens", "generateContent"] },
+    { "name": "models/gemini-2.5-pro-preview-tts", "version": "gemini-2.5-pro-preview-tts-2025-05-19", "displayName": "Gemini 2.5 Pro Preview TTS", "inputTokenLimit": 8192, "outputTokenLimit": 16384, "supportedGenerationMethods": ["countTokens", "generateContent", "batchGenerateContent"] },
+    { "name": "models/gemini-2.5-flash-native-audio-preview-09-2025", "version": "gemini-2.5-flash-native-audio-preview-09-2025", "displayName": "Gemini 2.5 Flash Native Audio Preview 09-2025", "inputTokenLimit": 131072, "outputTokenLimit": 8192, "supportedGenerationMethods": ["countTokens", "bidiGenerateContent"] },
+    { "name": "models/gemini-live-2.5-flash-preview", "version": "001", "displayName": "Gemini Live 2.5 Flash Preview", "supportedGenerationMethods": ["bidiGenerateContent", "countTokens"] },
+    { "name": "models/gemini-embedding-001", "version": "001", "displayName": "Gemini Embedding 001", "supportedGenerationMethods": ["embedContent", "countTextTokens", "countTokens", "asyncBatchEmbedContent"] },
+    { "name": "models/imagen-4.0-generate-001", "version": "001", "displayName": "Imagen 4", "supportedGenerationMethods": ["predict"] },
+    { "name": "models/veo-3.0-generate-001", "version": "3.0", "displayName": "Veo 3", "supportedGenerationMethods": ["predictLongRunning"] },
+    { "name": "models/gemma-3-27b-it", "version": "001", "displayName": "Gemma 3 27B", "supportedGenerationMethods": ["generateContent", "countTokens"] }
+  ]
+}

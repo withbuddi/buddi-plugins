@@ -36,10 +36,11 @@ export const manifest: PluginManifest = {
   migrationsDir: MIGRATIONS_DIR,
   author: { name: 'withbuddi', url: 'https://withbuddi.com' },
   description:
-    'Lets agents listen to an audio file and answer with a voice, through the OpenAI or OpenAI-compatible ' +
+    'Lets agents listen to an audio file and answer with a voice, through the OpenAI, Gemini or OpenAI-compatible ' +
     'account you choose on Settings → Speech, or Whisper and Kokoro on this computer, with daily limits.',
   network: [
     { host: 'api.openai.com', why: 'OpenAI accounts: a recording goes to be transcribed, or a text to be spoken; the text or the audio comes back.' },
+    { host: 'generativelanguage.googleapis.com', why: "Gemini accounts: a recording goes to be transcribed, or a text to be spoken, and the account's model list is read; the text or the audio comes back." },
     { host: 'huggingface.co', why: 'Install on Settings → Speech: the Whisper and Kokoro model files, pinned and checked; nothing is sent.' },
     { host: '*.hf.co', why: "Hugging Face's download servers (us.aws.cdn.hf.co and its like), where huggingface.co sends those files." },
     { host: 'registry.npmjs.org', why: 'Install of Kokoro: the eSpeak NG package (12.5 MB, GPL-3.0), pinned and checked, which pronounces the languages other than English; nothing is sent.' },

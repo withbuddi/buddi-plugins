@@ -56,7 +56,7 @@ function pages(bytes: Buffer): Array<{ flags: number; granule: bigint; sequence:
 
 describe('the registry', () => {
   it('has both local backends, none coming, and says nothing leaves', () => {
-    expect(Object.keys(BACKENDS)).toEqual(['openai', 'openai-compatible', 'whisper-local', 'kokoro-local']);
+    expect(Object.keys(BACKENDS)).toEqual(['openai', 'openai-compatible', 'gemini', 'whisper-local', 'kokoro-local']);
     expect(COMING_BACKENDS).toEqual([]);
     for (const b of [whisperLocalBackend, kokoroLocalBackend]) {
       expect(b.accountKind).toBeUndefined();

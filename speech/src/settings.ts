@@ -8,9 +8,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { Field, PageDescriptor, PageQuery, ToolContext, ToolDefinition } from '@buddi/core/plugin';
-import { backendFor, backendsFor, COMING_BACKENDS, isOllamaCloud, localBackendFor, SpeechRefusal } from './backends/index.js';
-import { chooseSide, effectiveBackend, listAccounts, localDirOf, NOT_SET, OFF, ownerLanguage, QUALIFYING_KINDS, type SideName } from './choose.js';
+import type { Field, PageDescriptor, PageQuery, ProviderAccountListing, ToolContext, ToolDefinition } from '@buddi/core/plugin';
+import { backendFor, backendsFor, localBackendFor, SpeechRefusal, type SpeechBackend } from './backends/index.js';
+import {
+  backendForAccount, capabilitiesOf, chooseFromForm, chooseSide, effectiveBackend, listAccounts, LOCAL_CHOICE, localDirOf, NOT_SET,
+  OFF, offeredFor, OTHER_MODEL, ownerLanguage, whyNot, type Chosen, type SideName,
+} from './choose.js';
 import {
   clearInstallJob, downloadBytes, installedLocal, installJob, LOCAL_KINDS, LOCAL_MODELS, megabytes, progressLine, removeLocal,
   startInstall, type LocalKind,
@@ -19,10 +22,14 @@ import { FIRST_VOICE, isKokoroLanguage, KOKORO_LANGUAGES, voiceLanguage } from '
 import { LANGUAGES, languageName, MAX_LANGUAGES, namesOf } from './languages.js';
 import { sniffAudio } from './magic.js';
 import { DOWNLOAD_CAP, RESPONSE_CAP, transportOf, withFetch } from './net.js';
+import { PREVIEW_MAX_BYTES, PREVIEW_SECONDS, trimOgg } from './preview.js';
 import {
-  countToday, getSettings, getTelegramVoice, recentUsage, setSettings, setTelegramVoice, VOICE_FORM, VOICE_WHEN, type Settings,
+  countToday, getSettings, getTelegramVoice, markTried, recentUsage, setSettings, setTelegramVoice, triedModels, triedSides,
+  VOICE_FORM, VOICE_WHEN, type Settings,
 } from './store.js';
-import { transcribeBytes } from './tools.js';
+import { pickVoice, SPEECH_TIMEOUT_MS } from './tools.js';
+
+export { OTHER_MODEL } from './choose.js';
 
 export const FIXTURES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 /** A two-second clip, "Hello from buddi. This is a test.", made with eSpeak NG. */
@@ -30,22 +37,23 @@ export const TEST_CLIP = path.join(FIXTURES_DIR, 'test-clip.ogg');
 
 export const SPEECH_NOTICE =
   'Agents listen to a recording with speech.transcribe and answer with a voice with speech.say, through the ' +
-  'service you choose here. The first use of each in a conversation asks you first; the rest of that ' +
+  'account you choose here. The first use of each in a conversation asks you first; the rest of that ' +
   'conversation runs, up to the daily limits.';
 
 export const LOCAL_NOTE =
   'Whisper listens and Kokoro speaks (English, French, Spanish, Italian, Portuguese and Hindi) without anything leaving this machine. buddi downloads each ' +
   'model once, checks it, and keeps it with its data. Installed and nothing else chosen, they are used.';
 
-export const WHY_NOT_LISTED =
-  'Only OpenAI accounts with an API key and OpenAI-compatible accounts are offered. A ChatGPT subscription, ' +
-  'a Claude sign-in and Ollama Cloud serve no audio routes, so they are not listed.';
+/** The Account choice for the model on this computer, per side. */
+export const LOCAL_LABEL: Record<SideName, string> = {
+  listening: 'On this computer · Whisper',
+  speaking: 'On this computer · Kokoro',
+};
+export const NOT_INSTALLED_LABEL = 'install it under On this computer';
 
-export const COMING_LABEL = 'Not installed yet — coming in the next update';
-export const NOT_INSTALLED_LABEL = 'not installed: Install it under On this computer';
-
-/** The model picker's last choice: a text field for an id the list does not have. */
-export const OTHER_MODEL = '__other__';
+/** What the Speaking Test says, and what the Listening Test's clip says. */
+export const TEST_SENTENCE = "Hi, I'm buddi. This is how I sound.";
+export const CLIP_WORDS = 'Hello from buddi. This is a test.';
 
 /**
  * The languages a speaker whose voices each speak one language can have a
@@ -98,67 +106,116 @@ export function voiceRowsOf(settings: Settings, speakKind: string | null | undef
 }
 
 /**
- * The model choices for one side of a backend: what the account offers (the
- * default first), the saved model when the list does not have it, then
- * "Other…", which reveals a text field.
+ * The account a row starts on: Off, the model on this computer when that is
+ * what the side uses (chosen, or installed with nothing else chosen), else
+ * the chosen account, else nothing.
+ */
+export function rowAccount(settings: Settings, side: SideName, localDir?: string): string {
+  if (settings[side].backend === OFF) return OFF;
+  const kind = effectiveBackend(settings, side, localDir);
+  if (kind && backendFor(kind)?.local) return LOCAL_CHOICE;
+  return settings[side].accountId ?? '';
+}
+
+/** "listens and speaks", "speaks (untested)": what an account does, as the Account list says it. */
+export function capabilityWords(account: ProviderAccountListing, side: SideName, tried = false): string {
+  const caps = capabilitiesOf(account);
+  if (caps.source === 'probe') return `${side === 'listening' ? 'listens' : 'speaks'} (${tried ? 'tried' : 'untested'})`;
+  if (caps.source === 'none') return 'no audio';
+  return caps.audioIn && caps.audioOut ? 'listens and speaks' : caps.audioIn ? 'listens' : 'speaks';
+}
+
+/** "Gemini · listens and speaks", with its state when it cannot be used now. */
+export function accountLabel(account: ProviderAccountListing, side: SideName, tried = false): string {
+  const state = !account.enabled ? ' (disabled)' : !account.configured ? ' (not connected)' : '';
+  return `${account.label} · ${capabilityWords(account, side, tried)}${state}`;
+}
+
+/**
+ * One row's Account list: the model on this computer first (installed or
+ * not), then every account that does this side or that only a sample can
+ * tell about, then Off.
+ */
+export async function accountChoices(ctx: ToolContext, side: SideName): Promise<Array<{ id: string; label: string }>> {
+  const dir = localDirOf(ctx);
+  const local = localBackendFor(side);
+  const ready = dir ? installedLocal(dir)[local.local!].usable === true : false;
+  const tried = await triedSides(ctx.buddi!.db);
+  return [
+    { id: LOCAL_CHOICE, label: ready ? LOCAL_LABEL[side] : `${LOCAL_LABEL[side]} — ${NOT_INSTALLED_LABEL}` },
+    ...listAccounts(ctx)
+      .filter((a) => offeredFor(a, side))
+      .map((a) => ({ id: a.id, label: accountLabel(a, side, tried.has(`${a.id}:${side}`)) })),
+    { id: OFF, label: 'Off' },
+  ];
+}
+
+/** The accounts a row does not offer, each with its reason: "ChatGPT Plus — ChatGPT subscription: its backend has no audio." */
+export function unavailableAccounts(ctx: ToolContext, side: SideName): Array<{ id: string; line: string }> {
+  return listAccounts(ctx)
+    .filter((a) => !offeredFor(a, side))
+    .map((a) => ({ id: a.id, line: `${a.label} — ${whyNot(a, side)}.` }));
+}
+
+/** The backend and account a row's Account value names, without checking more than that. */
+function rowBackend(ctx: ToolContext, side: SideName, value: string | undefined): { backend?: SpeechBackend; account?: ProviderAccountListing } {
+  const v = value?.trim() ?? '';
+  if (v === '' || v === OFF) return {};
+  if (v === LOCAL_CHOICE) return { backend: localBackendFor(side) };
+  const account = listAccounts(ctx).find((a) => a.id === v);
+  if (!account || !offeredFor(account, side)) return {};
+  const backend = backendForAccount(account);
+  return { ...(backend ? { backend } : {}), account };
+}
+
+/**
+ * One row's Model list, for the account it holds: what the account offers
+ * for this side (OpenAI's transcribe and TTS families, Gemini's Flash and
+ * TTS models, a compatible server's whole list with the likely ones first),
+ * the models a sample worked with first and marked, the saved model when the
+ * list does not have it, then "Other…", which reveals a text field.
  */
 export async function modelChoices(
   ctx: ToolContext,
   side: SideName,
-  backendKind: string | undefined,
-  accountId: string | undefined,
+  accountValue: string | undefined,
   options: { fetch?: typeof fetch } = {},
 ): Promise<Array<{ id: string; label: string }>> {
-  const backend = backendFor(backendKind);
+  const { backend, account } = rowBackend(ctx, side, accountValue);
   const port = side === 'listening' ? backend?.listener : backend?.speaker;
   if (!backend || !port) return [];
-  const account = accountId ? listAccounts(ctx).find((a) => a.id === accountId && a.kind === backend.accountKind) : undefined;
+  if (!account) return [{ id: port.defaultModel, label: port.defaultModel }];
   const ids = backend.models
     ? await backend.models(side, {
         ...(ctx.buddi?.accounts ? { accounts: ctx.buddi.accounts } : {}),
-        ...(account ? { account } : {}),
+        account,
         model: port.defaultModel,
         signal: ctx.signal ?? new AbortController().signal,
         timeoutMs: 10_000,
         ...withFetch(options.fetch ?? transportOf(ctx.buddi, { maxBytes: RESPONSE_CAP })),
       })
     : [port.defaultModel];
-  // The saved model, for the service it was saved with.
+  const probe = capabilitiesOf(account).source === 'probe';
+  const worked = probe ? await triedModels(ctx.buddi!.db, account.id, side) : [];
+  // The saved model, for the account it was saved with.
   const stored = (await getSettings(ctx.buddi!.db))[side];
-  const saved = stored.backend === backend.kind ? stored.model?.trim() : undefined;
-  const all = saved && !ids.includes(saved) ? [...ids, saved] : ids;
-  const choices = all.map((id) => ({ id, label: id === port.defaultModel ? `${id} (default)` : id }));
-  return backend.accountKind ? [...choices, { id: OTHER_MODEL, label: 'Other…' }] : choices;
-}
-
-/** The backend choices for one side: the cloud ones, then the one on this computer, installed or not, then Off. */
-export function backendChoices(side: SideName, localDir?: string): Array<{ id: string; label: string; available: boolean }> {
-  const installed = localDir ? installedLocal(localDir) : undefined;
-  return [
-    ...backendsFor(side).map((b) => {
-      const ready = !b.local || installed?.[b.local].usable === true;
-      return { id: b.kind, label: ready ? b.label : `${b.label} — ${NOT_INSTALLED_LABEL}`, available: ready };
-    }),
-    ...COMING_BACKENDS.filter((b) => b.side === side).map((b) => ({ id: b.kind, label: `${b.label} — ${COMING_LABEL}`, available: false })),
-    { id: OFF, label: 'Off', available: true },
-  ];
-}
-
-/** The accounts a backend may use, with their state. */
-export function accountChoices(ctx: ToolContext, backendKind: string | undefined): Array<{ id: string; label: string }> {
-  const backend = backendFor(backendKind);
-  return listAccounts(ctx)
-    .filter((a) => (backend?.accountKind ? a.kind === backend.accountKind : QUALIFYING_KINDS.includes(a.kind)))
-    .map((a) => ({ id: a.id, label: `${a.label}${!a.enabled ? ' (disabled)' : !a.configured ? ' (not connected)' : ''}` }));
+  const saved = stored.accountId === account.id ? stored.model?.trim() : undefined;
+  const all = [...new Set([...worked, ...ids, ...(saved ? [saved] : [])])];
+  const choices = all.map((id) => ({
+    id,
+    label: worked.includes(id) ? `${id} · worked` : id === port.defaultModel && !probe ? `${id} (default)` : id,
+  }));
+  return [...choices, { id: OTHER_MODEL, label: 'Other…' }];
 }
 
 /** "What leaves", in the page's words, for the current choice of one side. */
-export function whatLeaves(settings: Settings, side: SideName, localDir?: string): string {
+export function whatLeaves(settings: Settings, side: SideName, localDir?: string, accounts: readonly ProviderAccountListing[] = []): string {
   const kind = effectiveBackend(settings, side, localDir);
-  const backend = backendFor(kind);
   const name = side === 'listening' ? 'Listening' : 'Speaking';
   if (settings[side].backend === OFF) return `${name}: nothing, because it is off.`;
-  if (!kind) return `${name}: nothing, because no service is chosen.`;
+  if (!kind) return `${name}: nothing, because nothing is chosen.`;
+  const account = accounts.find((a) => a.id === settings[side].accountId);
+  const backend = (account && backendForAccount(account)) || backendFor(kind);
   if (!backend) return `${name}: nothing yet; this service is not installed.`;
   if (backend.local && !(localDir && installedLocal(localDir)[backend.local].usable)) {
     return `${name}: nothing yet; ${backend.label} is not installed.`;
@@ -184,7 +241,7 @@ export async function sideStatus(ctx: ToolContext, side: SideName): Promise<stri
     return `${name}: ${chosen.where}.`;
   } catch (error) {
     if (!(error instanceof SpeechRefusal) || error.message === NOT_SET[side]) {
-      return `${name}: not set up. Pick a service below, or install ${LOCAL_NAME[side]}.`;
+      return `${name}: not set up. Pick an account below, or install ${LOCAL_NAME[side]}.`;
     }
     // The first sentence says what is wrong; the rest tells the owner where to go, and they are here.
     const reason = error.message.replace(/^refused: /, '');
@@ -213,71 +270,74 @@ export const speechQueries: PageQuery[] = [
       const now = ctx.buddi!.clock.now();
       const tz = ctx.buddi!.owner.timezone;
       const dir = localDirOf(ctx);
+      const accounts = listAccounts(ctx);
       // What each side uses: the owner's choice, or the one on this computer when they chose nothing.
       const listenKind = effectiveBackend(settings, 'listening', dir);
       const speakKind = effectiveBackend(settings, 'speaking', dir);
-      const speakBackend = backendFor(speakKind);
+      const listenAccount = rowAccount(settings, 'listening', dir);
+      const speakAccount = rowAccount(settings, 'speaking', dir);
+      const defaultOf = (side: SideName, value: string): string => {
+        const { backend } = rowBackend(ctx, side, value);
+        const port = side === 'listening' ? backend?.listener : backend?.speaker;
+        return port?.defaultModel ?? '';
+      };
+      const tried = await triedSides(ctx.buddi!.db);
       return {
         listenStatus: await sideStatus(ctx, 'listening'),
         speakStatus: await sideStatus(ctx, 'speaking'),
-        listenBackend: settings.listening.backend === OFF ? OFF : listenKind ?? '',
-        listenAccount: settings.listening.accountId ?? '',
-        listenModel: settings.listening.model ?? backendFor(listenKind)?.listener?.defaultModel ?? '',
+        listenAccount,
+        listenModel: settings.listening.model ?? defaultOf('listening', listenAccount),
         listenLanguages: settings.listening.languages,
         listenLanguagesNote: await profileLanguageNote(ctx, settings),
-        listenModelDefault: backendFor(listenKind)?.listener?.defaultModel ?? backendsFor('listening')[0]?.listener?.defaultModel ?? '',
-        speakBackend: settings.speaking.backend === OFF ? OFF : speakKind ?? '',
-        speakAccount: settings.speaking.accountId ?? '',
-        speakModel: settings.speaking.model ?? speakBackend?.speaker?.defaultModel ?? '',
+        listenUnavailable: unavailableAccounts(ctx, 'listening'),
+        speakAccount,
+        speakModel: settings.speaking.model ?? defaultOf('speaking', speakAccount),
         speakNotice: kokoroNotice(speakKind, settings.listening.languages),
         speakVoice: settings.speaking.voice ?? '',
+        speakUnavailable: unavailableAccounts(ctx, 'speaking'),
         ...voiceRowsOf(settings, speakKind),
-        speakModelDefault: speakBackend?.speaker?.defaultModel ?? backendsFor('speaking')[0]?.speaker?.defaultModel ?? '',
         transcribeCap: settings.transcribeCap,
         sayCap: settings.sayCap,
         ...(await telegramChoice(ctx)),
         listenedToday: await countToday(ctx.buddi!.db, 'listen', now, tz),
         spokenToday: await countToday(ctx.buddi!.db, 'speak', now, tz),
-        listenBackends: backendChoices('listening', dir),
-        speakBackends: backendChoices('speaking', dir),
-        leavesListening: whatLeaves(settings, 'listening', dir),
-        leavesSpeaking: whatLeaves(settings, 'speaking', dir),
-        accounts: listAccounts(ctx).map((a) => ({
+        leavesListening: whatLeaves(settings, 'listening', dir, accounts),
+        leavesSpeaking: whatLeaves(settings, 'speaking', dir, accounts),
+        accounts: accounts.map((a) => ({
           label: a.label,
           kind: a.kind,
-          offered: QUALIFYING_KINDS.includes(a.kind) ? 'offered' : 'no audio routes',
+          listening: capabilityWords(a, 'listening', tried.has(`${a.id}:listening`)),
+          speaking: capabilityWords(a, 'speaking', tried.has(`${a.id}:speaking`)),
         })),
       };
     },
   },
   {
     name: 'listen_accounts',
-    params: z.object({ listenBackend: z.string().max(60).optional() }).strict(),
-    async produce(params, ctx: ToolContext) {
-      return { choices: accountChoices(ctx, (params as { listenBackend?: string }).listenBackend) };
+    params: z.object({}).strict(),
+    async produce(_params, ctx: ToolContext) {
+      return { choices: await accountChoices(ctx, 'listening') };
     },
   },
   {
     name: 'speak_accounts',
-    params: z.object({ speakBackend: z.string().max(60).optional() }).strict(),
-    async produce(params, ctx: ToolContext) {
-      return { choices: accountChoices(ctx, (params as { speakBackend?: string }).speakBackend) };
+    params: z.object({}).strict(),
+    async produce(_params, ctx: ToolContext) {
+      return { choices: await accountChoices(ctx, 'speaking') };
     },
   },
   {
     name: 'listen_models',
-    params: z.object({ listenBackend: z.string().max(60).optional(), account: z.string().max(200).optional() }).strict(),
+    params: z.object({ account: z.string().max(200).optional() }).strict(),
     async produce(params, ctx: ToolContext) {
-      const p = params as { listenBackend?: string; account?: string };
-      return { choices: await modelChoices(ctx, 'listening', p.listenBackend, p.account) };
+      return { choices: await modelChoices(ctx, 'listening', (params as { account?: string }).account) };
     },
   },
   {
     name: 'speak_models',
-    params: z.object({ speakBackend: z.string().max(60).optional(), account: z.string().max(200).optional() }).strict(),
+    params: z.object({ account: z.string().max(200).optional() }).strict(),
     async produce(params, ctx: ToolContext) {
-      const p = params as { speakBackend?: string; account?: string };
-      return { choices: await modelChoices(ctx, 'speaking', p.speakBackend, p.account) };
+      return { choices: await modelChoices(ctx, 'speaking', (params as { account?: string }).account) };
     },
   },
   {
@@ -285,11 +345,11 @@ export const speechQueries: PageQuery[] = [
     // `lang`: one row's language ("French voice"). Without it, a speaker
     // whose voices carry their language lists its English ones: the single
     // Voice field, when the owner listed no language it has voices for.
-    params: z.object({ speakBackend: z.string().max(60).optional(), lang: z.string().regex(/^[a-z]{2}$/).optional() }).strict(),
+    params: z.object({ account: z.string().max(200).optional(), lang: z.string().regex(/^[a-z]{2}$/).optional() }).strict(),
     async produce(params, ctx: ToolContext) {
-      const p = params as { speakBackend?: string; lang?: string };
-      const backend = backendFor(p.speakBackend);
-      if (!backend?.voices) return { voices: [] };
+      const p = params as { account?: string; lang?: string };
+      const { backend } = rowBackend(ctx, 'speaking', p.account);
+      if (!backend?.speaker || !backend.voices) return { voices: [] };
       const voices = await backend.voices({ model: '', signal: ctx.signal ?? new AbortController().signal, timeoutMs: 10_000 });
       const lang = p.lang ?? (backend.languageVoices ? 'en' : undefined);
       const listed = lang ? voices.filter((v) => v.language?.toLowerCase().split('-')[0] === lang) : voices;
@@ -419,7 +479,7 @@ const text = (max: number) => z.string().max(max).optional();
 const settingsInput = z
   .object({
     side: z.enum(['listening', 'speaking', 'limits']),
-    backend: text(60),
+    /** `local`, `off`, an account id, or empty for "the model on this computer once installed". */
     account: text(200),
     model: text(150),
     /** The typed id, when `model` is "Other…". */
@@ -439,39 +499,41 @@ function cleanId(value: string | undefined, what: string, max: number): string |
   return v;
 }
 
-/** Check and bind the account for a cloud backend; the side's pieces, cleaned. */
+/**
+ * One row's Account and Model, checked, as what the settings store: the
+ * backend the account runs (OpenAI, Gemini, OpenAI-compatible), the account,
+ * and the model. Choosing an account binds it to this plugin. An account only
+ * a sample can tell about keeps a model a Test worked with, and no other.
+ */
 async function sideChoice(ctx: ToolContext, side: SideName, input: z.infer<typeof settingsInput>): Promise<{ backend: string | null; accountId: string | null; model: string | null }> {
-  const kind = input.backend?.trim() || null;
-  if (!kind) return { backend: null, accountId: null, model: null };
-  if (kind === OFF) return { backend: OFF, accountId: null, model: null };
-  if (COMING_BACKENDS.some((b) => b.kind === kind)) throw new Error(`That one is not installed yet; it comes in the next update.`);
-  const backend = backendFor(kind);
-  if (!backend || !(side === 'listening' ? backend.listener : backend.speaker)) throw new Error('Choose a service from the list.');
-  if (backend.local) {
+  const value = input.account?.trim() || '';
+  if (value === '') return { backend: null, accountId: null, model: null };
+  if (value === OFF) return { backend: OFF, accountId: null, model: null };
+  if (value === LOCAL_CHOICE) {
+    const local = localBackendFor(side);
     const dir = localDirOf(ctx);
-    if (!dir || !installedLocal(dir)[backend.local].usable) throw new Error(`Install ${backend.label} first, under On this computer.`);
-    return { backend: kind, accountId: null, model: null };
+    if (!dir || !installedLocal(dir)[local.local!].usable) throw new Error(`Install ${local.label} first, under On this computer.`);
+    return { backend: local.kind, accountId: null, model: null };
   }
-  const model = input.model === OTHER_MODEL ? cleanId(input.modelOther, 'model id', 150) : cleanId(input.model, 'model id', 150);
-  if (!backend.accountKind) return { backend: kind, accountId: null, model };
-  const accountId = input.account?.trim() || null;
-  if (!accountId) throw new Error(`Choose an ${backend.label} account for ${side}.`);
-  const account = ctx.buddi!.accounts!.list().find((a) => a.id === accountId);
+  const account = listAccounts(ctx).find((a) => a.id === value);
   if (!account) throw new Error('That account is not in Settings → Model accounts.');
-  if (account.kind !== backend.accountKind) throw new Error(`"${account.label}" is not an ${backend.label} account.`);
+  const backend = backendForAccount(account);
+  if (!backend || !offeredFor(account, side)) throw new Error(`"${account.label}" cannot be used here: ${whyNot(account, side)}.`);
+  const model = input.model === OTHER_MODEL ? cleanId(input.modelOther, 'model id', 150) : cleanId(input.model, 'model id', 150);
+  if (capabilitiesOf(account).source === 'probe') {
+    const worked = await triedModels(ctx.buddi!.db, account.id, side);
+    const chosen = model ?? '';
+    if (!worked.includes(chosen)) {
+      throw new Error(
+        `buddi can't tell whether "${account.label}" ${side === 'listening' ? 'listens' : 'speaks'}${chosen ? ` with ${chosen}` : ''}. ` +
+        'Choose a model and press Test beside the account; once a sample works, Save keeps it.',
+      );
+    }
+  }
   // Choosing it here is the owner binding it to this plugin: only a bound
   // account can be resolved through ctx.buddi.accounts.
-  await ctx.buddi!.accounts!.bind(accountId);
-  // An Ollama Cloud account is an OpenAI-compatible kind with no audio
-  // routes; the listing cannot tell it apart, the resolved address can.
-  let resolved: { baseUrl: string; deviceKey?: string } | null = null;
-  try {
-    resolved = await ctx.buddi!.accounts!.resolve(accountId, model ?? 'whisper-1');
-  } catch {
-    // Not resolvable now (a locked vault, no key yet): the tool says so when it is used.
-  }
-  if (resolved && isOllamaCloud(resolved)) throw new Error('Ollama Cloud serves no audio routes; choose another account.');
-  return { backend: kind, accountId, model };
+  await ctx.buddi!.accounts!.bind(account.id);
+  return { backend: backend.kind, accountId: account.id, model };
 }
 
 /** The chosen languages: ISO 639-1 codes, each once, at most eight. */
@@ -504,13 +566,17 @@ function voicesFrom(input: z.infer<typeof settingsInput>, current: Settings): { 
   return { voice: first ? voices[first]! : current.speaking.voice, voices };
 }
 
-/** What Save says about one side's service. */
-function savedNote(side: SideName, backend: string | null): string {
+/** What Save says about one side's choice. */
+function savedNote(ctx: ToolContext, side: SideName, choice: { backend: string | null; accountId: string | null; model: string | null }): string {
   const name = side === 'listening' ? 'Listening' : 'Speaking';
   const tool = side === 'listening' ? 'speech.transcribe' : 'speech.say';
-  if (backend && backend !== OFF) return `Saved. ${name} uses ${backendFor(backend)!.label}.`;
-  if (backend === OFF) return `Saved. ${name} is off, so ${tool} refuses, even with a model on this computer.`;
-  return `Saved. ${name} uses the model on this computer once it is installed; until then ${tool} refuses.`;
+  if (choice.backend === OFF) return `Saved. ${name} is off, so ${tool} refuses, even with a model on this computer.`;
+  if (!choice.backend) return `Saved. ${name} uses the model on this computer once it is installed; until then ${tool} refuses.`;
+  const account = choice.accountId ? listAccounts(ctx).find((a) => a.id === choice.accountId) : undefined;
+  const backend = backendFor(choice.backend)!;
+  if (!account) return `Saved. ${name} uses ${backend.label}.`;
+  const port = side === 'listening' ? backend.listener : backend.speaker;
+  return `Saved. ${name} uses ${account.label} · ${choice.model ?? port?.defaultModel ?? ''}.`;
 }
 
 export const setSettingsTool: ToolDefinition<z.infer<typeof settingsInput>, unknown> = {
@@ -530,11 +596,11 @@ export const setSettingsTool: ToolDefinition<z.infer<typeof settingsInput>, unkn
     } else if (input.side === 'listening') {
       const choice = await sideChoice(ctx, 'listening', input);
       next.listening = { ...choice, languages: cleanLanguages(input.languages) };
-      note = savedNote('listening', choice.backend);
+      note = savedNote(ctx, 'listening', choice);
     } else {
       const choice = await sideChoice(ctx, 'speaking', input);
       next.speaking = { ...choice, ...voicesFrom(input, current) };
-      note = savedNote('speaking', choice.backend);
+      note = savedNote(ctx, 'speaking', choice);
     }
     const saved = await setSettings(ctx.buddi!.db, next, ctx.buddi!.clock.now());
     return { ...saved, note };
@@ -594,32 +660,97 @@ export const telegramVoiceTool: ToolDefinition<z.infer<typeof telegramVoiceInput
 };
 
 /* ------------------------------------------------------------------ *
- * speech.test — the Listening block's Test button
+ * speech.test — the Test beside each row's Account
  *
- * Speaking has no Test: the play button beside the Voice (`speech.preview`)
- * says a sample in the browser and keeps nothing.
+ * With the row's choice as it stands, saved or not: Listening sends the
+ * bundled two-second clip and says what came back; Speaking says one
+ * sentence and plays it. Each reports as Settings → Model accounts' Test
+ * connection does: "Asked gpt-4o-mini-tts to say … → done in 1.2 s". A
+ * sample that worked on an account only trying tells about is remembered,
+ * so Save keeps that model. Nothing goes to Files and nothing is counted.
  * ------------------------------------------------------------------ */
 
-const testInput = z.object({ side: z.literal('listening') }).strict();
+const testInput = z
+  .object({
+    side: z.enum(['listening', 'speaking']),
+    /** The row's Account; absent tests what is saved. */
+    account: text(200),
+    model: text(150),
+    modelOther: text(150),
+    voice: text(80),
+    languages: z.array(z.string().max(12)).max(40).optional(),
+  })
+  .strict();
 
 export interface TestToolOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** For tests: the clock the seconds are read from. */
+  now?: () => number;
+}
+
+/** "1.2 s". */
+export function seconds(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
+}
+
+function quote(text: string, max = 80): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
 export function createTestTool(options: TestToolOptions = {}): ToolDefinition<z.infer<typeof testInput>, unknown> {
-  const passOn = { ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) };
+  const timeoutMs = options.timeoutMs ?? SPEECH_TIMEOUT_MS;
+  const clock = options.now ?? (() => performance.now());
   return {
     name: 'speech.test',
-    description: "Try the chosen listening service on a short clip. The owner's own.",
+    description: "Try a listening or speaking choice on a short sample; nothing is kept. The owner's own.",
     tier: 'auto',
     ownerOnly: true,
+    timeoutMs: timeoutMs + 20_000,
     input: testInput,
-    async execute(_input, ctx) {
-      const agentId = ctx.agentId?.trim() || 'owner';
-      const bytes = await readFile(TEST_CLIP);
-      const heard = await transcribeBytes(ctx, { bytes, mime: sniffAudio(bytes)!, artifactId: null, language: 'en' }, { agentId, ...passOn });
-      return { ...heard, note: heard.text ? `Heard: "${heard.text}" (the clip says "Hello from buddi. This is a test.")` : 'The service answered with no words.' };
+    async execute(input, ctx) {
+      const side = input.side;
+      const chosen: Chosen = input.account === undefined ? await chooseSide(ctx, side) : await chooseFromForm(ctx, side, input);
+      const name = chosen.backend.local ? chosen.backend.label.replace(/ on this computer$/, '') : chosen.model;
+      const backendCtx = {
+        ...(ctx.buddi!.accounts ? { accounts: ctx.buddi!.accounts } : {}),
+        ...(chosen.account ? { account: chosen.account } : {}),
+        model: chosen.model,
+        signal: ctx.signal ?? new AbortController().signal,
+        timeoutMs,
+        ...withFetch(options.fetch ?? transportOf(ctx.buddi, { maxBytes: RESPONSE_CAP })),
+        ...(chosen.backend.local && localDirOf(ctx) ? { localDir: localDirOf(ctx)! } : {}),
+      };
+      const asked = side === 'listening' ? `Asked ${name} to listen to a 2-second clip` : `Asked ${name} to say "${TEST_SENTENCE}"`;
+      const started = clock();
+      const remember = async (): Promise<void> => {
+        if (chosen.account && capabilitiesOf(chosen.account).source === 'probe') {
+          await markTried(ctx.buddi!.db, chosen.account.id, side, chosen.model, ctx.buddi!.clock.now());
+        }
+      };
+      try {
+        if (side === 'listening') {
+          const bytes = await readFile(TEST_CLIP);
+          const heard = await chosen.backend.listener!.transcribe({ bytes, mime: sniffAudio(bytes)!, language: 'en' }, backendCtx);
+          const took = seconds(clock() - started);
+          if (!heard.text) return { text: '', message: `${asked} → it heard no words, in ${took}. The clip says "${CLIP_WORDS}"` };
+          await remember();
+          return { text: heard.text, message: `${asked} → it heard "${quote(heard.text)}" in ${took}. The clip says "${CLIP_WORDS}"` };
+        }
+        const voice = await pickVoice(ctx, chosen, input.voice?.trim() || undefined);
+        const result = await chosen.backend.speaker!.synthesize({ text: TEST_SENTENCE, voice, format: 'ogg-opus', language: 'en' }, backendCtx);
+        const took = seconds(clock() - started);
+        const mime = sniffAudio(result.bytes);
+        if (!mime) throw new SpeechRefusal('refused: what came back is not audio.');
+        const bytes = mime === 'audio/ogg' ? trimOgg(result.bytes, PREVIEW_SECONDS) : result.bytes;
+        if (bytes.length > PREVIEW_MAX_BYTES) throw new SpeechRefusal('refused: the sample came back larger than the page plays.');
+        await remember();
+        return { play: { mime, data: bytes.toString('base64') }, message: `${asked} → done in ${took}, voice ${voice}.` };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message.replace(/^refused: /, '') : String(error);
+        throw new Error(`${asked} → ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`);
+      }
     },
   };
 }
@@ -630,28 +761,37 @@ export const testTool = createTestTool();
  * The page
  * ------------------------------------------------------------------ */
 
-const cloud = ['openai', 'openai-compatible'];
+/** The Account values that are not an account: no Model field for them. */
+const NOT_AN_ACCOUNT = ['', LOCAL_CHOICE, OFF];
 
 /**
  * One language's voice on the Speaking form ("French voice"), with its play
  * button saying the sample in that language. Shown for a language the owner
- * speaks when the saved service has voices per language; greyed while the
- * form holds a service that has not.
+ * speaks when the saved speaker has voices per language (Kokoro); greyed
+ * while the row holds another.
  */
 function voiceRow(lang: string): Field {
   const name = languageName(lang);
   return {
     name: `voice_${lang}`, label: `${name} voice`, type: 'select', from: `speakVoices.${lang}`,
-    optionsFrom: { query: { query: 'voices', params: { lang: { const: lang } } }, rows: 'voices', value: 'id', label: 'label', dependsOn: ['speakBackend'] },
+    optionsFrom: { query: { query: 'voices', params: { lang: { const: lang } } }, rows: 'voices', value: 'id', label: 'label', dependsOn: ['account'] },
     when: { path: `voiceRows.${lang}`, equals: true },
-    disabledWhen: { path: 'speakBackend', in: LANGUAGE_VOICED, not: true },
+    disabledWhen: { path: 'account', equals: LOCAL_CHOICE, not: true },
     action: {
       tool: 'speech.preview', label: `Play a sample in ${name}`, icon: 'play',
-      args: {
-        backend: { field: 'speakBackend' }, account: { field: 'account' }, model: { field: 'model' },
-        modelOther: { field: 'modelOther' }, voice: { field: `voice_${lang}` }, lang: { const: lang },
-      },
+      args: { account: { field: 'account' }, voice: { field: `voice_${lang}` }, lang: { const: lang } },
     },
+  };
+}
+
+/** The accounts a row does not offer, one faint line each with the reason. */
+function unavailable(rows: string): PageDescriptor['body'][number] {
+  return {
+    kind: 'repeat',
+    query: { query: 'settings' },
+    rows,
+    key: 'id',
+    body: [{ kind: 'notice', look: 'quiet', text: { path: 'line' } }],
   };
 }
 
@@ -665,7 +805,6 @@ export const speechPages: PageDescriptor[] = [
     body: [
       { kind: 'notice', text: { path: 'listenStatus' } },
       { kind: 'notice', text: { path: 'speakStatus' } },
-      { kind: 'notice', text: SPEECH_NOTICE },
       {
         kind: 'section',
         title: 'On this computer',
@@ -708,25 +847,29 @@ export const speechPages: PageDescriptor[] = [
       {
         kind: 'section',
         title: 'Listening',
-        note: 'Turns a recording into text for speech.transcribe.',
-        actions: [{ kind: 'button', action: { tool: 'speech.test', label: 'Test', busy: 'Listening…', args: { side: { const: 'listening' } }, done: { path: 'note' } } }],
+        note: 'Turns a recording into text for speech.transcribe. Test sends a 2-second clip with what is on the form.',
         body: [
           { kind: 'notice', tone: 'neutral', text: { path: 'listenLanguagesNote' }, when: { path: 'listenLanguagesNote', equals: '', not: true } },
           {
             kind: 'form',
             initial: { query: 'settings' },
             fields: [
-              { name: 'listenBackend', label: 'Service', type: 'select', from: 'listenBackend', optionsFrom: { query: { query: 'settings' }, rows: 'listenBackends', value: 'id', label: 'label' } },
               {
                 name: 'account', label: 'Account', type: 'select', from: 'listenAccount',
-                optionsFrom: { query: { query: 'listen_accounts' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['listenBackend'] },
-                when: { path: 'listenBackend', in: cloud },
+                optionsFrom: { query: { query: 'listen_accounts' }, rows: 'choices', value: 'id', label: 'label' },
+                action: {
+                  tool: 'speech.test', label: 'Test',
+                  args: {
+                    side: { const: 'listening' }, account: { field: 'account' }, model: { field: 'model' },
+                    modelOther: { field: 'modelOther' }, languages: { field: 'languages' },
+                  },
+                },
               },
               {
                 name: 'model', label: 'Model', type: 'select', from: 'listenModel',
-                optionsFrom: { query: { query: 'listen_models' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['listenBackend', 'account'] },
-                hint: 'The models this account offers. A new account lists them once it is saved.',
-                when: { path: 'listenBackend', in: cloud },
+                optionsFrom: { query: { query: 'listen_models' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['account'] },
+                hint: 'What this account offers for listening.',
+                when: { path: 'account', in: NOT_AN_ACCOUNT, not: true },
               },
               { name: 'modelOther', label: 'Model id', type: 'text', hint: 'The id your server names, e.g. whisper-1.', when: { path: 'model', equals: OTHER_MODEL } },
               {
@@ -739,18 +882,19 @@ export const speechPages: PageDescriptor[] = [
             submit: {
               tool: 'speech.set_settings', label: 'Save', busy: 'Saving…',
               args: {
-                side: { const: 'listening' }, backend: { field: 'listenBackend' }, account: { field: 'account' },
+                side: { const: 'listening' }, account: { field: 'account' },
                 model: { field: 'model' }, modelOther: { field: 'modelOther' }, languages: { field: 'languages' },
               },
               done: { path: 'note' },
             },
           },
+          unavailable('listenUnavailable'),
         ],
       },
       {
         kind: 'section',
         title: 'Speaking',
-        note: 'Turns a reply into a voice for speech.say.',
+        note: 'Turns a reply into a voice for speech.say. Test says one sentence with what is on the form.',
         body: [
           { kind: 'notice', text: { path: 'speakNotice' }, when: { path: 'speakNotice', equals: '', not: true } },
           {
@@ -758,30 +902,32 @@ export const speechPages: PageDescriptor[] = [
             initial: { query: 'settings' },
             columns: 3,
             fields: [
-              { name: 'speakBackend', label: 'Service', type: 'select', from: 'speakBackend', optionsFrom: { query: { query: 'settings' }, rows: 'speakBackends', value: 'id', label: 'label' } },
               {
                 name: 'account', label: 'Account', type: 'select', from: 'speakAccount',
-                optionsFrom: { query: { query: 'speak_accounts' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['speakBackend'] },
-                when: { path: 'speakBackend', in: cloud },
+                optionsFrom: { query: { query: 'speak_accounts' }, rows: 'choices', value: 'id', label: 'label' },
+                action: {
+                  tool: 'speech.test', label: 'Test', icon: 'play',
+                  args: {
+                    side: { const: 'speaking' }, account: { field: 'account' }, model: { field: 'model' },
+                    modelOther: { field: 'modelOther' }, voice: { field: 'voice' },
+                  },
+                },
               },
               {
                 name: 'model', label: 'Model', type: 'select', from: 'speakModel',
-                optionsFrom: { query: { query: 'speak_models' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['speakBackend', 'account'] },
-                hint: 'The models this account offers. A new account lists them once it is saved.',
-                when: { path: 'speakBackend', in: cloud },
+                optionsFrom: { query: { query: 'speak_models' }, rows: 'choices', value: 'id', label: 'label', dependsOn: ['account'] },
+                hint: 'What this account offers for speaking.',
+                when: { path: 'account', in: NOT_AN_ACCOUNT, not: true },
               },
               { name: 'modelOther', label: 'Model id', type: 'text', hint: 'The id your server names.', when: { path: 'model', equals: OTHER_MODEL } },
               {
                 name: 'voice', label: 'Voice', type: 'select', from: 'speakVoice',
-                optionsFrom: { query: { query: 'voices' }, rows: 'voices', value: 'id', label: 'label', dependsOn: ['speakBackend'] },
+                optionsFrom: { query: { query: 'voices' }, rows: 'voices', value: 'id', label: 'label', dependsOn: ['account'] },
                 when: { path: 'voiceByLanguage', equals: false },
                 // Heard in the browser with what the form holds now, saved or not; nothing is kept.
                 action: {
                   tool: 'speech.preview', label: 'Play a sample', icon: 'play',
-                  args: {
-                    backend: { field: 'speakBackend' }, account: { field: 'account' }, model: { field: 'model' },
-                    modelOther: { field: 'modelOther' }, voice: { field: 'voice' },
-                  },
+                  args: { account: { field: 'account' }, model: { field: 'model' }, modelOther: { field: 'modelOther' }, voice: { field: 'voice' } },
                 },
               },
               ...ROW_LANGUAGES.map(voiceRow),
@@ -789,13 +935,14 @@ export const speechPages: PageDescriptor[] = [
             submit: {
               tool: 'speech.set_settings', label: 'Save', busy: 'Saving…',
               args: {
-                side: { const: 'speaking' }, backend: { field: 'speakBackend' }, account: { field: 'account' },
+                side: { const: 'speaking' }, account: { field: 'account' },
                 model: { field: 'model' }, modelOther: { field: 'modelOther' }, voice: { field: 'voice' },
                 ...Object.fromEntries(ROW_LANGUAGES.map((l) => [`voice_${l}`, { field: `voice_${l}` }])),
               },
               done: { path: 'note' },
             },
           },
+          unavailable('speakUnavailable'),
         ],
       },
       {
@@ -853,12 +1000,13 @@ export const speechPages: PageDescriptor[] = [
         ],
       },
       {
-        kind: 'section',
-        title: 'What leaves',
+        kind: 'expand',
+        query: { query: 'settings' },
+        label: 'What leaves this computer',
         body: [
           { kind: 'notice', text: { path: 'leavesListening' } },
           { kind: 'notice', text: { path: 'leavesSpeaking' } },
-          { kind: 'notice', text: WHY_NOT_LISTED },
+          { kind: 'notice', tone: 'neutral', text: SPEECH_NOTICE },
           {
             kind: 'table',
             query: { query: 'settings' },
@@ -866,7 +1014,8 @@ export const speechPages: PageDescriptor[] = [
             columns: [
               { key: 'label', label: 'Account' },
               { key: 'kind', label: 'Kind' },
-              { key: 'offered', label: 'Speech', pill: {} },
+              { key: 'listening', label: 'Listening', pill: {} },
+              { key: 'speaking', label: 'Speaking', pill: {} },
             ],
             empty: 'No model accounts yet. Add one in Settings → Model accounts.',
           },

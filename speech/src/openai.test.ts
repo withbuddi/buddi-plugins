@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ResolvedProvider } from '@buddi/core/testing';
-import { accountModelIds, clearModelCache, modelsFor, openaiBackend, openaiCompatibleBackend, openaiSynthesize, openaiTranscribe, OPENAI_VOICES } from './backends/openai.js';
-import { fakeAudioServer, OGG_CLIP, type FakeAudioServer } from './testing/fixtures.js';
+import { accountModelIds, clearModelCache, compatibleModelsFor, modelsFor, openaiBackend, openaiCompatibleBackend, openaiSynthesize, openaiTranscribe, OPENAI_VOICES } from './backends/openai.js';
+import { fakeAudioServer, OGG_CLIP, OPENAI_MODELS, type FakeAudioServer } from './testing/fixtures.js';
 
 let fake: FakeAudioServer;
 beforeAll(async () => { fake = await fakeAudioServer(); });
@@ -73,13 +73,25 @@ describe('OpenAI audio backend', () => {
       .rejects.toThrow('refused: the speaking service did not answer within 1 second.');
   });
 
-  it('refuses an Ollama Cloud account before sending anything', async () => {
+  it('refuses an Ollama account connected with a device key before sending anything; one with a key is tried like any server', async () => {
     fake.seen.length = 0;
     await expect(openaiTranscribe({ bytes: OGG_CLIP, mime: 'audio/ogg' }, { provider: provider({ deviceKey: 'pem', secret: '' }), timeoutMs: 5_000 }))
-      .rejects.toThrow(/Ollama Cloud account serves no audio routes/);
-    await expect(openaiSynthesize({ text: 'x', format: 'mp3' }, 'alloy', { provider: provider({ baseUrl: 'https://ollama.com/v1' }), timeoutMs: 5_000 }))
-      .rejects.toThrow(/Ollama Cloud/);
+      .rejects.toThrow(/device key .* cannot be used for audio/);
     expect(fake.seen).toHaveLength(0);
+    fake.answer = () => ({ status: 404, body: JSON.stringify({ error: { message: 'page not found' } }) });
+    await expect(openaiSynthesize({ text: 'x', format: 'mp3' }, 'alloy', { provider: provider(), timeoutMs: 5_000 }))
+      .rejects.toThrow('refused: the speaking service answered 404: page not found.');
+    expect(fake.seen).toHaveLength(1);
+  });
+
+  it('reads an OpenAI key\'s recorded model list into the transcribe and TTS families, and a compatible server\'s into likely-first', () => {
+    const ids = (JSON.parse(OPENAI_MODELS) as { data: Array<{ id: string }> }).data.map((m) => m.id);
+    expect(modelsFor('listening', ids, 'gpt-4o-mini-transcribe')).toEqual(['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'gpt-4o-transcribe-diarize', 'whisper-1']);
+    expect(modelsFor('speaking', ids, 'gpt-4o-mini-tts')).toEqual(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd']);
+    // A compatible server: the ones named for the side first, then whatever else it lists, never the other side's.
+    expect(compatibleModelsFor('speaking', ['kokoro', 'whisper-large-v3', 'tts-kokoro', 'llama3'])).toEqual(['tts-kokoro', 'kokoro', 'llama3']);
+    expect(compatibleModelsFor('listening', ['kokoro', 'whisper-large-v3', 'tts-kokoro'])).toEqual(['whisper-large-v3', 'kokoro']);
+    expect(compatibleModelsFor('listening', [])).toEqual([]);
   });
 
   it('goes through the bound account the backend context names, and lists the OpenAI voices', async () => {

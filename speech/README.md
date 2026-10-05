@@ -2,16 +2,21 @@
 
 Voice for [buddi](https://withbuddi.com). Your agents listen to a recording
 and answer with a voice, and buddi hears and answers your voice notes on
-Telegram. You choose who listens and who speaks on Settings → Speech: a cloud
-service, or models that run on your computer.
+Telegram. You choose who listens and who speaks on Settings → Speech: one of
+your model accounts, or models that run on your computer.
 
 ## What it needs
 
 One of:
 
 - **An OpenAI account** with an API key, added on Settings → Model accounts.
+- **A Gemini account** (an OpenAI-compatible account on Google's address with
+  an AI Studio key): it listens with a Flash model and speaks with a TTS
+  model, through the Gemini API itself.
 - **An OpenAI-compatible server** that answers the same two audio routes: a
-  local Whisper server, LM Studio, speaches, or a hosted one.
+  local Whisper server, LM Studio, speaches, Ollama, or a hosted one. buddi
+  can't tell what such a server does, so it is offered as untested; press Test
+  with a model, and once a sample works Save keeps it.
 - **Nothing at all**: Whisper (listens, 252 MB) and Kokoro (speaks, 92 MB, in
   English, French, Spanish, Italian, Portuguese and Hindi) run on your
   computer. You download them once with Install on Settings → Speech or
@@ -19,8 +24,8 @@ One of:
   Kokoro brings eSpeak NG (13 MB) to pronounce the languages other than
   English.
 
-A ChatGPT subscription, a Claude sign-in and Ollama Cloud serve no audio, so
-they are not offered.
+A ChatGPT subscription and a Claude sign-in have no audio: the page lists them
+greyed under each row with that reason.
 
 Every request goes through buddi's own web access, which refuses addresses on
 your computer and your network. One exception: it **talks directly to a server
@@ -37,15 +42,16 @@ use them or not.
 ## What it costs
 
 The plugin is free, and so are the local models. OpenAI bills per minute
-listened and per character spoken; another service at its own price. At most
+listened and per character spoken, Google per token; another service at its
+own price. At most
 200 transcriptions and 200 spoken replies a day by default; you change both on
 Settings → Speech.
 
 ## What leaves your computer
 
 With a cloud listener, the recording; with a cloud speaker, the text to say.
-Each goes to the service of the account you chose (api.openai.com, or your
-OpenAI-compatible server). With Whisper and Kokoro, nothing: installing them
+Each goes to the service of the account you chose (api.openai.com,
+generativelanguage.googleapis.com, or your OpenAI-compatible server). With Whisper and Kokoro, nothing: installing them
 downloads from huggingface.co, its download servers (*.hf.co) and
 registry.npmjs.org (eSpeak NG), and sends nothing.
 
@@ -65,7 +71,7 @@ buddi plugins install @withbuddi/plugin-speech
 
 or find it in buddi's plugin market on Settings → Plugins. buddi stages it and
 shows what it claims (what it reaches in buddi, the hosts it talks to); nothing
-runs until you approve it. Then choose a service on Settings → Speech.
+runs until you approve it. Then choose an account on Settings → Speech.
 
 ## Remove
 
@@ -90,8 +96,8 @@ speech` deletes its settings and usage too; that cannot be undone.
 | `speech.transcribe` | `{ artifactId, language? }` | `{ text, language? }` | `auto`, asks once per conversation |
 | `speech.say` | `{ text (≤ 4,000 chars), voice? }` | an audio file in the Files library | `auto`, asks once per conversation |
 | `speech.set_settings` | one side, or the limits | the settings | `ownerOnly`, the page's Save |
-| `speech.test` | `{ side: 'listening' }` | a note | `ownerOnly`, the Listening block's Test |
-| `speech.preview` | `{ backend, account?, model?, modelOther?, voice?, lang? }` | `{ play: { mime, data } }` | `ownerOnly`, the play button beside the Voice or a language's voice (`lang`: the sample's language) |
+| `speech.test` | `{ side, account?, model?, modelOther?, voice?, languages? }` | `{ message, text? }` or `{ message, play }` | `ownerOnly`, the Test beside each row's Account: the bundled 2-second clip, or one sentence played back, reported as "Asked gpt-4o-mini-tts to say … → done in 1.2 s"; with no `account`, what is saved. A sample that worked on an untested account is kept in `speech.tried` |
+| `speech.preview` | `{ account?, model?, modelOther?, voice?, lang? }` | `{ play: { mime, data } }` | `ownerOnly`, the play button beside the Voice or a language's voice (`lang`: the sample's language) |
 | `speech.install` | `{ kind: 'whisper' \| 'kokoro' }` | a note; the download runs on | `ownerOnly`, the page's Install |
 | `speech.remove` | `{ kind }` | a note | `ownerOnly`, the page's Remove |
 
@@ -219,6 +225,29 @@ German…): "No German voice on this computer; German replies use the cloud
 speaker when one is set, else text."
 `speech.usage` is one row per use, which the caps count from midnight in the
 owner's timezone.
+
+The page has no Service field: each row (Listening, Speaking) picks an
+Account, `local` (Whisper or Kokoro, first, and chosen by itself once
+installed with nothing else chosen), an account id, or `off`; Save stores
+the backend that account runs (`backendForAccount`: `openai`, `gemini` for
+an account on generativelanguage.googleapis.com, else `openai-compatible`),
+and the tools derive it from the account again, so a Gemini account saved
+before this version runs on Gemini. Which accounts a row offers comes from
+host API 1.30's `capabilities` (`{ audioIn, audioOut, source }`), worked out
+the same way from `kind` and `baseUrl` on an older buddi
+(`capabilitiesOf`): `known` accounts are labelled "listens and speaks",
+`probe` ones "speaks (untested)" until a Test worked ("(tried)"), and `none`
+ones (a ChatGPT subscription, Claude) are faint lines under the row with
+the reason. Models come per account: OpenAI's `/models` kept to the
+transcribe and TTS families, the Gemini API's `/v1beta/models` kept by
+`supportedGenerationMethods` (Flash models that take a file for listening,
+TTS models for speaking; Live-only ones left out), a compatible server's
+`/models` with the likely ones first and those a Test worked with first,
+marked "· worked". A page's query may not bind an account, so until Save or
+Test binds one, OpenAI and Gemini offer their known audio models. Save
+keeps a model on a `probe` account only once `speech.tried` has it
+(`005_tried_models.sql`). What leaves folds into "What leaves this computer"
+at the foot of the page.
 
 ### Build and test
 

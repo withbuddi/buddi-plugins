@@ -4,9 +4,10 @@ import { ToolRegistry } from '@buddi/core/testing';
 import { manifest } from './index.js';
 import { BACKENDS, backendFor, COMING_BACKENDS } from './backends/index.js';
 import type { Field } from '@buddi/core/plugin';
-import { backendChoices, kokoroNotice, NOT_INSTALLED_LABEL, voiceRowsOf, whatLeaves } from './settings.js';
+import { accountLabel, capabilityWords, kokoroNotice, rowAccount, voiceRowsOf, whatLeaves } from './settings.js';
 import { LANGUAGES, namesOf } from './languages.js';
-import { languageHint } from './choose.js';
+import { backendForAccount, capabilitiesOf, languageHint, offeredFor, whyNot } from './choose.js';
+import type { ProviderAccountListing } from '@buddi/core/plugin';
 import type { Settings } from './store.js';
 
 describe('speech manifest', () => {
@@ -14,7 +15,7 @@ describe('speech manifest', () => {
     const registry = new ToolRegistry();
     expect(() => registry.register(manifest)).not.toThrow();
     expect(registry.list().map((t) => t.name).sort()).toEqual(['speech.say', 'speech.transcribe']);
-    expect(manifest.network?.map((n) => n.host)).toEqual(['api.openai.com', 'huggingface.co', '*.hf.co', 'registry.npmjs.org']);
+    expect(manifest.network?.map((n) => n.host)).toEqual(['api.openai.com', 'generativelanguage.googleapis.com', 'huggingface.co', '*.hf.co', 'registry.npmjs.org']);
     for (const tool of manifest.tools) expect(tool.name.startsWith('speech.')).toBe(true);
     for (const name of ['speech.transcribe', 'speech.say']) {
       const tool = manifest.tools.find((t) => t.name === name)!;
@@ -35,8 +36,10 @@ describe('speech manifest', () => {
     expect(page).toMatchObject({ id: 'settings', title: 'Speech', place: 'settings', icon: 'bell' });
     const text = JSON.stringify(page);
     for (const tool of ['speech.set_settings', 'speech.test', 'speech.preview', 'speech.install', 'speech.remove', 'speech.telegram_voice', 'install_status']) expect(text).toContain(tool);
-    expect(text).toContain('ChatGPT subscription');
     expect(text).toContain('"poll":{"seconds":2');
+    // No Service selector: each row picks an account; What leaves is folded away.
+    expect(text).not.toContain('Backend');
+    expect(page.body.some((c) => c.kind === 'expand' && c.label === 'What leaves this computer')).toBe(true);
   });
 
   it('proposes one skill and no agent', () => {
@@ -47,36 +50,67 @@ describe('speech manifest', () => {
 });
 
 describe('backends', () => {
-  it('has openai and openai-compatible on both sides, and the local ones each on theirs, offered as installable', () => {
-    expect(Object.keys(BACKENDS).sort()).toEqual(['kokoro-local', 'openai', 'openai-compatible', 'whisper-local']);
+  it('has openai, openai-compatible and gemini on both sides, and the local ones each on theirs', () => {
+    expect(Object.keys(BACKENDS).sort()).toEqual(['gemini', 'kokoro-local', 'openai', 'openai-compatible', 'whisper-local']);
     for (const b of Object.values(BACKENDS)) {
       expect(b.listener?.stream).toBeUndefined();
       expect(b.speaker?.stream).toBeUndefined();
     }
     expect(BACKENDS.openai!.listener!.defaultModel).toBe('gpt-4o-mini-transcribe');
     expect(BACKENDS.openai!.speaker!.defaultModel).toBe('gpt-4o-mini-tts');
+    expect(BACKENDS.gemini!.listener!.defaultModel).toBe('gemini-2.5-flash');
+    expect(BACKENDS.gemini!.speaker!.defaultModel).toBe('gemini-2.5-flash-preview-tts');
     expect(backendFor('whisper-local')?.local).toBe('whisper');
     expect(backendFor('constructor')).toBeUndefined();
     expect(COMING_BACKENDS).toEqual([]);
-    expect(backendChoices('listening')).toEqual([
-      { id: 'openai', label: 'OpenAI', available: true },
-      { id: 'openai-compatible', label: 'OpenAI-compatible', available: true },
-      { id: 'whisper-local', label: `Whisper on this computer — ${NOT_INSTALLED_LABEL}`, available: false },
-      { id: 'off', label: 'Off', available: true },
-    ]);
-    expect(backendChoices('speaking').map((b) => b.id).slice(-2)).toEqual(['kokoro-local', 'off']);
   });
 
-  it('says what leaves for each choice', () => {
-    const s = (listen: string | null, speak: string | null): Settings => ({
-      listening: { backend: listen, accountId: null, model: null, languages: [] },
+  it('reads what each account does with audio: the host\'s hint, else its kind and address', () => {
+    const a = (over: Partial<ProviderAccountListing>): ProviderAccountListing => ({ id: 'x', label: 'X', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'm', ...over });
+    const openai = a({ label: 'OpenAI key', kind: 'openai', baseUrl: 'https://api.openai.com/v1' });
+    const gemini = a({ label: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/' });
+    const ollama = a({ label: 'Ollama Cloud', baseUrl: 'https://ollama.com/v1' });
+    const codex = a({ label: 'ChatGPT Plus', kind: 'codex' });
+    const claude = a({ label: 'Claude', kind: 'anthropic' });
+    expect(capabilitiesOf(openai)).toEqual({ audioIn: true, audioOut: true, source: 'known' });
+    expect(capabilitiesOf(gemini)).toEqual({ audioIn: true, audioOut: true, source: 'known' });
+    expect(capabilitiesOf(ollama)).toEqual({ audioIn: false, audioOut: false, source: 'probe' });
+    expect(capabilitiesOf(codex).source).toBe('none');
+    // The host's hint (1.30) wins over the guess.
+    expect(capabilitiesOf({ ...ollama, capabilities: { audioIn: false, audioOut: true, source: 'known' } } as ProviderAccountListing)).toEqual({ audioIn: false, audioOut: true, source: 'known' });
+    expect(accountLabel(gemini, 'listening')).toBe('Gemini · listens and speaks');
+    expect(accountLabel(openai, 'speaking')).toBe('OpenAI key · listens and speaks');
+    expect(accountLabel(ollama, 'speaking')).toBe('Ollama Cloud · speaks (untested)');
+    expect(accountLabel(ollama, 'listening', true)).toBe('Ollama Cloud · listens (tried)');
+    expect(accountLabel({ ...openai, configured: false }, 'speaking')).toBe('OpenAI key · listens and speaks (not connected)');
+    expect(capabilityWords(codex, 'speaking')).toBe('no audio');
+    expect(offeredFor(ollama, 'listening')).toBe(true);
+    expect(offeredFor(codex, 'listening')).toBe(false);
+    expect(whyNot(codex, 'speaking')).toBe('ChatGPT subscription: its backend has no audio');
+    expect(whyNot(claude, 'listening')).toMatch(/^Claude: /);
+    expect(backendForAccount(openai)?.kind).toBe('openai');
+    expect(backendForAccount(gemini)?.kind).toBe('gemini');
+    expect(backendForAccount(ollama)?.kind).toBe('openai-compatible');
+    expect(backendForAccount(codex)).toBeUndefined();
+  });
+
+  it('says what leaves for each choice, and which account each row starts on', () => {
+    const s = (listen: string | null, speak: string | null, listenAccount: string | null = null): Settings => ({
+      listening: { backend: listen, accountId: listenAccount, model: null, languages: [] },
       speaking: { backend: speak, accountId: null, model: null, voice: null, voices: {} },
       transcribeCap: 200, sayCap: 200,
     });
     expect(whatLeaves(s('openai', null), 'listening')).toBe('Listening: The recording goes to OpenAI (api.openai.com), which sends back the text.');
     expect(whatLeaves(s(null, 'openai-compatible'), 'speaking')).toMatch(/^Speaking: The text to say goes to your OpenAI-compatible/);
-    expect(whatLeaves(s(null, null), 'speaking')).toBe('Speaking: nothing, because no service is chosen.');
+    expect(whatLeaves(s(null, null), 'speaking')).toBe('Speaking: nothing, because nothing is chosen.');
     expect(whatLeaves(s('whisper-local', null), 'listening')).toBe('Listening: nothing yet; Whisper on this computer is not installed.');
+    // A Gemini account saved as compatible: the account decides.
+    const gemini = { id: 'g', label: 'Gemini', kind: 'openai-compatible' as const, enabled: true, configured: true, defaultModel: 'm', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/' };
+    expect(whatLeaves(s('openai-compatible', null, 'g'), 'listening', undefined, [gemini])).toMatch(/Google's Gemini API/);
+    expect(rowAccount(s('off', null), 'listening')).toBe('off');
+    expect(rowAccount(s('openai', null, 'oa'), 'listening')).toBe('oa');
+    expect(rowAccount(s('whisper-local', null), 'listening')).toBe('local');
+    expect(rowAccount(s(null, null), 'listening')).toBe('');
   });
 
   it('offers about 25 languages by name, and warns about Kokoro only for one no Kokoro voice speaks', () => {
@@ -99,12 +133,15 @@ describe('backends', () => {
   it('draws a voice row per Kokoro language on the Speaking form, each with its play button in its language', () => {
     const speaking = manifest.pages![0]!.body.find((c) => c.kind === 'section' && c.title === 'Speaking') as { body: Array<{ kind: string; columns?: number; fields?: Field[]; submit?: { args: Record<string, unknown> } }> };
     const form = speaking.body.find((c) => c.kind === 'form')!;
-    // Service and the voices sit three to a row; Listening keeps the default two.
+    // Account, model and voice sit three to a row; Listening keeps the default two.
     expect(form.columns).toBe(3);
     const listening = manifest.pages![0]!.body.find((c) => c.kind === 'section' && c.title === 'Listening') as { body: Array<{ kind: string; columns?: number }> };
     expect(listening.body.find((c) => c.kind === 'form')!.columns).toBeUndefined();
     const names = form.fields!.map((f) => f.name);
-    expect(names).toEqual(['speakBackend', 'account', 'model', 'modelOther', 'voice', 'voice_en', 'voice_fr', 'voice_es', 'voice_it', 'voice_pt', 'voice_hi']);
+    expect(names).toEqual(['account', 'model', 'modelOther', 'voice', 'voice_en', 'voice_fr', 'voice_es', 'voice_it', 'voice_pt', 'voice_hi']);
+    // Test beside the Account: says one sentence with what is on the form.
+    expect(form.fields![0]!.action).toMatchObject({ tool: 'speech.test', label: 'Test', icon: 'play', args: { side: { const: 'speaking' }, account: { field: 'account' } } });
+    expect(form.fields!.find((f) => f.name === 'model')!.when).toEqual({ path: 'account', in: ['', 'local', 'off'], not: true });
     expect(form.fields!.find((f) => f.name === 'voice')!.when).toEqual({ path: 'voiceByLanguage', equals: false });
     const fr = form.fields!.find((f) => f.name === 'voice_fr')!;
     expect(fr).toMatchObject({

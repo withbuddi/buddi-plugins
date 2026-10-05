@@ -3,7 +3,7 @@
  * language's voice ("French voice"), on Settings → Speech.
  *
  * It says one short sentence (in the row's `lang`, else in the voice's
- * language for a Kokoro voice, else English) with the service, account, model and
+ * language for a Kokoro voice, else English) with the account, model and
  * voice the form holds *now*, saved or not, and hands the audio back to the
  * page as `{ play: { mime, data } }` (core's `PagePlay`), which the browser
  * plays and forgets. Nothing is stored: no Files artifact, no usage row, and
@@ -14,14 +14,12 @@
  */
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '@buddi/core/plugin';
-import { backendFor, COMING_BACKENDS, SpeechRefusal } from './backends/index.js';
-import { effectiveBackend, listAccounts, localDirOf, OFF, type Chosen } from './choose.js';
+import { SpeechRefusal } from './backends/index.js';
+import { chooseFromForm, localDirOf } from './choose.js';
 import { oggCrc, PAGE_EOS } from './local/ogg-opus.js';
-import { installedDir } from './local/runtime.js';
 import { isKokoroLanguage, voiceLanguage, type KokoroLanguage } from './local/voices.js';
 import { sniffAudio } from './magic.js';
 import { RESPONSE_CAP, transportOf, withFetch } from './net.js';
-import { getSettings } from './store.js';
 import { pickVoice, SPEECH_TIMEOUT_MS } from './tools.js';
 
 export const PREVIEW_PHRASE = "Hi, I'm buddi. This is how I sound.";
@@ -38,14 +36,12 @@ export const PREVIEW_PHRASES: Readonly<Record<KokoroLanguage, string>> = {
 export const PREVIEW_SECONDS = 5;
 /** Core's `PAGE_PLAY_MAX_BYTES`: what a page will play at all. */
 export const PREVIEW_MAX_BYTES = 512 * 1024;
-/** The model picker's last choice (`settings.ts`'s `OTHER_MODEL`). */
-const OTHER_MODEL = '__other__';
 
 const choice = (max: number) => z.string().max(max).optional();
 
 export const previewInput = z
   .object({
-    backend: choice(60),
+    /** `local`, an account id, or empty for the model on this computer. */
     account: choice(200),
     model: choice(150),
     /** The typed id, when `model` is "Other…". */
@@ -98,36 +94,6 @@ export function trimOgg(bytes: Buffer, seconds: number): Buffer {
   return bytes;
 }
 
-/** The form's choices, as a backend ready to speak, or one sentence saying why not. */
-async function chosenFrom(ctx: ToolContext, input: PreviewInput): Promise<Chosen> {
-  const settings = await getSettings(ctx.buddi!.db);
-  const kind = input.backend?.trim() || effectiveBackend(settings, 'speaking', localDirOf(ctx));
-  if (!kind || kind === OFF) throw new SpeechRefusal('refused: choose a speaking service first.');
-  const coming = COMING_BACKENDS.find((b) => b.kind === kind);
-  if (coming) throw new SpeechRefusal(`refused: ${coming.label} is not installed yet.`);
-  const backend = backendFor(kind);
-  if (!backend?.speaker) throw new SpeechRefusal('refused: choose a speaking service from the list.');
-  if (backend.local) {
-    installedDir(localDirOf(ctx), backend.local);
-    return { backend, model: backend.speaker.defaultModel, settings, where: backend.label };
-  }
-  const typed = input.model === OTHER_MODEL ? input.modelOther : input.model;
-  const model = typed?.trim() || backend.speaker.defaultModel;
-  if (model.length > 150 || /[\r\n\x00-\x1f]/.test(model)) throw new SpeechRefusal('refused: that is not a model id.');
-  if (!backend.accountKind) return { backend, model, settings, where: `${backend.label} · ${model}` };
-  const accountId = input.account?.trim();
-  if (!accountId) throw new SpeechRefusal(`refused: choose ${/^[AEIOU]/.test(backend.label) ? 'an' : 'a'} ${backend.label} account first.`);
-  const account = listAccounts(ctx).find((a) => a.id === accountId);
-  if (!account) throw new SpeechRefusal('refused: that account is not in Settings → Model accounts.');
-  if (account.kind !== backend.accountKind) throw new SpeechRefusal(`refused: "${account.label}" is not ${/^[AEIOU]/.test(backend.label) ? 'an' : 'a'} ${backend.label} account.`);
-  if (!account.enabled) throw new SpeechRefusal(`refused: "${account.label}" is disabled in Settings → Model accounts.`);
-  if (!account.configured) throw new SpeechRefusal(`refused: "${account.label}" is not connected. Connect it in Settings → Model accounts.`);
-  // Choosing it on the page is the owner binding it to this plugin, as Save
-  // does: only a bound account resolves through ctx.buddi.accounts.
-  await ctx.buddi!.accounts!.bind(account.id);
-  return { backend, account, model, settings, where: `${account.label} · ${model}` };
-}
-
 export interface PreviewToolOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
@@ -143,7 +109,7 @@ export function createPreviewTool(options: PreviewToolOptions = {}): ToolDefinit
     timeoutMs: timeoutMs + 20_000,
     input: previewInput,
     async execute(input, ctx) {
-      const chosen = await chosenFrom(ctx, input);
+      const chosen = await chooseFromForm(ctx, 'speaking', input);
       const localDir = chosen.backend.local ? localDirOf(ctx) : undefined;
       const backendCtx = {
         ...(ctx.buddi!.accounts ? { accounts: ctx.buddi!.accounts } : {}),

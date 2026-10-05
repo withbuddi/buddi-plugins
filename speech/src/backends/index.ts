@@ -11,6 +11,7 @@
  * OpenAI-shaped (Deepgram first, then ElevenLabs) are next, each keeping its
  * key in Keys and secrets.
  */
+import { geminiBackend } from './gemini.js';
 import { kokoroLocalBackend, whisperLocalBackend } from './local.js';
 import { openaiBackend, openaiCompatibleBackend } from './openai.js';
 import type { SpeechBackend } from './types.js';
@@ -18,6 +19,7 @@ import type { SpeechBackend } from './types.js';
 export const BACKENDS: Readonly<Record<string, SpeechBackend>> = {
   openai: openaiBackend,
   'openai-compatible': openaiCompatibleBackend,
+  gemini: geminiBackend,
   'whisper-local': whisperLocalBackend,
   'kokoro-local': kokoroLocalBackend,
 };
@@ -41,4 +43,5 @@ export function localBackendFor(side: 'listening' | 'speaking'): SpeechBackend {
 
 export * from './types.js';
 export * from './openai.js';
+export * from './gemini.js';
 export * from './local.js';

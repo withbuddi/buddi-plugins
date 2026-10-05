@@ -297,7 +297,7 @@ export function createTranscribeTool(options: ToolOptions = {}): ToolDefinition<
     description:
       'Turn a recording from the Files library (a voice note, an audio file up to 25 MB) into text. ' +
       'With a cloud service the recording leaves this machine for the listening service the owner chose in Settings → Speech ' +
-      '(OpenAI or their OpenAI-compatible server), which sends back the text; with Whisper on this computer nothing leaves. ' +
+      '(OpenAI, Gemini or their OpenAI-compatible server), which sends back the text; with Whisper on this computer nothing leaves. ' +
       'Returns { text, language? }.',
     tier: 'auto',
     timeoutMs: timeoutMs + 20_000,
@@ -358,7 +358,7 @@ export function createSayTool(options: ToolOptions = {}): ToolDefinition<SayInpu
     description:
       'Say a text aloud and keep the audio in the owner\'s Files library (a voice note, OGG/Opus when the service gives it). ' +
       'With a cloud service the text leaves this machine for the speaking service the owner chose in Settings → Speech ' +
-      '(OpenAI or their OpenAI-compatible server), which sends back the audio; with Kokoro on this computer nothing leaves, ' +
+      '(OpenAI, Gemini or their OpenAI-compatible server), which sends back the audio; with Kokoro on this computer nothing leaves, ' +
       'and it speaks English, French, Spanish, Italian, Portuguese and Hindi (the voice follows the text\'s language). Write for the ear.',
     tier: 'auto',
     producesArtifacts: true,

@@ -206,3 +206,31 @@ export async function setTelegramVoice(db: Db, patch: Partial<TelegramVoice>, no
   );
   return getTelegramVoice(db);
 }
+
+/* ------------------------------------------------------------------ *
+ * Models a sample worked with, for an account only trying tells about
+ * ------------------------------------------------------------------ */
+
+/** Keep that this account answered a sample on this side with this model. */
+export async function markTried(db: Db, accountId: string, side: 'listening' | 'speaking', model: string, now: Date): Promise<void> {
+  await db.query(
+    `insert into speech.tried (account_id, side, model, tried_at) values ($1, $2, $3, $4)
+     on conflict (account_id, side, model) do update set tried_at = excluded.tried_at`,
+    [accountId, side, model, now],
+  );
+}
+
+/** The models this account answered a sample with on this side, newest first. */
+export async function triedModels(db: Db, accountId: string, side: 'listening' | 'speaking'): Promise<string[]> {
+  const { rows } = await db.query(
+    `select model from speech.tried where account_id = $1 and side = $2 order by tried_at desc`,
+    [accountId, side],
+  );
+  return (rows as Array<{ model: string }>).map((r) => r.model);
+}
+
+/** Every account and side a sample worked on, as `"<account>:<side>"`. */
+export async function triedSides(db: Db): Promise<Set<string>> {
+  const { rows } = await db.query(`select distinct account_id, side from speech.tried`);
+  return new Set((rows as Array<{ account_id: string; side: string }>).map((r) => `${r.account_id}:${r.side}`));
+}

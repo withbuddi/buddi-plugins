@@ -18,16 +18,22 @@ import {
 import { manifest } from './index.js';
 import { NOT_SET } from './choose.js';
 import { clearModelCache } from './backends/openai.js';
-import { getSettings, recordUsage, setSettings, type Settings } from './store.js';
-import { fakeAudioServer, fakeInstalled, freshVoice, OGG_CLIP, type FakeAudioServer } from './testing/fixtures.js';
+import { clearGeminiModelCache } from './backends/gemini.js';
+import { getSettings, markTried, recordUsage, setSettings, type Settings } from './store.js';
+import { fakeAudioServer, fakeInstalled, freshVoice, GEMINI_MODELS, geminiAnswer, geminiPcm, OGG_CLIP, OPENAI_MODELS, type FakeAudioServer } from './testing/fixtures.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
 const TEST_DB = `buddi_speech_test_${process.pid}`;
 
-const OPENAI: ProviderAccountListing = { id: 'oa-1', label: 'OpenAI key', kind: 'openai', enabled: true, configured: true, defaultModel: 'gpt-5' };
-const LOCAL: ProviderAccountListing = { id: 'local-1', label: 'speaches', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'llama3' };
-const OLLAMA: ProviderAccountListing = { id: 'ollama-1', label: 'Ollama Cloud', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'gpt-oss' };
+const OPENAI: ProviderAccountListing = { id: 'oa-1', label: 'OpenAI key', kind: 'openai', enabled: true, configured: true, defaultModel: 'gpt-5', baseUrl: 'https://api.openai.com/v1' };
+const LOCAL: ProviderAccountListing = { id: 'local-1', label: 'speaches', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'llama3', baseUrl: 'http://127.0.0.1:8000/v1' };
+const OLLAMA: ProviderAccountListing = { id: 'ollama-1', label: 'Ollama Cloud', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'gpt-oss', baseUrl: 'https://ollama.com/v1' };
+// As host API 1.30 hands it: with its capabilities.
+const GEMINI: ProviderAccountListing = {
+  id: 'gem-1', label: 'Gemini', kind: 'openai-compatible', enabled: true, configured: true, defaultModel: 'gemini-2.5-flash',
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', capabilities: { audioIn: true, audioOut: true, source: 'known' },
+};
 const CODEX: ProviderAccountListing = { id: 'codex-1', label: 'ChatGPT Plus', kind: 'codex', enabled: true, configured: true, defaultModel: 'gpt-5.6' };
 const CLAUDE: ProviderAccountListing = { id: 'claude-1', label: 'Claude', kind: 'anthropic', enabled: true, configured: true, defaultModel: 'claude-sonnet-5' };
 
@@ -51,8 +57,9 @@ suite('speech tools (postgres)', () => {
     generateCodexImage: async () => {
       throw new Error('speech makes no images');
     },
+    // Every account answers on the fake server; Gemini's own API is rooted beside it (/v1beta).
     resolve: async (id, model) => ({
-      kind: 'openai', baseUrl: id === OLLAMA.id ? 'https://ollama.com/v1' : fake.base, credentialKind: 'api-key', secret: 'sk-test', model,
+      kind: 'openai', baseUrl: fake.base, credentialKind: 'api-key', secret: 'sk-test', model,
       ...(id === OPENAI.id ? {} : { compatible: true }),
     }),
     withCodexProfile: async () => { throw new Error('not here'); },
@@ -97,13 +104,14 @@ suite('speech tools (postgres)', () => {
   });
 
   beforeEach(async () => {
-    accounts = [OPENAI, LOCAL, OLLAMA, CODEX, CLAUDE];
+    accounts = [OPENAI, LOCAL, OLLAMA, GEMINI, CODEX, CLAUDE];
     fake.seen.length = 0;
     fake.answer = (req) => req.url.endsWith('/audio/speech')
       ? { status: 200, type: 'audio/ogg', body: freshVoice() }
       : { status: 200, body: JSON.stringify({ text: 'Hello from buddi. This is a test.' }) };
     await pool.query('delete from speech.usage');
     await pool.query('delete from speech.settings');
+    await pool.query('delete from speech.tried');
     await pool.query('delete from core.plugin_account_bindings');
     const { rows } = await pool.query(`insert into core.conversations (agent_id) values ('buddy') returning id::text as id`);
     conversationId = (rows[0] as { id: string }).id;
@@ -138,19 +146,24 @@ suite('speech tools (postgres)', () => {
     await expect(execute('speech.transcribe', { artifactId: note.id })).rejects.toThrow(/is not connected. Connect it in Settings → Model accounts/);
   });
 
-  it('the settings tool offers and accepts only qualifying accounts, binds the one chosen, and refuses a local one not installed', async () => {
+  it('the settings tool takes an account per row, refuses one with no audio with its reason, binds the one chosen, and keeps an untested model only once a Test worked', async () => {
     const set = tool('speech.set_settings');
-    await expect(set.execute({ side: 'listening', backend: 'openai', account: CODEX.id } as never, owner())).rejects.toThrow(/not an OpenAI account/);
-    await expect(set.execute({ side: 'speaking', backend: 'openai-compatible', account: CLAUDE.id } as never, owner())).rejects.toThrow(/not an OpenAI-compatible account/);
-    await expect(set.execute({ side: 'listening', backend: 'whisper-local' } as never, owner())).rejects.toThrow(/Install Whisper on this computer first/);
-    await expect(set.execute({ side: 'speaking', backend: 'openai-compatible', account: OLLAMA.id } as never, owner())).rejects.toThrow(/Ollama Cloud serves no audio routes/);
+    await expect(set.execute({ side: 'listening', account: CODEX.id } as never, owner())).rejects.toThrow('"ChatGPT Plus" cannot be used here: ChatGPT subscription: its backend has no audio.');
+    await expect(set.execute({ side: 'speaking', account: CLAUDE.id } as never, owner())).rejects.toThrow(/Claude: Anthropic's API has no audio/);
+    await expect(set.execute({ side: 'speaking', account: 'gone' } as never, owner())).rejects.toThrow(/not in Settings → Model accounts/);
+    await expect(set.execute({ side: 'listening', account: 'local' } as never, owner())).rejects.toThrow(/Install Whisper on this computer first/);
+    // An account only a sample can tell about: Save waits for a Test that worked.
+    await expect(set.execute({ side: 'speaking', account: OLLAMA.id, model: '__other__', modelOther: 'kokoro' } as never, owner()))
+      .rejects.toThrow(/can't tell whether "Ollama Cloud" speaks with kokoro\. Choose a model and press Test/);
     const nine = ['en', 'fr', 'es', 'de', 'pt', 'it', 'nl', 'ar', 'zh'];
-    await expect(set.execute({ side: 'listening', backend: 'openai', account: OPENAI.id, languages: nine } as never, owner())).rejects.toThrow('Choose at most 8 languages.');
-    await expect(set.execute({ side: 'listening', backend: 'openai', account: OPENAI.id, languages: ['French'] } as never, owner())).rejects.toThrow(/from the list/);
-    const saved = (await set.execute({ side: 'listening', backend: 'openai', account: OPENAI.id, model: '', languages: ['fr', 'FR', 'en'] } as never, owner())) as { note: string };
-    expect(saved.note).toBe('Saved. Listening uses OpenAI.');
-    // "Other…" takes the typed id.
-    await set.execute({ side: 'speaking', backend: 'openai-compatible', account: LOCAL.id, model: '__other__', modelOther: 'kokoro', voice: 'af_bella' } as never, owner());
+    await expect(set.execute({ side: 'listening', account: OPENAI.id, languages: nine } as never, owner())).rejects.toThrow('Choose at most 8 languages.');
+    await expect(set.execute({ side: 'listening', account: OPENAI.id, languages: ['French'] } as never, owner())).rejects.toThrow(/from the list/);
+    const saved = (await set.execute({ side: 'listening', account: OPENAI.id, model: '', languages: ['fr', 'FR', 'en'] } as never, owner())) as { note: string };
+    expect(saved.note).toBe('Saved. Listening uses OpenAI key · gpt-4o-mini-transcribe.');
+    // The Test beside the account, with "Other…": it worked, so Save keeps the model.
+    const tried = (await tool('speech.test').execute({ side: 'speaking', account: LOCAL.id, model: '__other__', modelOther: 'kokoro', voice: 'af_bella' } as never, owner())) as { message: string };
+    expect(tried.message).toMatch(/^Asked kokoro to say "Hi, I'm buddi\. This is how I sound\." → done in \d+\.\d s, voice af_bella\.$/);
+    await set.execute({ side: 'speaking', account: LOCAL.id, model: '__other__', modelOther: 'kokoro', voice: 'af_bella' } as never, owner());
     await set.execute({ side: 'limits', transcribeCap: '50', sayCap: '60' } as never, owner());
     expect(await getSettings(pool)).toEqual(settingsWith({
       listen: { backend: 'openai', accountId: OPENAI.id, model: null, languages: ['fr', 'en'] },
@@ -158,67 +171,105 @@ suite('speech tools (postgres)', () => {
       speak: { backend: 'openai-compatible', accountId: LOCAL.id, model: 'kokoro', voice: 'af_bella', voices: { en: 'af_bella' } },
       transcribeCap: 50, sayCap: 60,
     }));
+    // A Gemini account runs Gemini's own backend.
+    expect(await set.execute({ side: 'listening', account: GEMINI.id, model: 'gemini-2.5-flash', languages: [] } as never, owner())).toMatchObject({ listening: { backend: 'gemini', accountId: GEMINI.id }, note: 'Saved. Listening uses Gemini · gemini-2.5-flash.' });
     const bound = await pool.query(`select account_id from core.plugin_account_bindings where plugin = 'speech' order by 1`);
-    expect(bound.rows.map((r) => r.account_id)).toEqual(expect.arrayContaining([OPENAI.id, LOCAL.id]));
+    expect(bound.rows.map((r) => r.account_id)).toEqual(expect.arrayContaining([OPENAI.id, LOCAL.id, GEMINI.id]));
     // A model may never call it.
     expect(await run('speech.set_settings', { side: 'limits', transcribeCap: 1 })).toMatchObject({ ok: false });
   });
 
-  it('the page reads the choices, the qualifying accounts per service, the voices and what leaves', async () => {
+  it('the page reads each row\'s account, offers the accounts that can do it labelled with what they do, and says why the others are not', async () => {
     await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id }, speak: { backend: 'openai-compatible', accountId: LOCAL.id } }));
     const page = await query('settings');
     expect(page).toMatchObject({
-      listenBackend: 'openai', listenAccount: OPENAI.id, speakBackend: 'openai-compatible', transcribeCap: 200, sayCap: 200,
-      listenModelDefault: 'gpt-4o-mini-transcribe', speakModelDefault: 'gpt-4o-mini-tts',
+      listenAccount: OPENAI.id, speakAccount: LOCAL.id, transcribeCap: 200, sayCap: 200,
+      listenModel: 'gpt-4o-mini-transcribe', speakModel: 'gpt-4o-mini-tts',
       leavesListening: 'Listening: The recording goes to OpenAI (api.openai.com), which sends back the text.',
-    });
-    expect(page).toMatchObject({
       listenStatus: 'Listening: OpenAI key · gpt-4o-mini-transcribe.',
       speakStatus: 'Speaking: speaches · gpt-4o-mini-tts.',
     });
-    expect((page.listenBackends as Array<{ id: string }>).map((b) => b.id)).toEqual(['openai', 'openai-compatible', 'whisper-local', 'off']);
-    expect(page.accounts).toEqual(expect.arrayContaining([{ label: 'ChatGPT Plus', kind: 'codex', offered: 'no audio routes' }]));
-    expect(((await query('listen_accounts', { listenBackend: 'openai' })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual([OPENAI.id]);
-    expect(((await query('speak_accounts', { speakBackend: 'openai-compatible' })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual([LOCAL.id, OLLAMA.id]);
-    expect(((await query('speak_accounts', {})).choices as Array<{ id: string }>).map((c) => c.id)).toEqual([OPENAI.id, LOCAL.id, OLLAMA.id]);
-    expect(((await query('voices', { speakBackend: 'openai' })).voices as unknown[]).length).toBe(11);
+    expect(page.listenUnavailable).toEqual([
+      { id: CODEX.id, line: 'ChatGPT Plus — ChatGPT subscription: its backend has no audio.' },
+      { id: CLAUDE.id, line: "Claude — Claude: Anthropic's API has no audio." },
+    ]);
+    expect(page.accounts).toEqual(expect.arrayContaining([
+      { label: 'ChatGPT Plus', kind: 'codex', listening: 'no audio', speaking: 'no audio' },
+      { label: 'Gemini', kind: 'openai-compatible', listening: 'listens and speaks', speaking: 'listens and speaks' },
+    ]));
+    expect((await query('listen_accounts')).choices).toEqual([
+      { id: 'local', label: 'On this computer · Whisper — install it under On this computer' },
+      { id: OPENAI.id, label: 'OpenAI key · listens and speaks' },
+      { id: LOCAL.id, label: 'speaches · listens (untested)' },
+      { id: OLLAMA.id, label: 'Ollama Cloud · listens (untested)' },
+      { id: GEMINI.id, label: 'Gemini · listens and speaks' },
+      { id: 'off', label: 'Off' },
+    ]);
+    await markTried(pool, OLLAMA.id, 'speaking', 'tts-1', new Date());
+    expect(((await query('speak_accounts')).choices as Array<{ id: string; label: string }>).find((c) => c.id === OLLAMA.id)!.label).toBe('Ollama Cloud · speaks (tried)');
+    // The host's capabilities win: a server it knows speaks but does not listen.
+    accounts = [OPENAI, { ...LOCAL, capabilities: { audioIn: false, audioOut: true, source: 'known' } } as ProviderAccountListing];
+    expect(((await query('listen_accounts')).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['local', OPENAI.id, 'off']);
+    expect(((await query('speak_accounts')).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['local', OPENAI.id, LOCAL.id, 'off']);
+    expect((await query('settings')).listenUnavailable).toEqual([{ id: LOCAL.id, line: 'speaches — it cannot listen.' }]);
+    accounts = [OPENAI, LOCAL, OLLAMA, GEMINI, CODEX, CLAUDE];
+    expect(((await query('voices', { account: OPENAI.id })).voices as unknown[]).length).toBe(11);
+    expect(((await query('voices', { account: GEMINI.id })).voices as Array<{ id: string }>).map((v) => v.id)).toContain('Kore');
     expect(await query('voices', {})).toEqual({ voices: [] });
+    expect(await query('voices', { account: CODEX.id })).toEqual({ voices: [] });
     await choose(settingsWith({}));
     expect(await query('settings')).toMatchObject({
-      listenStatus: 'Listening: not set up. Pick a service below, or install Whisper.',
-      speakStatus: 'Speaking: not set up. Pick a service below, or install Kokoro.',
+      listenAccount: '', speakAccount: '',
+      listenStatus: 'Listening: not set up. Pick an account below, or install Whisper.',
+      speakStatus: 'Speaking: not set up. Pick an account below, or install Kokoro.',
     });
   });
 
-  it('the model pickers list what the account offers, cached, with the default first and Other… last', async () => {
+  it('the model pickers list what each account offers for the row, from its recorded list, cached, with Other… last', async () => {
     clearModelCache();
+    clearGeminiModelCache();
     await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id }, speak: { backend: 'openai-compatible', accountId: LOCAL.id, model: 'my-tts' } }));
-    fake.answer = (req) => req.url.endsWith('/models')
-      ? { status: 200, body: JSON.stringify({ data: [{ id: 'gpt-5' }, { id: 'whisper-1' }, { id: 'gpt-4o-transcribe' }, { id: 'gpt-4o-mini-transcribe' }, { id: 'tts-1' }, { id: 'gpt-4o-mini-tts' }] }) }
+    fake.answer = (req) => req.url === '/v1/models' ? { status: 200, body: OPENAI_MODELS }
+      : req.url.startsWith('/v1beta/models') ? { status: 200, body: GEMINI_MODELS }
       : { status: 200, body: '{}' };
-    const listen = (await query('listen_models', { listenBackend: 'openai', account: OPENAI.id })).choices as Array<{ id: string; label: string }>;
+    const listen = (await query('listen_models', { account: OPENAI.id })).choices as Array<{ id: string; label: string }>;
     expect(listen).toEqual([
       { id: 'gpt-4o-mini-transcribe', label: 'gpt-4o-mini-transcribe (default)' },
       { id: 'gpt-4o-transcribe', label: 'gpt-4o-transcribe' },
+      { id: 'gpt-4o-transcribe-diarize', label: 'gpt-4o-transcribe-diarize' },
       { id: 'whisper-1', label: 'whisper-1' },
       { id: '__other__', label: 'Other…' },
     ]);
     const models = fake.seen.filter((s) => s.url === '/v1/models');
     expect(models).toHaveLength(1);
-    expect(models[0]!.method).toBe('GET');
     expect(models[0]!.headers.authorization).toBe('Bearer sk-test');
     // Cached per account: the speaking side of the same account asks nothing.
-    const speakSame = (await query('speak_models', { speakBackend: 'openai', account: OPENAI.id })).choices as Array<{ id: string }>;
-    expect(speakSame.map((c) => c.id)).toEqual(['gpt-4o-mini-tts', 'tts-1', '__other__']);
+    const speakSame = (await query('speak_models', { account: OPENAI.id })).choices as Array<{ id: string }>;
+    expect(speakSame.map((c) => c.id)).toEqual(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd', '__other__']);
     expect(fake.seen.filter((s) => s.url === '/v1/models')).toHaveLength(1);
-    // A server that fails: the default, the saved model, and Other….
+    // Gemini not yet bound (a page's query may not bind): its known audio models, asking nothing.
+    expect(((await query('listen_models', { account: GEMINI.id })).choices as Array<{ id: string }>).map((c) => c.id))
+      .toEqual(['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', '__other__']);
+    expect(fake.seen.filter((s) => s.url.startsWith('/v1beta/models'))).toHaveLength(0);
+    // Bound (Save or Test chose it): its own model list, with the key in Google's header; Live-only models left out.
+    await pool.query(`insert into core.plugin_account_bindings (plugin, account_id) values ('speech', $1)`, [GEMINI.id]);
+    const geminiListen = (await query('listen_models', { account: GEMINI.id })).choices as Array<{ id: string; label: string }>;
+    expect(geminiListen.map((c) => c.label)).toEqual(['gemini-2.5-flash (default)', 'gemini-2.0-flash', 'gemini-2.5-flash-lite', 'Other…']);
+    expect(((await query('speak_models', { account: GEMINI.id })).choices as Array<{ id: string }>).map((c) => c.id))
+      .toEqual(['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', '__other__']);
+    const google = fake.seen.filter((s) => s.url.startsWith('/v1beta/models'));
+    expect(google).toHaveLength(1);
+    expect(google[0]!.headers['x-goog-api-key']).toBe('sk-test');
+    // A compatible server that fails: the saved model and Other…; one a Test worked with comes first, marked.
     fake.answer = () => ({ status: 500, body: 'no' });
-    const failed = (await query('speak_models', { speakBackend: 'openai-compatible', account: LOCAL.id })).choices as Array<{ id: string }>;
-    expect(failed.map((c) => c.id)).toEqual(['gpt-4o-mini-tts', 'my-tts', '__other__']);
-    // No account chosen yet: the default alone; a local backend: its one model.
-    expect(((await query('listen_models', { listenBackend: 'openai' })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['gpt-4o-mini-transcribe', '__other__']);
-    expect(((await query('listen_models', { listenBackend: 'whisper-local' })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['whisper-small (q8)']);
+    expect(((await query('speak_models', { account: LOCAL.id })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['my-tts', '__other__']);
+    await markTried(pool, LOCAL.id, 'speaking', 'kokoro', new Date());
+    expect(((await query('speak_models', { account: LOCAL.id })).choices as Array<{ label: string }>).map((c) => c.label)).toEqual(['kokoro · worked', 'my-tts', 'Other…']);
+    // Nothing chosen, or Off: no models; the model on this computer: its one; an account with no audio: none.
     expect(await query('listen_models', {})).toEqual({ choices: [] });
+    expect(await query('listen_models', { account: 'off' })).toEqual({ choices: [] });
+    expect(((await query('listen_models', { account: 'local' })).choices as Array<{ id: string }>).map((c) => c.id)).toEqual(['whisper-small (q8)']);
+    expect(await query('listen_models', { account: CODEX.id })).toEqual({ choices: [] });
   });
 
   it('the page shows the languages, and warns when Kokoro would get a note in another', async () => {
@@ -372,15 +423,34 @@ suite('speech tools (postgres)', () => {
     await expect(execute('speech.say', { text: 'three' })).rejects.toThrow(/2 replies have been spoken today, and the daily limit is 2/);
   });
 
-  it("the Listening Test transcribes the bundled clip; Speaking has no Test that writes to Files", async () => {
+  it('Test beside each row: listens to the bundled clip or says a sentence with what is on the form, reports it as Test connection does, and keeps and counts nothing', async () => {
     await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id } }));
-    const heard = (await tool('speech.test').execute({ side: 'listening' } as never, owner())) as { note: string };
-    expect(heard.note).toMatch(/^Heard: "Hello from buddi. This is a test."/);
+    const test = (args: Record<string, unknown>) => tool('speech.test').execute(args as never, owner()) as Promise<Record<string, unknown>>;
+    const files = (await pool.query(`select count(*)::int as n from core.artifacts`)).rows[0].n;
+    // Saved: no account in the call tests what is saved.
+    const heard = await test({ side: 'listening' });
+    expect(heard.message).toMatch(/^Asked gpt-4o-mini-transcribe to listen to a 2-second clip → it heard "Hello from buddi\. This is a test\." in \d+\.\d s\. The clip says/);
     expect(fake.seen.at(-1)!.body.includes(OGG_CLIP)).toBe(true);
-    expect(await run('speech.test', { side: 'speaking' }, { agentId: 'owner', conversationId: undefined })).toMatchObject({ reason: 'invalid-args' });
-    const page = JSON.stringify(manifest.pages);
-    expect(page).not.toContain("'speaking'");
-    expect(manifest.pages![0]!.body.some((c) => c.kind === 'section' && c.title === 'Speaking' && (c.actions?.length ?? 0) > 0)).toBe(false);
+    // The form's unsaved Gemini choice: Gemini's own route, the clip inline.
+    fake.answer = (req) => req.url.endsWith(':generateContent')
+      ? { status: 200, body: req.url.includes('tts') ? geminiAnswer({ audio: geminiPcm(1) }) : geminiAnswer({ text: 'Hello from buddi. This is a test.' }) }
+      : { status: 404, body: '{}' };
+    expect((await test({ side: 'listening', account: GEMINI.id, model: 'gemini-2.5-flash' })).message).toMatch(/^Asked gemini-2\.5-flash to listen to a 2-second clip → it heard "Hello from buddi/);
+    expect(fake.seen.at(-1)!.url).toBe('/v1beta/models/gemini-2.5-flash:generateContent');
+    const spoken = await test({ side: 'speaking', account: GEMINI.id, model: 'gemini-2.5-flash-preview-tts', voice: 'Puck' });
+    expect(spoken.message).toMatch(/^Asked gemini-2\.5-flash-preview-tts to say "Hi, I'm buddi\. This is how I sound\." → done in \d+\.\d s, voice Puck\.$/);
+    expect((spoken.play as { mime: string }).mime).toBe('audio/ogg');
+    // A failure says what was asked and what came back; nothing is kept as tried.
+    expect(await run('speech.test', { side: 'listening', account: LOCAL.id, model: '__other__', modelOther: 'whisper-1' }, { agentId: 'owner', conversationId: undefined }))
+      .toMatchObject({ ok: false, message: expect.stringMatching(/^Asked whisper-1 to listen to a 2-second clip → the listening service answered 404/) });
+    expect((await pool.query('select count(*)::int as n from speech.tried')).rows[0].n).toBe(0);
+    expect(await run('speech.test', { side: 'speaking', account: CODEX.id }, { agentId: 'owner', conversationId: undefined }))
+      .toMatchObject({ ok: false, message: expect.stringMatching(/cannot be used for speaking: ChatGPT subscription: its backend has no audio/) });
+    // Nothing went to Files or the counts.
+    expect((await pool.query('select count(*)::int as n from speech.usage')).rows[0].n).toBe(0);
+    expect((await pool.query(`select count(*)::int as n from core.artifacts`)).rows[0].n).toBe(files);
+    // ownerOnly.
+    expect(await run('speech.test', { side: 'listening' })).toMatchObject({ ok: false });
   });
 
   it('preview: says the sample with the unsaved choices, plays it back, and keeps and counts nothing', async () => {
@@ -390,7 +460,7 @@ suite('speech tools (postgres)', () => {
     await recordUsage(pool, { side: 'speak', agentId: 'buddy', conversationId: null, artifactId: null, backend: 'openai', accountId: OPENAI.id, model: 'tts-1', chars: 3, bytes: 3, now: new Date() });
     const before = (await pool.query('select count(*)::int as n from core.artifacts')).rows[0].n;
     const used = (await pool.query('select count(*)::int as n from speech.usage')).rows[0].n;
-    const out = (await run('speech.preview', { backend: 'openai', account: OPENAI.id, model: 'gpt-4o-mini-tts', voice: 'nova' }, { agentId: 'owner', conversationId: undefined })) as {
+    const out = (await run('speech.preview', { account: OPENAI.id, model: 'gpt-4o-mini-tts', voice: 'nova' }, { agentId: 'owner', conversationId: undefined })) as {
       ok: boolean; output: { play: { mime: string; data: string } };
     };
     expect(out.ok).toBe(true);
@@ -403,24 +473,26 @@ suite('speech tools (postgres)', () => {
     // Nothing was saved either.
     expect((await getSettings(pool)).speaking.backend).toBeNull();
     // A row's play button: the sample in the row's language.
-    await run('speech.preview', { backend: 'openai', account: OPENAI.id, voice: 'nova', lang: 'fr' }, { agentId: 'owner', conversationId: undefined });
+    await run('speech.preview', { account: OPENAI.id, voice: 'nova', lang: 'fr' }, { agentId: 'owner', conversationId: undefined });
     expect(JSON.parse(fake.seen.at(-1)!.body.toString())).toMatchObject({ input: 'Bonjour, je suis buddi. Voici ma voix.', voice: 'nova' });
-    expect(await run('speech.preview', { backend: 'openai', account: OPENAI.id, lang: 'French' }, { agentId: 'owner', conversationId: undefined })).toMatchObject({ reason: 'invalid-args' });
+    expect(await run('speech.preview', { account: OPENAI.id, lang: 'French' }, { agentId: 'owner', conversationId: undefined })).toMatchObject({ reason: 'invalid-args' });
     // "Other…" sends the typed id.
-    await run('speech.preview', { backend: 'openai', account: OPENAI.id, model: '__other__', modelOther: 'tts-1-hd', voice: 'nova' }, { agentId: 'owner', conversationId: undefined });
+    await run('speech.preview', { account: OPENAI.id, model: '__other__', modelOther: 'tts-1-hd', voice: 'nova' }, { agentId: 'owner', conversationId: undefined });
     expect(JSON.parse(fake.seen.at(-1)!.body.toString()).model).toBe('tts-1-hd');
   });
 
   it('preview: refuses in one sentence, and never for an agent', async () => {
     await choose(settingsWith({}));
     const asOwner = { agentId: 'owner', conversationId: undefined };
-    expect(await run('speech.preview', {}, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/choose a speaking service first/) });
-    expect(await run('speech.preview', { backend: 'openai' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/choose an OpenAI account first/) });
-    expect(await run('speech.preview', { backend: 'openai', account: CODEX.id }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/is not an OpenAI account/) });
-    expect(await run('speech.preview', { backend: 'kokoro-local' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/Kokoro on this computer is not installed/) });
-    expect(await run('speech.preview', { backend: 'openai', account: OPENAI.id, voice: 'robot' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/"robot" is not an OpenAI voice/) });
+    expect(await run('speech.preview', {}, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/choose an account for speaking first/) });
+    expect(await run('speech.preview', { account: 'nope' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/not in Settings → Model accounts/) });
+    expect(await run('speech.preview', { account: CODEX.id }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/cannot be used for speaking: ChatGPT subscription/) });
+    expect(await run('speech.preview', { account: 'local' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/Kokoro on this computer is not installed/) });
+    expect(await run('speech.preview', { account: OPENAI.id, voice: 'robot' }, asOwner)).toMatchObject({ ok: false, message: expect.stringMatching(/"robot" is not an OpenAI voice/) });
+    // The old Service field is gone.
+    expect(await run('speech.preview', { backend: 'openai', account: OPENAI.id }, asOwner)).toMatchObject({ reason: 'invalid-args' });
     // ownerOnly: an agent cannot reach it.
-    expect(await run('speech.preview', { backend: 'openai', account: OPENAI.id })).toMatchObject({ ok: false });
+    expect(await run('speech.preview', { account: OPENAI.id })).toMatchObject({ ok: false });
     expect(fake.seen.filter((r) => r.url.endsWith('/audio/speech'))).toHaveLength(0);
   });
 
@@ -429,20 +501,20 @@ suite('speech tools (postgres)', () => {
     await fakeInstalled(dir, 'whisper');
     await fakeInstalled(dir, 'kokoro');
     try {
-      const saved = await run('speech.set_settings', { side: 'listening', backend: 'off', languages: [] }, owner());
+      const saved = await run('speech.set_settings', { side: 'listening', account: 'off', languages: [] }, owner());
       expect(saved).toMatchObject({ ok: true, output: { note: expect.stringMatching(/Listening is off, so speech\.transcribe refuses, even with a model/) } });
-      await run('speech.set_settings', { side: 'speaking', backend: 'off' }, owner());
+      await run('speech.set_settings', { side: 'speaking', account: 'off' }, owner());
       expect(await getSettings(pool)).toMatchObject({ listening: { backend: 'off' }, speaking: { backend: 'off' } });
       expect(await query('settings')).toMatchObject({
-        listenBackend: 'off', speakBackend: 'off', listenStatus: 'Listening: off.', speakStatus: 'Speaking: off.',
+        listenAccount: 'off', speakAccount: 'off', listenStatus: 'Listening: off.', speakStatus: 'Speaking: off.',
         leavesListening: 'Listening: nothing, because it is off.',
       });
       const note = await voiceNote();
       expect(await run('speech.transcribe', { artifactId: note.id })).toMatchObject({ ok: false, message: NOT_SET.listening });
       expect(await run('speech.say', { text: 'Hello.' })).toMatchObject({ ok: false, message: NOT_SET.speaking });
       // Back to nothing chosen: the model on this computer again.
-      await run('speech.set_settings', { side: 'listening', backend: '', languages: [] }, owner());
-      expect(await query('settings')).toMatchObject({ listenBackend: 'whisper-local' });
+      await run('speech.set_settings', { side: 'listening', account: '', languages: [] }, owner());
+      expect(await query('settings')).toMatchObject({ listenAccount: 'local' });
     } finally {
       await rm(dir, { recursive: true, force: true });
       await choose(settingsWith({}));
@@ -479,19 +551,19 @@ suite('speech tools (postgres)', () => {
     await fakeInstalled(dir, 'kokoro');
     const page = await query('settings');
     expect(page).toMatchObject({
-      listenBackend: 'whisper-local', speakBackend: 'kokoro-local',
+      listenAccount: 'local', speakAccount: 'local',
       leavesListening: 'Listening: nothing. It runs on this computer.', leavesSpeaking: 'Speaking: nothing. It runs on this computer.',
       listenStatus: 'Listening: Whisper on this computer.', speakStatus: 'Speaking: Kokoro on this computer.',
     });
-    expect((page.speakBackends as Array<{ id: string; available: boolean }>).at(-2)).toEqual({ id: 'kokoro-local', label: 'Kokoro on this computer', available: true });
+    expect(((await query('speak_accounts')).choices as Array<{ id: string; label: string }>)[0]).toEqual({ id: 'local', label: 'On this computer · Kokoro' });
     // The one Voice field lists Kokoro's English voices; a row, its language's.
-    const english = ((await query('voices', { speakBackend: 'kokoro-local' })).voices as Array<{ id: string }>).map((v) => v.id);
+    const english = ((await query('voices', { account: 'local' })).voices as Array<{ id: string }>).map((v) => v.id);
     expect(english).toEqual(expect.arrayContaining(['af_heart', 'bf_emma']));
     expect(english).not.toContain('ff_siwis');
-    expect(((await query('voices', { speakBackend: 'kokoro-local', lang: 'fr' })).voices as Array<{ id: string }>).map((v) => v.id)).toEqual(['ff_siwis']);
-    expect(((await query('voices', { speakBackend: 'kokoro-local', lang: 'es' })).voices as Array<{ id: string }>).map((v) => v.id)).toEqual(['ef_dora', 'em_alex', 'em_santa']);
-    expect(await query('voices', { speakBackend: 'kokoro-local', lang: 'de' })).toEqual({ voices: [] });
-    expect(((await query('voices', { speakBackend: 'openai' })).voices as unknown[]).length).toBe(11);
+    expect(((await query('voices', { account: 'local', lang: 'fr' })).voices as Array<{ id: string }>).map((v) => v.id)).toEqual(['ff_siwis']);
+    expect(((await query('voices', { account: 'local', lang: 'es' })).voices as Array<{ id: string }>).map((v) => v.id)).toEqual(['ef_dora', 'em_alex', 'em_santa']);
+    expect(await query('voices', { account: 'local', lang: 'de' })).toEqual({ voices: [] });
+    expect(((await query('voices', { account: OPENAI.id })).voices as unknown[]).length).toBe(11);
     const status = await query('install_status');
     expect(status).toMatchObject({ busy: false, models: [{ kind: 'whisper', state: 'installed' }, { kind: 'kokoro', state: 'installed' }] });
     // A French reply is said with Kokoro's French voice, whichever voice is chosen: the approval card names it.
@@ -506,14 +578,14 @@ suite('speech tools (postgres)', () => {
     });
     // Saved from the rows: the map, and the one voice following the first language.
     const setVoices = tool('speech.set_settings');
-    const savedRows = (await setVoices.execute({ side: 'speaking', backend: 'kokoro-local', voice_en: 'am_adam', voice_fr: 'ff_siwis' } as never, owner())) as Settings;
+    const savedRows = (await setVoices.execute({ side: 'speaking', account: 'local', voice_en: 'am_adam', voice_fr: 'ff_siwis' } as never, owner())) as Settings;
     expect(savedRows.speaking).toMatchObject({ voice: 'ff_siwis', voices: { en: 'am_adam', fr: 'ff_siwis' } });
     // A reply picks the voice of its language: the owner's English voice for English, whichever voice is the fallback.
     expect((await tool('speech.say').describe!({ text: 'Your meeting moved to three, and that is all.' } as never, ctx({}))).preview).toMatch(/, voice am_adam: "Your meeting/);
     expect((await tool('speech.say').describe!({ text: french } as never, ctx({}))).preview).toMatch(/, voice ff_siwis: "Bonjour/);
     // A row left out keeps its voice; one emptied drops it.
-    expect(((await setVoices.execute({ side: 'speaking', backend: 'kokoro-local', voice_fr: 'ff_siwis' } as never, owner())) as Settings).speaking.voices).toEqual({ en: 'am_adam', fr: 'ff_siwis' });
-    expect(((await setVoices.execute({ side: 'speaking', backend: 'kokoro-local', voice_en: '' } as never, owner())) as Settings).speaking.voices).toEqual({ fr: 'ff_siwis' });
+    expect(((await setVoices.execute({ side: 'speaking', account: 'local', voice_fr: 'ff_siwis' } as never, owner())) as Settings).speaking.voices).toEqual({ en: 'am_adam', fr: 'ff_siwis' });
+    expect(((await setVoices.execute({ side: 'speaking', account: 'local', voice_en: '' } as never, owner())) as Settings).speaking.voices).toEqual({ fr: 'ff_siwis' });
     // OpenAI's voices carry no language: the one Voice field.
     await choose(settingsWith({ listen: { languages: ['fr', 'en'] }, speak: { backend: 'openai', accountId: OPENAI.id } }));
     expect(await query('settings')).toMatchObject({ voiceByLanguage: false, voiceRows: { en: false, fr: false } });
@@ -523,10 +595,10 @@ suite('speech tools (postgres)', () => {
     expect((await pool.query('select count(*)::int as n from speech.usage')).rows[0].n).toBe(0);
     // The owner's choice wins over the default.
     await choose(settingsWith({ listen: { backend: 'openai', accountId: OPENAI.id } }));
-    expect((await query('settings')).listenBackend).toBe('openai');
+    expect((await query('settings')).listenAccount).toBe(OPENAI.id);
     // Choosing it explicitly works once installed.
     const set = tool('speech.set_settings');
-    expect(await set.execute({ side: 'speaking', backend: 'kokoro-local', voice: 'bf_emma' } as never, owner())).toMatchObject({ note: 'Saved. Speaking uses Kokoro on this computer.' });
+    expect(await set.execute({ side: 'speaking', account: 'local', voice: 'bf_emma' } as never, owner())).toMatchObject({ note: 'Saved. Speaking uses Kokoro on this computer.' });
     const removed = (await tool('speech.remove').execute({ kind: 'kokoro' } as never, owner())) as { note: string };
     expect(removed.note).toBe('Removed Kokoro on this computer. Speaking needs another service, or Install again.');
     await expect(execute('speech.say', { text: 'This is buddi.' })).rejects.toThrow(/Kokoro on this computer is not installed/);

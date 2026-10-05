@@ -13,6 +13,28 @@ import { TEST_CLIP } from '../settings.js';
 export const OGG_CLIP = readFileSync(TEST_CLIP);
 
 /**
+ * What `GET /v1/models` answers for an OpenAI key, and Gemini's
+ * `GET /v1beta/models` for an AI Studio key: trimmed to the families that
+ * matter here plus the neighbours a filter must leave out.
+ */
+export const OPENAI_MODELS = readFileSync(new URL('./models/openai-models.json', import.meta.url), 'utf8');
+export const GEMINI_MODELS = readFileSync(new URL('./models/gemini-models.json', import.meta.url), 'utf8');
+
+/** One second of a 440 Hz tone as Gemini's TTS sends it: 16-bit PCM at 24 kHz, base64. */
+export function geminiPcm(seconds = 1): string {
+  const rate = 24_000;
+  const pcm = Buffer.alloc(rate * seconds * 2);
+  for (let i = 0; i < rate * seconds; i++) pcm.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000), i * 2);
+  return pcm.toString('base64');
+}
+
+/** A `generateContent` answer: text, or audio. */
+export function geminiAnswer(part: { text: string } | { audio: string }): string {
+  const p = 'text' in part ? { text: part.text } : { inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: part.audio } };
+  return JSON.stringify({ candidates: [{ content: { role: 'model', parts: [p] }, finishReason: 'STOP' }] });
+}
+
+/**
  * A voice as a speaker would send it: the clip with a random tail, so two
  * utterances are two files (the library keeps one copy of identical bytes).
  */
