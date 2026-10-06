@@ -124,5 +124,42 @@
         "title": "Guinée-Bissau : le retour du président déchu Sissoco Embalo compromis",
         "lead": "En Guinée-Bissau, le retour annoncé de l’ancien président Umaro Sissoco Embalo est compromis. Les militaires au pouvoir estiment que les conditions de sécurité ne sont pas réunies pour permettre son retour dans le pays." }
     ]
+  ],
+  "togoMix": [
+    { "outlet": "YSscores", "lang": "fr", "at": "2026-10-05T19:30:00Z",
+      "title": "Togo-Burundi : les Éperviers s'imposent en amical",
+      "lead": "" },
+    { "outlet": "TOD", "lang": "fr", "at": "2026-10-05T21:00:00Z",
+      "title": "Football : le Togo bat le Burundi",
+      "lead": "" },
+    { "outlet": "icilome", "lang": "fr", "at": "2026-10-05T08:00:00Z",
+      "title": "Togo : la diaspora, ce grand oubli",
+      "lead": "" },
+    { "outlet": "République togolaise", "lang": "fr", "at": "2026-10-05T10:00:00Z",
+      "title": "Togo : vers l'interdiction des sachets plastiques",
+      "lead": "" },
+    { "outlet": "Togo First", "lang": "fr", "at": "2026-10-05T11:00:00Z",
+      "title": "Togo : le littoral en danger",
+      "lead": "" },
+    { "outlet": "Agence Ecofin", "lang": "fr", "at": "2026-10-05T12:00:00Z",
+      "title": "Togo : 29 tonnes d'équipements offerts par la Chine",
+      "lead": "" },
+    { "outlet": "Togo First", "lang": "en", "at": "2026-10-05T14:00:00Z",
+      "title": "Togo and China discuss tax cooperation",
+      "lead": "Togo's revenue office (OTR) met a Chinese delegation in Lomé on Tuesday to discuss double taxation and tax cooperation between Togo and China." },
+    { "outlet": "republicoftogo", "lang": "fr", "at": "2026-10-05T15:00:00Z",
+      "title": "Togo-Chine : l'OTR et une délégation chinoise parlent fiscalité",
+      "lead": "L'Office togolais des recettes (OTR) a reçu mardi à Lomé une délégation chinoise pour discuter de la double imposition et de la coopération fiscale entre le Togo et la Chine." }
+  ],
+  "economyBudget": [
+    { "outlet": "Bloomberg", "lang": "en", "at": "2026-10-05T07:00:00Z",
+      "title": "A Trader's Guide to Navigating Malaysia's 2027 Budget Plan",
+      "lead": "" },
+    { "outlet": "Les Echos", "lang": "fr", "at": "2026-10-05T08:00:00Z",
+      "title": "Budget 2027 : les parlementaires durcissent la taxe holdings",
+      "lead": "" },
+    { "outlet": "Investir", "lang": "fr", "at": "2026-10-05T09:00:00Z",
+      "title": "Budget 2027 : coup de pouce pour le PEA",
+      "lead": "" }
   ]
 }

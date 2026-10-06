@@ -11,7 +11,8 @@
  */
 import type { BuddiHost, Source } from '@buddi/core/plugin';
 import { fetchLogo, fetchSource, FetchError, hostDeclared } from './fetch.js';
-import { classifyPending, clusterTopic, regroupOpen, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
+import { CLUSTER_RULES } from './cluster.js';
+import { classifyPending, clusterTopic, reclusterOpen, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
 import { resolvePending, RESOLVE_PER_TICK } from './resolve.js';
 import { starterHosts } from './starter.js';
 
@@ -101,13 +102,25 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
   const now = buddi.clock.now();
   // Articles from before 0.2.1 are read for deals once, before anything is clustered.
   if (!classified) classified = (await classifyPending(db)) < 2000;
+  // Open stories are grouped again once when the clustering rules have changed since.
   if (classified && !regrouped) {
     regrouped = true;
-    const language = await buddi.owner.language().catch(() => undefined);
-    const { rows: topics } = await db.query<{ id: string }>(`select id from news.topics`);
-    let merged = 0;
-    for (const t of topics) merged += await regroupOpen(db, t.id, now, language).catch((err) => { buddi.log(`news: could not regroup ${t.id}: ${err instanceof Error ? err.message : String(err)}`); return 0; });
-    if (merged > 0) buddi.log(`news: ${merged} open stories joined to the one they tell`);
+    const { rows: [settings] } = await db.query<{ cluster_rules: number }>(`select cluster_rules from news.settings`);
+    if ((settings?.cluster_rules ?? 0) < CLUSTER_RULES) {
+      const language = await buddi.owner.language().catch(() => undefined);
+      const { rows: topics } = await db.query<{ id: string }>(`select id from news.topics`);
+      let changed = 0;
+      let failed = false;
+      for (const t of topics) {
+        changed += await reclusterOpen(db, t.id, now, language).catch((err) => {
+          failed = true;
+          buddi.log(`news: could not regroup ${t.id}: ${err instanceof Error ? err.message : String(err)}`);
+          return 0;
+        });
+      }
+      if (!failed) await db.query(`update news.settings set cluster_rules = $1`, [CLUSTER_RULES]);
+      if (changed > 0) buddi.log(`news: open stories grouped again by the new rules (${changed} made or removed)`);
+    }
   }
   const { rows: due } = await db.query<SourceRow>(
     `select s.* from news.sources s

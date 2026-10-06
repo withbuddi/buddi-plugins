@@ -1,17 +1,20 @@
 /**
  * The merge threshold, tuned on these fixtures: one story told by six
- * outlets in English and French must be one story, and two stories told in
- * nearly the same words must stay two.
+ * outlets in English and French must be one story, two stories told in
+ * nearly the same words must stay two, a day of "Togo and West Africa" where
+ * every headline names Togo must stay several stories, and a Malaysian budget
+ * must stay out of the French one.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assignStories, commonNames, likeness, MERGE_THRESHOLD, WINDOW_MS, type ClusterArticle } from './cluster.js';
+import { assignStories, commonTerms, likeness, MERGE_THRESHOLD, topicTerms, WINDOW_MS, type ClusterArticle } from './cluster.js';
 import { articleSequence, featuresOf, isDeal, isNews, isOpinion, stripOutletSuffix, terms } from './text.js';
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
 const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as {
   fedCut: Fixture[]; togoVote: Fixture[]; similarButDifferent: Array<[Fixture, Fixture]>;
   crossLanguage: Array<[Fixture, Fixture]>; crossLanguageApart: Array<[Fixture, Fixture]>;
+  togoMix: Fixture[]; economyBudget: Fixture[];
 };
 
 const article = (f: Fixture, i: number, prefix: string): ClusterArticle => ({
@@ -83,7 +86,77 @@ describe('across English and French', () => {
     expect(likeness(fa, fb, true, new Set(['flydubai', 'uae']))).toBeLessThan(MERGE_THRESHOLD);
     // Twelve other stories this hour that all name flydubai make it common.
     const busy = Array.from({ length: 12 }, (_, i) => ({ id: `b${i}`, updatedAt: en!.publishedAt, members: [{ ...en!, id: `bm${i}`, sequence: articleSequence(`Report ${i} on the Flydubai flight`, '') }] }));
-    expect(commonNames(busy, [en!, fr!]).has('flydubai')).toBe(true);
+    expect(commonTerms([...busy, { id: 'x', updatedAt: en!.publishedAt, members: [en!, fr!] }]).has('flydubai')).toBe(true);
+  });
+});
+
+describe('a topic\'s own words', () => {
+  // Owner screenshots, 2026-10-06: in "Togo and West Africa" a football match,
+  // a diaspora piece, a plastics bill, the coast, a gift of equipment and a tax
+  // meeting were one story; in "Economy" Malaysia's budget joined France's.
+  const togo = topicTerms('Togo and West Africa');
+  const economy = topicTerms('Economy');
+  const story = (key: 'togoMix' | 'economyBudget', topic: Set<string>) => {
+    const articles = fx[key].map((f, i) => article(f, i, key));
+    const { assignments, created } = assignStories(articles, [], newId, topic);
+    return { created, of: (i: number) => assignments.get(`${key}${i}`)! };
+  };
+
+  it('reads the topic\'s name as its own words', () => {
+    expect(togo).toEqual(new Set(['togo', 'west', 'africa']));
+    expect(economy).toEqual(new Set(['economy']));
+  });
+
+  it.each([['fedCut', economy], ['togoVote', togo]] as const)('still puts one story told by six outlets together under its topic (%s)', (key, topic) => {
+    const { created } = assignStories(fx[key].map((f, i) => article(f, i, key)), [], newId, topic);
+    expect(created).toHaveLength(1);
+  });
+
+  it('keeps a Togo day apart: the match, the diaspora, the plastics bill, the coast, the equipment and the tax meeting', () => {
+    const { created, of } = story('togoMix', togo);
+    expect(created.length).toBeGreaterThanOrEqual(4);
+    expect(of(6)).toBe(of(7)); // the tax meeting, in English and French
+    expect(new Set([of(0), of(2), of(3), of(4), of(5), of(6)]).size).toBe(6);
+    expect(of(1)).not.toBe(of(6));
+  });
+
+  it('does not let one shared name make a story: China gave equipment, China discussed tax', () => {
+    const [gift, tax] = [fx.togoMix[5]!, fx.togoMix[7]!].map((f) => featuresOf(articleSequence(f.title, f.lead)));
+    expect(likeness(gift!, tax!, false, togo)).toBeLessThan(MERGE_THRESHOLD);
+  });
+
+  it('keeps Malaysia\'s 2027 budget out of the French one', () => {
+    const { of } = story('economyBudget', economy);
+    expect(of(0)).not.toBe(of(1));
+    expect(of(0)).not.toBe(of(2));
+    // A year is a word, not a name: "2027" and "budget" are not a story.
+    const [my, fr] = [fx.economyBudget[0]!, fx.economyBudget[1]!].map((f) => featuresOf(articleSequence(f.title, f.lead)));
+    expect(likeness(my!, fr!, true)).toBeLessThan(MERGE_THRESHOLD);
+  });
+
+  it('does not join a story through one of its articles when it names nothing its first article named', () => {
+    const [match, , diaspora, plastics, coast, gift, taxEn0, taxFr0] = fx.togoMix.map((f, i) => article(f, i, 'seed'));
+    // The match first, then the tax meeting, the same evening.
+    const taxEn = { ...taxEn0!, publishedAt: new Date('2026-10-05T21:30:00Z') };
+    const taxFr = { ...taxFr0!, publishedAt: new Date('2026-10-05T22:00:00Z') };
+    // A story already gone wrong (the match, with the tax meeting in it), beside
+    // the day's others: Lomé, in every one of them, is no longer a name.
+    const open = [
+      { id: 'mixed', updatedAt: taxEn!.publishedAt, members: [match!, taxEn!] },
+      ...[diaspora, plastics, coast, gift].map((a) => ({ id: `own-${a!.id}`, updatedAt: a!.publishedAt, members: [a!] })),
+    ];
+    const { assignments } = assignStories([taxFr!], open, newId, togo);
+    expect(assignments.get(taxFr!.id)).not.toBe('mixed');
+  });
+
+  it('makes a term common to much of the topic a stopword, counting stories, not articles', () => {
+    const at = new Date('2026-10-05T10:00:00Z');
+    const one = (i: number, title: string) => ({ id: `c${i}`, updatedAt: at, members: [{ id: `cm${i}`, publishedAt: at, sequence: articleSequence(title, '') }] });
+    const stories = Array.from({ length: 10 }, (_, i) => one(i, `Budget vote number ${i} in parliament`));
+    expect(commonTerms(stories).has('budget')).toBe(true);
+    // One story told twenty times makes nothing common.
+    const big = { id: 'big', updatedAt: at, members: Array.from({ length: 20 }, (_, i) => ({ id: `b${i}`, publishedAt: at, sequence: articleSequence('Fed cuts interest rates', '') })) };
+    expect(commonTerms([big, ...stories.slice(0, 3)]).has('rate')).toBe(false);
   });
 });
 

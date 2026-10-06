@@ -24,14 +24,14 @@ import { FIRST_READ_NOTE, SETUP_NOTE } from './setup.js';
 import type { HeadlinesOutput } from './tools.js';
 import type { StoryDetail } from './reads.js';
 import { storiesFor } from './dashboard.js';
-import { regroupOpen } from './store.js';
+import { reclusterOpen } from './store.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
 const TEST_DB = `buddi_news_test_${process.pid}`;
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
-const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[]; crossLanguage: Array<[Fixture, Fixture]> };
+const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[]; crossLanguage: Array<[Fixture, Fixture]>; togoMix: Fixture[] };
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -640,9 +640,46 @@ suite('news (postgres)', () => {
     await pool.query(`insert into news.told (edition_id, story_id, told_at, article_count, outlet_count) values ('e1', 's1', $1, 1, 1)`, [now]);
     await pool.query(`update news.stories set last_told_at = $1 where id = 's1'`, [now]);
     const db = host().db;
-    expect(await regroupOpen(db as never, 'economy', now)).toBe(1);
+    expect(await reclusterOpen(db as never, 'economy', now)).toBe(1);
     const left = (await pool.query(`select s.id, s.article_count, s.last_told_at is not null as told, (select count(*)::int from news.told t where t.story_id = s.id) as marks from news.stories s`)).rows;
     expect(left).toEqual([{ id: 's0', article_count: 2, told: true, marks: 1 }]);
-    expect(await regroupOpen(db as never, 'economy', now)).toBe(0);
+    expect(await reclusterOpen(db as never, 'economy', now)).toBe(0);
+  });
+
+  it('splits an open story made by one shared name once, on the first tick after the rules change, keeping its told-mark', async () => {
+    await run('news.enable_starter', { topics: ['togo-west-africa'] }, asOwner);
+    now = new Date('2026-10-05T22:00:00Z');
+    const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
+    // The owner's screenshot: the match, the diaspora, the plastics bill, the
+    // coast, the equipment and the tax meeting, one story titled after the tax meeting.
+    await pool.query(`insert into news.stories (id, topic_id, first_seen, updated_at, title) values ('mix', 'togo-west-africa', $1, $2, $3)`, [fx.togoMix[2]!.at, fx.togoMix[1]!.at, fx.togoMix[6]!.title]);
+    for (const [i, f] of fx.togoMix.entries()) {
+      await pool.query(
+        `insert into news.articles (id, source_id, url_canonical, url, title, lead, language, published_at, title_hash, tokens, kind)
+         values ($1, $2, $3, $3, $4, $5, $6, $7, $1, '{}', 'news')`,
+        [`t${i}`, source, `https://example.com/t${i}`, f.title, f.lead, f.lang, f.at],
+      );
+      await pool.query(`insert into news.article_topics (article_id, topic_id, story_id) values ($1, 'togo-west-africa', 'mix')`, [`t${i}`]);
+    }
+    await pool.query(`update news.stories set title_article_id = 't6' where id = 'mix'`);
+    await pool.query(`insert into news.editions (id, kind) values ('e2', 'evening')`);
+    await pool.query(`insert into news.told (edition_id, story_id, told_at, article_count, outlet_count) values ('e2', 'mix', $1, 8, 7)`, [now]);
+    await pool.query(`update news.stories set last_told_at = $1 where id = 'mix'`, [now]);
+    await pool.query(`update news.settings set cluster_rules = 1`);
+
+    resetPoller();
+    await refresh(host(), { topicId: 'togo-west-africa', sleep: noSleep });
+    const stories = (await pool.query(
+      `select s.id, s.title, s.article_count, (select count(*)::int from news.told t where t.story_id = s.id) as marks
+         from news.stories s where s.topic_id = 'togo-west-africa' and s.article_count > 0 order by s.first_seen`,
+    )).rows;
+    expect(stories.length).toBeGreaterThanOrEqual(4);
+    // The tax meeting keeps the id and the told-mark; its title and count are its own now.
+    const kept = stories.find((x) => x.id === 'mix');
+    expect(kept).toMatchObject({ article_count: 2, marks: 1 });
+    expect(stories.filter((x) => x.id !== 'mix').every((x) => x.marks === 0)).toBe(true);
+    expect((await pool.query(`select cluster_rules from news.settings`)).rows[0].cluster_rules).toBeGreaterThan(1);
+    // Once: the next run changes nothing.
+    expect(await reclusterOpen(host().db as never, 'togo-west-africa', now)).toBe(0);
   });
 });
