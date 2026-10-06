@@ -23,6 +23,13 @@ widget's five rows). Nothing is followed until you
 turn on the starter sources or add a topic: the Plugins page says "Add a topic
 or turn on the starter sources" until then.
 
+Since 0.2.5 the install is about 200 MB larger: it carries ONNX Runtime
+(`onnxruntime-node`, which ships every platform's binaries in one package) and
+a tokenizer, for the meaning model, whether or not you download the model.
+`buddi plugins install` therefore warns that the plugin "wants to run code at
+install": that is expected, and nothing runs (install scripts are skipped; the
+runtime's CPU binaries come prebuilt in the package).
+
 ## Topics and sources
 
 Six starter topics, each a curated mix across the spectrum and both
@@ -120,6 +127,12 @@ item's link is swapped for the outlet's own address shortly after it arrives
 Google link stays. A story ranks higher with
 more outlets, both languages and different kinds of outlet, and fades with
 age.
+
+Once the meaning model is downloaded (Settings → News), each tick also embeds
+up to 128 new articles within about four seconds, and stories join by meaning
+first. Downloading holds the 118 MB model file in memory while it is checked;
+once loaded, the model and its tokenizer stay resident, about 150 MB, for as
+long as buddi runs.
 
 ## For agents
 

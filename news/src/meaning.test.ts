@@ -169,6 +169,11 @@ describe('the merge line and the band', () => {
     expect(matchStory(incoming(fedB.title, fedB.lead), story(fedA.title, fedA.lead, unit(0)), new Set(), topic)).toEqual(words);
   });
 
+  it('lets the words decide for an article that says little besides the topic', () => {
+    const nearTopic = Object.assign(new Float32Array(DIMS), { 7: 0.99, 0: Math.sqrt(1 - 0.99 * 0.99) });
+    expect(matchStory(incoming(fedB.title, fedB.lead, nearTopic), story(fedA.title, fedA.lead, unit(0)), new Set(), topic)).toMatchObject({ joins: true, by: 'words' });
+  });
+
   it('groups exactly as 0.2.4 with no model: no vectors, no topic vector', () => {
     const plain = fx.togoMix.map((f, i) => article(f, i, 'p', false));
     let a = 0;
@@ -229,6 +234,14 @@ describe('embedding in the poller', () => {
     const next = await embedPending(db, slow, new Date(), { budgetMs: 3_000, batch: 10, now: () => clock });
     expect(next.topics).toBe(0);
     expect(db.vectors.size).toBe(50);
+  });
+
+  it('does not start a batch that would run past the budget when the last one was slow', async () => {
+    let clock = 0;
+    const lumpy: Embedder = { model: 'fake', async embed(batch) { clock += 2_500; return batch.map(() => new Float32Array([1, 0])); } };
+    const db = fakeDb(many);
+    expect(await embedPending(db, lumpy, new Date(), { budgetMs: 3_000, batch: 10, now: () => clock })).toEqual({ topics: 0, articles: 10, outOfTime: true });
+    expect(clock).toBe(2_500);
   });
 
   it('embeds at most its share a tick when the model is quick, and round-trips each vector', async () => {

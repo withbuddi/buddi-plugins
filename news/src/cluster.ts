@@ -90,6 +90,8 @@ export const CLUSTER_RULES = 2;
 export const MEANING_MERGE = 0.75;
 /** From here up to `MEANING_MERGE` the word rules decide; below it, apart. */
 export const MEANING_BAND = 0.55;
+/** The least of an article's vector left once the topic's direction is out, for its meaning to count. */
+export const MEANING_RESIDUAL = 0.2;
 
 export interface ClusterArticle {
   id: string;
@@ -253,10 +255,19 @@ class Reader {
     if (!f) this.cache.set(a, (f = topicFeatures(featuresOf(a.sequence), this.stop)));
     return f;
   }
-  /** The article's meaning without the topic's, or nothing when there is no topic vector or no article vector. */
+  /**
+   * The article's meaning without the topic's, or nothing: no topic vector, no
+   * article vector, or an article that says little besides the topic (what is
+   * left is under `MEANING_RESIDUAL` and, renormalised, would be noise; its
+   * words decide instead).
+   */
   vector(a: ClusterArticle): Float32Array | undefined {
     if (!this.topicVector || !a.vector || a.vector.length !== this.topicVector.length) return undefined;
-    if (!this.vectors.has(a)) this.vectors.set(a, without(a.vector, this.topicVector));
+    if (!this.vectors.has(a)) {
+      const along = dot(a.vector, this.topicVector);
+      const left = Math.sqrt(Math.max(0, dot(a.vector, a.vector) - along * along));
+      this.vectors.set(a, left < MEANING_RESIDUAL ? undefined : without(a.vector, this.topicVector));
+    }
     return this.vectors.get(a);
   }
 }

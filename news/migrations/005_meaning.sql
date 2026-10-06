@@ -18,3 +18,8 @@ create table if not exists topic_vectors (
   name text not null,
   vector bytea not null
 );
+
+-- The model the open stories were last grouped again by: once the meaning
+-- model is loaded and has caught up with the open stories' articles, the
+-- stories made by words before it are grouped again once by meaning.
+alter table settings add column if not exists meaning_regrouped text;

@@ -12,7 +12,7 @@
  */
 import type { BuddiHost, Source } from '@buddi/core/plugin';
 import { fetchLogo, fetchSource, FetchError, hostDeclared } from './fetch.js';
-import { CLUSTER_RULES } from './cluster.js';
+import { CLUSTER_RULES, WINDOW_MS } from './cluster.js';
 import { classifyPending, clusterTopic, reclusterOpen, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
 import { resolvePending, RESOLVE_PER_TICK } from './resolve.js';
 import { starterHosts } from './starter.js';
@@ -34,6 +34,9 @@ let lastPrune = 0;
 let logosMoved = false;
 let classified = false;
 let regrouped = false;
+let meaningRegrouped = false;
+/** The share of the open stories' articles that must have a vector before they are grouped again by meaning. */
+export const MEANING_REGROUP_SHARE = 0.9;
 
 export interface RefreshReport {
   fetched: number;
@@ -76,6 +79,7 @@ export function resetPoller(): void {
   logosMoved = false;
   classified = false;
   regrouped = false;
+  meaningRegrouped = false;
 }
 
 /**
@@ -203,6 +207,7 @@ async function doRefresh(buddi: BuddiHost, opts: RefreshOptions): Promise<Refres
     } catch (err) {
       buddi.log(`news: the meaning model could not embed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    if (!meaningRegrouped) await regroupByMeaning(buddi, embedder.model, now);
   }
   if (touched.size > 0) {
     const language = await buddi.owner.language().catch(() => undefined);
@@ -217,6 +222,47 @@ async function doRefresh(buddi: BuddiHost, opts: RefreshOptions): Promise<Refres
     await prune(db, now);
   }
   return report;
+}
+
+/**
+ * The stories made by words before the meaning model was ready, grouped again
+ * once by meaning (`reclusterOpen` with the model): on the first tick the
+ * model is loaded and at least `MEANING_REGROUP_SHARE` of the last 48 hours'
+ * articles have a vector; recorded in `news.settings.meaning_regrouped` so it
+ * happens once per model.
+ */
+async function regroupByMeaning(buddi: BuddiHost, model: string, now: Date): Promise<void> {
+  const db = buddi.db;
+  const { rows: [settings] } = await db.query<{ meaning_regrouped: string | null }>(`select meaning_regrouped from news.settings`);
+  if (settings?.meaning_regrouped === model) {
+    meaningRegrouped = true;
+    return;
+  }
+  const { rows: [count] } = await db.query<{ total: number; embedded: number }>(
+    `select count(*)::int as total, count(v.article_id)::int as embedded
+       from news.articles a left join news.article_vectors v on v.article_id = a.id and v.model = $2
+      where a.published_at >= $1`,
+    [new Date(now.getTime() - WINDOW_MS), model],
+  );
+  if ((count?.total ?? 0) > 0 && (count!.embedded / count!.total) < MEANING_REGROUP_SHARE) return;
+  meaningRegrouped = true;
+  const language = await buddi.owner.language().catch(() => undefined);
+  const { rows: topics } = await db.query<{ id: string }>(`select id from news.topics`);
+  let changed = 0;
+  let failed = false;
+  for (const t of topics) {
+    changed += await reclusterOpen(db, t.id, now, language, model).catch((err) => {
+      failed = true;
+      buddi.log(`news: could not regroup ${t.id} by meaning: ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    });
+  }
+  if (failed) {
+    meaningRegrouped = false;
+    return;
+  }
+  await db.query(`update news.settings set meaning_regrouped = $1`, [model]);
+  if (changed > 0) buddi.log(`news: open stories grouped again by meaning (${changed} made or removed)`);
 }
 
 /**

@@ -26,7 +26,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { HttpArea } from '@buddi/core/plugin';
 import type { Embedder } from './embed.js';
@@ -62,6 +62,7 @@ export const MEANING_MODEL = {
 export type MeaningModel = Omit<typeof MEANING_MODEL, 'files'> & { files: readonly ModelFile[] };
 
 const MARKER = '.installed.json';
+const TEMP_PREFIX = '.download-meaning-';
 /** The most one file may be; the model is 118 MB. */
 const DOWNLOAD_CAP = 200 * 1024 * 1024;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
@@ -132,7 +133,11 @@ export async function downloadModel(
   if (isDownloaded(dir, model)) return;
   await mkdir(dir, { recursive: true });
   const target = modelDir(dir, model);
-  const temp = await mkdtemp(path.join(dir, '.download-meaning-'));
+  // A download cut by a restart or a crash left its temporary directory behind: swept first.
+  for (const name of await readdir(dir)) {
+    if (name.startsWith(TEMP_PREFIX)) await rm(path.join(dir, name), { recursive: true, force: true });
+  }
+  const temp = await mkdtemp(path.join(dir, TEMP_PREFIX));
   const total = modelBytes(model);
   let done = 0;
   try {

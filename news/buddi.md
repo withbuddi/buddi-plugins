@@ -45,7 +45,10 @@ articles of the last 30 days (title, a short summary, link, language, time),
 an article's text when Anchor read it (a week), the stories they form, each
 edition's told stories, your settings, and what the meaning model made of
 each article and topic name (a list of numbers per article). The model
-itself is kept in the plugin's own folder and removed with it. Outlet logos are kept by buddi as
+itself is kept in the plugin's own folder and removed with it. The plugin
+carries ONNX Runtime and a tokenizer to run it, about 200 MB more on disk
+whether or not you download the model; the install's "wants to run code at
+install" warning comes from ONNX Runtime and is expected: nothing runs. Outlet logos are kept by buddi as
 small images (its assets area) and removed with the plugin.
 
 ## What leaves the machine

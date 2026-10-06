@@ -248,6 +248,29 @@ suite('news (postgres)', () => {
     expect(next.embedded).toBe((await pool.query(`select count(*)::int as n from news.articles`)).rows[0].n);
   });
 
+  it('groups the stories made by words again once by meaning, when the model has caught up', async () => {
+    await run('news.enable_starter', { topics: ['togo-west-africa'] }, asOwner);
+    now = new Date('2026-10-05T22:00:00Z');
+    const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
+    // One story by words gone wrong: the Togo day in one.
+    await pool.query(`insert into news.stories (id, topic_id, first_seen, updated_at) values ('mixed', 'togo-west-africa', $1, $2)`, [fx.togoMix[2]!.at, fx.togoMix[1]!.at]);
+    for (const [i, f] of fx.togoMix.entries()) {
+      await pool.query(
+        `insert into news.articles (id, source_id, url_canonical, url, title, lead, language, published_at, title_hash, tokens, kind)
+         values ($1, $2, $3, $3, $4, $5, $6, $7, $1, '{}', 'news')`,
+        [`m${i}`, source, `https://example.com/m${i}`, f.title, f.lead, f.lang, f.at],
+      );
+      await pool.query(`insert into news.article_topics (article_id, topic_id, story_id) values ($1, 'togo-west-africa', 'mixed')`, [`m${i}`]);
+    }
+    await pool.query(`update news.settings set meaning_regrouped = null`);
+    resetPoller();
+    // No fetch due: the tick only embeds, then regroups.
+    await refresh(host(), { sleep: noSleep, embedder: fakeMeaning() });
+    const stories = (await pool.query(`select id from news.stories where topic_id = 'togo-west-africa' and article_count > 0`)).rows;
+    expect(stories.length).toBeGreaterThanOrEqual(4);
+    expect((await pool.query(`select meaning_regrouped from news.settings`)).rows[0].meaning_regrouped).toBe(MEANING_MODEL.id);
+  });
+
   it('keeps each source\'s health: a failure counted, failing after a day, Try again; a 304 costs nothing', async () => {
     await run('news.enable_starter', { topics: ['economy'] }, asOwner);
     await fetchAll();

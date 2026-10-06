@@ -430,7 +430,7 @@ export const addFeedTool: ToolDefinition<z.infer<typeof addFeedInput>, { id: str
 
 export const MEANING_NOTE =
   'Once it is ready, stories are grouped by what they say, in English and French alike, and not only by the words they share. ' +
-  'It runs on this Mac: nothing is sent anywhere.';
+  'It runs on this computer: nothing is sent anywhere.';
 
 export interface MeaningRow {
   id: 'meaning';
@@ -462,7 +462,7 @@ export function meaningRow(state: MeaningState): MeaningRow {
   const base = {
     id: 'meaning' as const, state: state.state, heading: `${MEANING_MODEL.label} · ${size}`, bytes: 0, total: state.bytes, done: '',
     action: `Download (${size})`,
-    confirm: `Download the meaning model (${size}) from Hugging Face to this Mac? It is checked before it is kept, and runs here.`,
+    confirm: `Download the meaning model (${size}) from Hugging Face to this computer? It is checked before it is kept, and runs here.`,
   };
   switch (state.state) {
     case 'absent':

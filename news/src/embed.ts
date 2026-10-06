@@ -77,7 +77,8 @@ export interface EmbedReport {
 
 /**
  * Embed the topics whose name has no vector yet, then the newest articles
- * without one, until the budget runs out. `now` is the clock the budget is
+ * without one, a batch at a time while a batch as long as the longest so far
+ * still fits in the budget. `now` is the clock the budget is
  * read on (a test hands in its own).
  */
 export async function embedPending(
@@ -91,14 +92,26 @@ export async function embedPending(
   const budget = options.budgetMs ?? EMBED_BUDGET_MS;
   const batch = options.batch ?? EMBED_BATCH;
   const report: EmbedReport = { topics: 0, articles: 0, outOfTime: false };
+  // The longest batch so far: the next one starts only when one as long still fits in the budget.
+  let longest = 0;
+  const fits = (): boolean => now() - started + longest <= budget;
+  const timed = async <T>(job: () => Promise<T>): Promise<T> => {
+    const at = now();
+    try {
+      return await job();
+    } finally {
+      longest = Math.max(longest, now() - at);
+    }
+  };
 
   const { rows: topics } = await db.query<{ id: string; name: string }>(
     `select t.id, t.name from news.topics t
       where not exists (select 1 from news.topic_vectors v where v.topic_id = t.id and v.model = $1 and v.name = t.name)`,
     [embedder.model],
   );
+  if (topics.length > 0 && !fits()) return { ...report, outOfTime: true };
   if (topics.length > 0) {
-    const vectors = await embedder.embed(topics.map((t) => t.name));
+    const vectors = await timed(() => embedder.embed(topics.map((t) => t.name)));
     for (const [i, t] of topics.entries()) {
       await db.query(
         `insert into news.topic_vectors (topic_id, model, name, vector) values ($1, $2, $3, $4)
@@ -117,12 +130,12 @@ export async function embedPending(
     [embedder.model, new Date(at.getTime() - MAX_AGE_MS), options.max ?? EMBED_PER_TICK],
   );
   for (let i = 0; i < articles.length; i += batch) {
-    if (now() - started >= budget) {
+    if (!fits()) {
       report.outOfTime = true;
       break;
     }
     const chunk = articles.slice(i, i + batch);
-    const vectors = await embedder.embed(chunk.map((a) => articleText(a.title, a.lead)));
+    const vectors = await timed(() => embedder.embed(chunk.map((a) => articleText(a.title, a.lead))));
     for (const [j, a] of chunk.entries()) {
       await db.query(
         `insert into news.article_vectors (article_id, model, vector) values ($1, $2, $3)
