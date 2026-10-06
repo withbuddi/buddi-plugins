@@ -31,7 +31,10 @@ that requires this one may read headlines and a story (its `headlines` and
 
 `news.fetch`, every minute: the sources that are due, each every 15 to 30
 minutes, asked only for what changed. New articles are grouped into stories
-here, with no model and no service. A source that fails is asked less and
+here, with no service: by the words they share, and by what they say once
+you download the meaning model on Settings → News (a small multilingual
+sentence model, 135 MB, which runs on this machine; each tick embeds a few
+articles within a few seconds and never waits for it). A source that fails is asked less and
 less often, is marked failing after a day and paused after a week. It sends
 you nothing.
 
@@ -40,7 +43,9 @@ you nothing.
 Schema `news`: your topics, the sources and the outlets behind them, the
 articles of the last 30 days (title, a short summary, link, language, time),
 an article's text when Anchor read it (a week), the stories they form, each
-edition's told stories, and your settings. Outlet logos are kept by buddi as
+edition's told stories, your settings, and what the meaning model made of
+each article and topic name (a list of numbers per article). The model
+itself is kept in the plugin's own folder and removed with it. Outlet logos are kept by buddi as
 small images (its assets area) and removed with the plugin.
 
 ## What leaves the machine
@@ -52,9 +57,12 @@ outlet link, to Hacker News's Algolia front page,
 to an outlet's site for its icon when it is first seen and once a week
 after, and to an article's outlet when Anchor reads it (once, after its
 robots.txt). No cookies, no
-account, nothing about you, your agents or your conversations. A feed you
+account, nothing about you, your agents or your conversations. When you
+press Download on Settings → News, the meaning model's files are fetched
+from Hugging Face (huggingface.co and its download servers), pinned and
+checked; nothing is sent. A feed you
 add, and an outlet a search names, is declared when it is first seen and
 listed on the Plugins page.
 
 Schema: news
-Hosts: *.01net.com, 01net.com, *.actuia.com, actuia.com, *.africanews.com, africanews.com, *.agenceecofin.com, agenceecofin.com, *.aljazeera.com, aljazeera.com, *.apnews.com, apnews.com, *.arstechnica.com, arstechnica.com, *.axios.com, axios.com, *.bbc.com, bbc.com, *.blog.google, blog.google, *.bloomberg.com, bloomberg.com, *.cnbc.com, cnbc.com, *.dw.com, dw.com, *.economist.com, economist.com, feeds.bbci.co.uk, *.foxnews.com, foxnews.com, *.france24.com, france24.com, *.frandroid.com, frandroid.com, *.ft.com, ft.com, hn.algolia.com, *.icilome.com, icilome.com, *.importai.substack.com, importai.substack.com, *.jeuneafrique.com, jeuneafrique.com, *.journaldunet.com, journaldunet.com, *.lefigaro.fr, lefigaro.fr, *.lemonde.fr, lemonde.fr, *.lesechos.fr, lesechos.fr, *.liberation.fr, liberation.fr, *.nationalreview.com, nationalreview.com, news.google.com, *.npr.org, npr.org, *.numerama.com, numerama.com, *.nytimes.com, nytimes.com, *.openai.com, openai.com, *.politico.com, politico.com, *.republicoftogo.com, republicoftogo.com, *.reuters.com, reuters.com, *.rfi.fr, rfi.fr, *.semafor.com, semafor.com, *.simonwillison.net, simonwillison.net, *.techcrunch.com, techcrunch.com, *.technologyreview.com, technologyreview.com, *.theguardian.com, theguardian.com, *.thehill.com, thehill.com, *.theverge.com, theverge.com, *.togofirst.com, togofirst.com, *.washingtonexaminer.com, washingtonexaminer.com, *.wired.com, wired.com
+Hosts: *.01net.com, 01net.com, *.actuia.com, actuia.com, *.africanews.com, africanews.com, *.agenceecofin.com, agenceecofin.com, *.aljazeera.com, aljazeera.com, *.apnews.com, apnews.com, *.arstechnica.com, arstechnica.com, *.axios.com, axios.com, *.bbc.com, bbc.com, *.blog.google, blog.google, *.bloomberg.com, bloomberg.com, *.cnbc.com, cnbc.com, *.dw.com, dw.com, *.economist.com, economist.com, feeds.bbci.co.uk, *.foxnews.com, foxnews.com, *.france24.com, france24.com, *.frandroid.com, frandroid.com, *.ft.com, ft.com, hn.algolia.com, *.icilome.com, icilome.com, *.importai.substack.com, importai.substack.com, *.jeuneafrique.com, jeuneafrique.com, *.journaldunet.com, journaldunet.com, *.lefigaro.fr, lefigaro.fr, *.lemonde.fr, lemonde.fr, *.lesechos.fr, lesechos.fr, *.liberation.fr, liberation.fr, *.nationalreview.com, nationalreview.com, news.google.com, *.npr.org, npr.org, *.numerama.com, numerama.com, *.nytimes.com, nytimes.com, *.openai.com, openai.com, *.politico.com, politico.com, *.republicoftogo.com, republicoftogo.com, *.reuters.com, reuters.com, *.rfi.fr, rfi.fr, *.semafor.com, semafor.com, *.simonwillison.net, simonwillison.net, *.techcrunch.com, techcrunch.com, *.technologyreview.com, technologyreview.com, *.theguardian.com, theguardian.com, *.thehill.com, thehill.com, *.theverge.com, theverge.com, *.togofirst.com, togofirst.com, *.washingtonexaminer.com, washingtonexaminer.com, *.wired.com, wired.com, huggingface.co, *.hf.co

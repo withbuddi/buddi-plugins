@@ -25,6 +25,8 @@ import type { HeadlinesOutput } from './tools.js';
 import type { StoryDetail } from './reads.js';
 import { storiesFor } from './dashboard.js';
 import { reclusterOpen } from './store.js';
+import { fromBytes, type Embedder } from './embed.js';
+import { MEANING_MODEL } from './meaning.js';
 
 const databaseUrl = await testDatabaseUrl();
 const suite = databaseUrl ? describe : describe.skip;
@@ -32,6 +34,22 @@ const TEST_DB = `buddi_news_test_${process.pid}`;
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
 const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[]; crossLanguage: Array<[Fixture, Fixture]>; togoMix: Fixture[] };
+const recorded = JSON.parse(readFileSync(new URL('./fixtures/vectors.json', import.meta.url), 'utf8')) as { vectors: Record<string, string> };
+/** The meaning model, faked: the recorded vector of a fixture text, a fixed vector of its own for any other. */
+const fakeMeaning = (onEmbed: (n: number) => void = () => {}): Embedder => ({
+  model: MEANING_MODEL.id,
+  async embed(texts) {
+    onEmbed(texts.length);
+    return texts.map((t) => {
+      const b64 = recorded.vectors[t];
+      if (b64) return fromBytes(Buffer.from(b64, 'base64'));
+      const v = new Float32Array(MEANING_MODEL.dims);
+      for (let i = 0; i < t.length; i++) v[(t.charCodeAt(i) * 31 + i) % v.length]! += 1;
+      const norm = Math.hypot(...v);
+      return v.map((x) => x / norm);
+    });
+  },
+});
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -194,6 +212,40 @@ suite('news (postgres)', () => {
     const exported = (await manifest.exports!.headlines!.produce({ topic: 'economy', n: 1 }, ctx())) as HeadlinesOutput;
     expect(exported.stories.map((s) => s.id)).toEqual([fed!.id]);
     expect(((await manifest.exports!.story!.produce({ id: fed!.id }, ctx())) as StoryDetail).sources).toHaveLength(6);
+  });
+
+  it('embeds new articles within the tick and groups them by meaning; without the model, by words', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    const report = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: fakeMeaning() });
+    const articles = (await pool.query(`select count(*)::int as n from news.articles`)).rows[0].n;
+    expect(report.embedded).toBe(articles);
+    expect((await pool.query(`select count(*)::int as n from news.article_vectors where model = $1 and octet_length(vector) = $2`, [MEANING_MODEL.id, MEANING_MODEL.dims * 4])).rows[0].n).toBe(articles);
+    expect((await pool.query(`select topic_id, name from news.topic_vectors`)).rows).toEqual([{ topic_id: 'economy', name: 'Economy' }]);
+    const out = (await run('news.headlines', { topic: 'Economy' })) as HeadlinesOutput;
+    expect(out.stories[0]!.articles).toBe(6);
+    expect(out.stories[1]!.title).toBe('Apple unveils new iPhone with faster chip at September event');
+    // The model gone: nothing more is embedded, and grouping goes on by words.
+    await pool.query(`truncate news.articles, news.stories cascade`);
+    await pool.query(`update news.sources set etag = null, last_modified = null`);
+    resetPoller();
+    const without = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: null });
+    expect(without.embedded).toBe(0);
+    expect((await pool.query(`select count(*)::int as n from news.article_vectors`)).rows[0].n).toBe(0);
+    expect(((await run('news.headlines', { topic: 'Economy' })) as HeadlinesOutput).stories[0]!.articles).toBe(6);
+  });
+
+  it('keeps the tick to its time budget: with a slow model the articles are grouped by words and embedded on a later tick', async () => {
+    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    let clock = 0;
+    const slow = fakeMeaning(() => { clock += 10_000; });
+    const report = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: slow, clock: () => clock });
+    // The topic's name took the whole budget: no article was embedded this tick, and the story formed by words.
+    expect(report.embedded).toBe(0);
+    expect(((await run('news.headlines', { topic: 'Economy' })) as HeadlinesOutput).stories[0]!.articles).toBe(6);
+    // The next tick embeds them.
+    resetPoller();
+    const next = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: fakeMeaning() });
+    expect(next.embedded).toBe((await pool.query(`select count(*)::int as n from news.articles`)).rows[0].n);
   });
 
   it('keeps each source\'s health: a failure counted, failing after a day, Try again; a 304 costs nothing', async () => {

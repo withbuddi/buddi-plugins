@@ -2,7 +2,8 @@
  * The timer: `news.fetch`, a source in core's sense with no agent in the loop
  * (spec §4.1). Every minute it takes the sources that are due — at most
  * `SOURCES_PER_TICK`, four at a time, one request at a time per host — writes
- * what came, groups the new articles into stories, swaps a few Google News
+ * what came, embeds what the meaning model has time for (`embed.ts`, when
+ * the owner downloaded it), groups the new articles into stories, swaps a few Google News
  * redirects for the outlet's own link, fetches a couple of missing outlet logos, and once a day forgets what is past the retention.
  *
  * The offline contract: feeds keep only their latest items, so a machine that
@@ -15,6 +16,8 @@ import { CLUSTER_RULES } from './cluster.js';
 import { classifyPending, clusterTopic, reclusterOpen, ingest, prune, recordFailure, recordSuccess, type SourceRow, type TopicLink } from './store.js';
 import { resolvePending, RESOLVE_PER_TICK } from './resolve.js';
 import { starterHosts } from './starter.js';
+import { embedPending, type Embedder } from './embed.js';
+import { meaningFor } from './meaning.js';
 
 export const POLL_EVERY_SECONDS = 60;
 export const SOURCES_PER_TICK = 8;
@@ -41,6 +44,28 @@ export interface RefreshReport {
   logos: number;
   /** Google News links resolved to the outlet's own. */
   links: number;
+  /** Articles the meaning model embedded this tick. */
+  embedded: number;
+}
+
+export interface RefreshOptions {
+  topicId?: string;
+  sleep?: (ms: number) => Promise<void>;
+  /** The meaning model to use, for tests; `null` for none. By default the process's, once loaded. */
+  embedder?: Embedder | null;
+  /** The time budget's clock, for tests. */
+  clock?: () => number;
+}
+
+/** The process's meaning model when it is loaded; nothing otherwise, its load started in the background. Never waits. */
+export function loadedEmbedder(buddi: BuddiHost): Embedder | undefined {
+  let dir: string;
+  try {
+    dir = buddi.dir.path;
+  } catch {
+    return undefined;
+  }
+  return meaningFor(dir).ready();
 }
 
 /** For tests: forget what this process did. */
@@ -85,7 +110,7 @@ const allowHostFor = (buddi: BuddiHost) => (host: string): boolean =>
   hostDeclared(host, buddi.network.declared().map((d) => d.host));
 
 /** Fetch what is due (or, with `topicId`, every source of that topic now), then cluster and tidy. One at a time. */
-export function refresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms: number) => Promise<void> } = {}): Promise<RefreshReport> {
+export function refresh(buddi: BuddiHost, opts: RefreshOptions = {}): Promise<RefreshReport> {
   if (running) return running;
   running = doRefresh(buddi, opts).finally(() => {
     running = null;
@@ -93,8 +118,8 @@ export function refresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms:
   return running;
 }
 
-async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms: number) => Promise<void> }): Promise<RefreshReport> {
-  const report: RefreshReport = { fetched: 0, notModified: 0, failed: 0, added: 0, stories: 0, logos: 0, links: 0 };
+async function doRefresh(buddi: BuddiHost, opts: RefreshOptions): Promise<RefreshReport> {
+  const report: RefreshReport = { fetched: 0, notModified: 0, failed: 0, added: 0, stories: 0, logos: 0, links: 0, embedded: 0 };
   const http = buddi.http;
   if (!http) return report;
   const db = buddi.db;
@@ -170,9 +195,18 @@ async function doRefresh(buddi: BuddiHost, opts: { topicId?: string; sleep?: (ms
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, due.length) }, worker));
+  // Meaning, within its budget: what is not embedded now is grouped by its words and embedded on a later tick.
+  const embedder = opts.embedder === undefined ? loadedEmbedder(buddi) : opts.embedder ?? undefined;
+  if (embedder) {
+    try {
+      report.embedded = (await embedPending(db, embedder, now, opts.clock ? { now: opts.clock } : {})).articles;
+    } catch (err) {
+      buddi.log(`news: the meaning model could not embed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   if (touched.size > 0) {
     const language = await buddi.owner.language().catch(() => undefined);
-    for (const topicId of touched) report.stories += (await clusterTopic(db, topicId, language)).created;
+    for (const topicId of touched) report.stories += (await clusterTopic(db, topicId, language, embedder?.model)).created;
     await declareRuntimeHosts(buddi);
   }
   report.links = await resolvePending(db, http, now, RESOLVE_PER_TICK, (line) => buddi.log(line), opts.sleep);

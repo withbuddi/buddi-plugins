@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
 import { parseWidgets } from '@buddi/core/plugin';
-import { manifest } from './index.js';
+import { manifest, MODEL_HOSTS } from './index.js';
 import { starterHosts } from './starter.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -23,7 +23,7 @@ describe('news manifest', () => {
       expect(tool.tier).toBe(tool.name === 'news.mute_outlet' ? 'gated' : 'auto');
     }
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name).sort()).toEqual([
-      'news.add_feed', 'news.add_source', 'news.add_topic', 'news.enable_starter', 'news.hide_story', 'news.refresh',
+      'news.add_feed', 'news.add_source', 'news.add_topic', 'news.download_meaning', 'news.enable_starter', 'news.hide_story', 'news.refresh',
       'news.remove_source', 'news.remove_topic', 'news.retry_source', 'news.set_settings', 'news.set_source', 'news.set_topic',
     ]);
     // What outlets wrote is someone else's text.
@@ -42,7 +42,7 @@ describe('news manifest', () => {
     expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'headlines', 'story']);
     expect(manifest.setup).toBeDefined();
     expect(manifest.sources?.map((s) => [s.id, s.every])).toEqual([['news.fetch', 60]]);
-    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
+    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'meaning', 'news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
     expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['stories', 'rail'], ['sources', 'settings']]);
     expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['news.top', ['small', 'medium']]]);
     expect(manifest.optional).toEqual({ speech: '^0.1.3' });
@@ -56,7 +56,7 @@ describe('news manifest', () => {
   });
 
   it('declares what leaves the machine and what it uses, as package.json and buddi.md do', () => {
-    expect(manifest.network?.map((n) => n.host)).toEqual(starterHosts());
+    expect(manifest.network?.map((n) => n.host)).toEqual([...starterHosts(), ...MODEL_HOSTS]);
     expect(manifest.network?.map((n) => n.host)).toEqual(expect.arrayContaining(['news.google.com', 'hn.algolia.com', 'feeds.bbci.co.uk', '*.lemonde.fr']));
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe(manifest.name);
@@ -65,6 +65,6 @@ describe('news manifest', () => {
     expect(pkg.buddi.hostApi).toBe('^1.27');
     const md = readFileSync(new URL('../buddi.md', import.meta.url), 'utf8');
     expect(md).toMatch(/^Schema: news$/m);
-    expect(md).toContain(`\nHosts: ${starterHosts().join(', ')}\n`);
+    expect(md).toContain(`\nHosts: ${[...starterHosts(), ...MODEL_HOSTS].join(', ')}\n`);
   });
 });

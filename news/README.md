@@ -3,7 +3,10 @@
 The news on the topics you follow, for [buddi](https://withbuddi.com): a
 deliberate mix of English and French outlets, grouped into stories on your own
 machine, with what was already told kept so a story is told once and comes
-back only with an update. No model, no account, no service of ours in between.
+back only with an update. No account, no service of ours in between; stories
+are grouped by the words they share and, once you download it on Settings →
+News, by what they say, with a small multilingual sentence model (135 MB) that
+runs on this machine.
 
 A News page on the rail, the sources on Settings → News, a Top stories widget
 for Home and the lock screen, and what Anchor (the news anchor in buddi's
@@ -177,7 +180,10 @@ after checking its `robots.txt`. No
 cookies, no referrer, no account, tracking parameters stripped from stored
 links. Nothing about you, your agents or your conversations is sent. Hosts the
 manifest cannot know (a feed you add, an outlet a search names) are declared
-when first seen and listed on the Plugins page.
+when first seen and listed on the Plugins page. Download on Settings → News
+fetches the meaning model (paraphrase-multilingual-MiniLM-L12-v2, int8 ONNX,
+135 MB) from Hugging Face, each file pinned to a commit and checked by its
+SHA-256; nothing is sent.
 
 ## License
 

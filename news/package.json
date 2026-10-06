@@ -1,6 +1,6 @@
 {
   "name": "@withbuddi/plugin-news",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "The news on the topics you follow, from feeds you can see, grouped into stories on your own machine.",
   "keywords": [
     "buddi-plugin"
@@ -49,6 +49,8 @@
     "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "onnxruntime-node": "1.21.0",
     "zod": "^3.24.1"
   },
   "peerDependencies": {

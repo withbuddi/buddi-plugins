@@ -10,6 +10,7 @@ import type { BuddiHost } from '@buddi/core/plugin';
 import { canonicalUrl, outletHost } from './canonical.js';
 import { assignStories, likeness, topicTerms, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
 import type { FetchedItem } from './fetch.js';
+import { fromBytes } from './embed.js';
 import { articleSequence, featuresOf, isDeal, isNews, isOpinion, LEAD_MARK, normalise, stripOutletSuffix } from './text.js';
 import { EVERY_SECONDS, STARTER_OUTLETS, STARTER_SOURCES, STARTER_TOPICS, starterSources, type Language, type SourceKind } from './starter.js';
 
@@ -282,32 +283,37 @@ export async function classifyPending(db: Query, limit = 2000): Promise<number> 
  * still open, then bring every touched story's title, counts and score up to
  * date, link twins in other topics, and bring back a snoozed story that got
  * news. One transaction per topic.
+ *
+ * `model`, the meaning model's id when it is loaded, has the stored vectors
+ * of that model take part (`cluster.ts`); without it, words alone decide.
  */
-export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: string): Promise<{ assigned: number; created: number }> {
+export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: string, model?: string): Promise<{ assigned: number; created: number }> {
   return db.transaction(async (tx) => {
     await tx.query(`select pg_advisory_xact_lock(hashtext('news.cluster:' || $1))`, [topicId]);
-    const { rows: fresh } = await tx.query<{ id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
-      `select a.id, a.published_at, a.tokens, a.language, a.kind from news.article_topics at join news.articles a on a.id = at.article_id
+    const { rows: fresh } = await tx.query<ArticleRow>(
+      `select a.id, a.published_at, a.tokens, a.language, a.kind, v.vector from news.article_topics at join news.articles a on a.id = at.article_id
+         left join news.article_vectors v on v.article_id = a.id and v.model = $2
         where at.topic_id = $1 and at.story_id is null order by a.published_at limit 3000`,
-      [topicId],
+      [topicId, model ?? null],
     );
     if (fresh.length === 0) return { assigned: 0, created: 0 };
     const earliest = Math.min(...fresh.map((a) => a.published_at.getTime()));
-    const { rows: members } = await tx.query<{ story_id: string; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
-      `select at.story_id, a.id, a.published_at, a.tokens, a.language, a.kind
+    const { rows: members } = await tx.query<ArticleRow & { story_id: string }>(
+      `select at.story_id, a.id, a.published_at, a.tokens, a.language, a.kind, v.vector
          from news.stories s join news.article_topics at on at.story_id = s.id and at.topic_id = s.topic_id join news.articles a on a.id = at.article_id
+         left join news.article_vectors v on v.article_id = a.id and v.model = $3
         where s.topic_id = $1 and s.updated_at >= $2`,
-      [topicId, new Date(earliest - WINDOW_MS)],
+      [topicId, new Date(earliest - WINDOW_MS), model ?? null],
     );
     const open = new Map<string, OpenStory>();
     for (const m of members) {
       const story = open.get(m.story_id) ?? { id: m.story_id, updatedAt: m.published_at, members: [] };
-      story.members.push({ id: m.id, publishedAt: m.published_at, sequence: m.tokens, language: m.language, deal: m.kind === 'deal' });
+      story.members.push(clusterArticle(m));
       if (m.published_at > story.updatedAt) story.updatedAt = m.published_at;
       open.set(m.story_id, story);
     }
-    const incoming: ClusterArticle[] = fresh.map((a) => ({ id: a.id, publishedAt: a.published_at, sequence: a.tokens, language: a.language, deal: a.kind === 'deal' }));
-    const { assignments, created } = assignStories(incoming, [...open.values()], () => newId('s'), await topicWords(tx, topicId));
+    const incoming: ClusterArticle[] = fresh.map(clusterArticle);
+    const { assignments, created } = assignStories(incoming, [...open.values()], () => newId('s'), await topicWords(tx, topicId), await topicVector(tx, topicId, model));
     for (const id of created) {
       const first = incoming.find((a) => assignments.get(a.id) === id)!;
       await tx.query(`insert into news.stories (id, topic_id, first_seen, updated_at) values ($1, $2, $3, $3)`, [id, topicId, first.publishedAt]);
@@ -324,6 +330,23 @@ export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: stri
     await linkTwins(tx, touched);
     return { assigned: assignments.size, created: created.length };
   });
+}
+
+interface ArticleRow { id: string; published_at: Date; tokens: string[]; language: string; kind: string | null; vector: Buffer | null }
+
+const clusterArticle = (a: ArticleRow): ClusterArticle => ({
+  id: a.id, publishedAt: a.published_at, sequence: a.tokens, language: a.language, deal: a.kind === 'deal',
+  ...(a.vector ? { vector: fromBytes(a.vector) } : {}),
+});
+
+/** The topic name's meaning from `model`, when it has one under its current name. */
+async function topicVector(db: Query, topicId: string, model: string | undefined): Promise<Float32Array | undefined> {
+  if (!model) return undefined;
+  const { rows } = await db.query<{ vector: Buffer }>(
+    `select v.vector from news.topic_vectors v join news.topics t on t.id = v.topic_id and t.name = v.name where v.topic_id = $1 and v.model = $2`,
+    [topicId, model],
+  );
+  return rows[0] ? fromBytes(rows[0].vector) : undefined;
 }
 
 /** A topic's own words, which say nothing about which story an article tells (`topicTerms`). */
@@ -345,7 +368,7 @@ async function topicWords(db: Query, topicId: string): Promise<Set<string>> {
  * turned away is left as it is. Run twice, the second run changes nothing.
  * Answers how many stories were made or removed.
  */
-export async function reclusterOpen(db: Db, topicId: string, now: Date, ownerLanguage?: string): Promise<number> {
+export async function reclusterOpen(db: Db, topicId: string, now: Date, ownerLanguage?: string, model?: string): Promise<number> {
   const since = new Date(now.getTime() - WINDOW_MS);
   const { rows: fresh } = await db.query<{ id: string; title: string; lead: string; tokens: string[] }>(
     `select a.id, a.title, a.lead, a.tokens from news.article_topics at join news.articles a on a.id = at.article_id
@@ -359,11 +382,12 @@ export async function reclusterOpen(db: Db, topicId: string, now: Date, ownerLan
   }
   return db.transaction(async (tx) => {
     await tx.query(`select pg_advisory_xact_lock(hashtext('news.cluster:' || $1))`, [topicId]);
-    const { rows } = await tx.query<{ story_id: string; first_seen: Date; title_article_id: string | null; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
-      `select s.id as story_id, s.first_seen, s.title_article_id, a.id, a.published_at, a.tokens, a.language, a.kind
+    const { rows } = await tx.query<ArticleRow & { story_id: string; first_seen: Date; title_article_id: string | null }>(
+      `select s.id as story_id, s.first_seen, s.title_article_id, a.id, a.published_at, a.tokens, a.language, a.kind, v.vector
          from news.stories s join news.article_topics at on at.story_id = s.id and at.topic_id = s.topic_id join news.articles a on a.id = at.article_id
+         left join news.article_vectors v on v.article_id = a.id and v.model = $3
         where s.topic_id = $1 and s.updated_at >= $2 and s.hidden is null`,
-      [topicId, since],
+      [topicId, since, model ?? null],
     );
     if (rows.length === 0) return 0;
     const old = new Map<string, { firstSeen: Date; titleArticle: string | null; members: Set<string> }>();
@@ -372,10 +396,10 @@ export async function reclusterOpen(db: Db, topicId: string, now: Date, ownerLan
       const story = old.get(r.story_id) ?? { firstSeen: r.first_seen, titleArticle: r.title_article_id, members: new Set<string>() };
       story.members.add(r.id);
       old.set(r.story_id, story);
-      articles.push({ id: r.id, publishedAt: r.published_at, sequence: r.tokens, language: r.language, deal: r.kind === 'deal' });
+      articles.push(clusterArticle(r));
     }
     let drafts = 0;
-    const { assignments } = assignStories(articles, [], () => `group:${drafts++}`, await topicWords(tx, topicId));
+    const { assignments } = assignStories(articles, [], () => `group:${drafts++}`, await topicWords(tx, topicId), await topicVector(tx, topicId, model));
     const groups = new Map<string, Set<string>>();
     for (const [article, group] of assignments) groups.set(group, (groups.get(group) ?? new Set()).add(article));
 

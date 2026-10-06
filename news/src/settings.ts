@@ -15,6 +15,7 @@ import { sourceHealth, type SourceHealth } from './reads.js';
 import { addSourceRow, enableStarter, ensureOutlet, ensureTopic, findTopic, hideStory, muteTopic, retrySource, slug } from './store.js';
 import { gnewsUrl, STARTER_TOPICS, type Language } from './starter.js';
 import { outletHost } from './canonical.js';
+import { MEANING_MODEL, meaningFor, megabytes, type MeaningState } from './meaning.js';
 
 const languageField = z.enum(['en', 'fr']);
 
@@ -423,9 +424,86 @@ export const addFeedTool: ToolDefinition<z.infer<typeof addFeedInput>, { id: str
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * The meaning model: its line on Settings → News, and Download
+ * ------------------------------------------------------------------ */
+
+export const MEANING_NOTE =
+  'Once it is ready, stories are grouped by what they say, in English and French alike, and not only by the words they share. ' +
+  'It runs on this Mac: nothing is sent anywhere.';
+
+export interface MeaningRow {
+  id: 'meaning';
+  state: MeaningState['state'];
+  line: string;
+  heading: string;
+  /** Bytes so far and in all, for the bar. */
+  bytes: number;
+  total: number;
+  done: string;
+  /** "Download (135 MB)", or "Try again". */
+  action: string;
+  confirm: string;
+}
+
+function pluginDir(buddi: { dir: { path: string } } | undefined): string {
+  try {
+    const dir = buddi?.dir.path;
+    if (dir) return dir;
+  } catch {
+    // No directory of its own here.
+  }
+  throw new Error('This plugin has no directory of its own here, so the model cannot be kept.');
+}
+
+/** The meaning model's one line for the settings page. */
+export function meaningRow(state: MeaningState): MeaningRow {
+  const size = megabytes(state.bytes);
+  const base = {
+    id: 'meaning' as const, state: state.state, heading: `${MEANING_MODEL.label} · ${size}`, bytes: 0, total: state.bytes, done: '',
+    action: `Download (${size})`,
+    confirm: `Download the meaning model (${size}) from Hugging Face to this Mac? It is checked before it is kept, and runs here.`,
+  };
+  switch (state.state) {
+    case 'absent':
+      return { ...base, line: `Not downloaded. Stories are grouped by the words they share until it is; a ${size} download.` };
+    case 'downloading':
+      return { ...base, line: `Downloading: ${Math.round(state.bytes / 1_000_000)} of ${megabytes(state.total)}.`, bytes: state.bytes, total: state.total };
+    case 'ready':
+      return { ...base, line: 'Ready: stories cluster by meaning.', bytes: state.bytes, total: state.bytes, done: `Ready, ${size}: stories cluster by meaning` };
+    case 'failed':
+      return { ...base, line: `${state.reason} Stories are grouped by their words meanwhile.`, action: 'Try again' };
+  }
+}
+
+export const meaningQuery: PageQuery = {
+  name: 'meaning',
+  params: z.object({}).strict(),
+  async produce(_params, ctx): Promise<{ busy: boolean; rows: MeaningRow[] }> {
+    const row = meaningRow(meaningFor(pluginDir(ctx.buddi)).state());
+    return { busy: row.state === 'downloading', rows: [row] };
+  },
+};
+
+export const downloadMeaningTool: ToolDefinition<Record<string, never>, { note: string }> = {
+  name: 'news.download_meaning',
+  description: "Download the meaning model that groups stories by what they say, to this computer, in the background. The owner's own.",
+  tier: 'auto',
+  ownerOnly: true,
+  input: z.object({}).strict(),
+  async execute(_input, ctx) {
+    const buddi = ctx.buddi!;
+    if (!buddi.http) throw new Error('This buddi gives the plugin no network access, so the model cannot be fetched.');
+    const meaning = meaningFor(pluginDir(buddi));
+    const state = meaning.start(buddi.http);
+    if (state.state === 'ready') return { note: 'The meaning model is ready: stories cluster by meaning from the next round.' };
+    return { note: `Downloading the meaning model (${megabytes(state.bytes)}). You can leave this page; it carries on.` };
+  },
+};
+
 export const ownerTools = [
   enableStarterTool, addSourceTool, setSourceTool, removeSourceTool, retrySourceTool, addTopicTool, setTopicTool, removeTopicTool,
-  hideStoryTool, setSettingsTool, refreshTool, addFeedTool,
+  hideStoryTool, setSettingsTool, refreshTool, addFeedTool, downloadMeaningTool,
 ];
 
 /* ------------------------------------------------------------------ */
@@ -439,4 +517,5 @@ export const newsQueries: PageQuery[] = [
       return { sources: await sourceHealth(ctx.buddi!.db, topic) };
     },
   },
+  meaningQuery,
 ];

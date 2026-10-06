@@ -12,6 +12,7 @@ import type { BuddiHost, PageDescriptor, PageQuery } from '@buddi/core/plugin';
 import { ago, clock, languageMark, languageName, shortDate, stamp, startOfDay, weekHence, whenWords } from './format.js';
 import { rankedStories, sourceHealth, type ArticleRow, type RankedStory } from './reads.js';
 import { STARTER_TOPICS, starterSources } from './starter.js';
+import { MEANING_NOTE } from './settings.js';
 
 type Db = BuddiHost['db'];
 
@@ -625,6 +626,36 @@ export const sourcesPage: PageDescriptor = {
             { tool: 'news.set_topic', label: 'Quiet for a week', menu: true, hint: 'Back on its own in a week', args: { topic: { row: 'id' }, mutedForHours: { const: 168 } }, when: { path: 'quiet', equals: false } },
             { tool: 'news.set_topic', label: 'Mute', menu: true, hint: 'Hidden in News, left out of editions', args: { topic: { row: 'id' }, muted: { const: true } }, when: { path: 'muted', equals: false } },
             { tool: 'news.remove_topic', label: 'Remove topic', menu: true, tone: 'danger', confirm: 'Remove {name} with its stories? Its own feeds go too.', args: { topic: { row: 'id' } } },
+          ],
+        },
+      ],
+    },
+    {
+      kind: 'section',
+      title: 'Stories by meaning',
+      note: MEANING_NOTE,
+      body: [
+        {
+          kind: 'repeat',
+          query: { query: 'meaning' },
+          rows: 'rows',
+          key: 'id',
+          poll: { seconds: 2, while: { path: 'busy', equals: true } },
+          body: [
+            { kind: 'notice', text: { path: 'line' }, when: { path: 'state', in: ['absent', 'failed'] } },
+            {
+              kind: 'progress',
+              when: { path: 'state', in: ['downloading', 'ready'] },
+              value: { path: 'bytes' },
+              total: { path: 'total' },
+              label: { path: 'heading' },
+              done: { path: 'done' },
+            },
+            {
+              kind: 'button',
+              when: { path: 'state', in: ['absent', 'failed'] },
+              action: { tool: 'news.download_meaning', label: '{action}', busy: 'Starting…', confirm: '{confirm}', done: { path: 'note' } },
+            },
           ],
         },
       ],

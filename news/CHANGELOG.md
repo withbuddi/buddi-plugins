@@ -2,7 +2,13 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
-## 0.2.4 — unreleased
+## 0.2.5 — unreleased
+
+### Added
+
+- Stories cluster by meaning: Settings → News offers a small multilingual sentence model (paraphrase-multilingual-MiniLM-L12-v2, int8, 135 MB) to download, once the owner confirms; it runs on this machine over ONNX Runtime. Each tick embeds a few new articles within four seconds (title and lead, kept per article), and an article joins a story when their meaning is close enough with the topic's own direction taken out, the word rules deciding in an uncertain band and on their own while the model is not downloaded, still loading, or failed. The settings line shows the model's state: not downloaded, downloading, ready, or failed with the reason.
+
+## 0.2.4
 
 ### Fixed
 

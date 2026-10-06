@@ -30,12 +30,25 @@
  * so a story cannot drift hop by hop from a football match to a tax meeting.
  * The same wording as any one article is enough on its own.
  *
+ * Meaning first, since 0.2.5. Once the meaning model is ready (`meaning.ts`),
+ * an article with a vector is compared with a story by the cosine of their
+ * vectors, the topic's own direction taken out of both (`embed.ts`), averaged
+ * the same way (its best to half the story's newest articles, at most
+ * `TOP_K`): at `MEANING_MERGE` or more it joins; between `MEANING_BAND` and
+ * there the word rules above decide; below, it does not join. The rules that
+ * forbid stay in force on both roads: a deal never joins news, a story keeps
+ * to what its first article named, and two articles that each name things,
+ * none in common, count for nothing. An article or a story without vectors
+ * (the model not downloaded, still loading, or not yet past this article) is
+ * compared by its words alone, as before.
+ *
  * A story is open for `WINDOW_MS` after its last article. The thresholds
  * were tuned on `cluster.test.ts`'s fixtures: two stories told by six outlets
  * in English and French, pairs of different stories told in the same words,
  * a "Togo and West Africa" day where every headline names Togo, and Malaysia's
  * budget beside France's.
  */
+import { dot, without } from './embed.js';
 import { crossConcept, ENTITY_WEIGHT, featuresOf, isTranslatable, jaccard, terms, weightedJaccard, type Features, type TermSet } from './text.js';
 
 export const WINDOW_MS = 48 * 3600_000;
@@ -69,6 +82,14 @@ export const COMMON_MIN = 5;
  * were grouped by (`news.settings.cluster_rules`), they are grouped again once.
  */
 export const CLUSTER_RULES = 2;
+/**
+ * The cosine, on vectors without the topic's direction, at which an article
+ * joins a story by meaning alone. Tuned on `cluster.test.ts`'s fixtures with
+ * the vectors the model gives them (`fixtures/vectors.json`).
+ */
+export const MEANING_MERGE = 0.75;
+/** From here up to `MEANING_MERGE` the word rules decide; below it, apart. */
+export const MEANING_BAND = 0.55;
 
 export interface ClusterArticle {
   id: string;
@@ -78,6 +99,8 @@ export interface ClusterArticle {
   language?: string;
   /** A deal or buying guide: it only ever joins other deals, and news never joins it. */
   deal?: boolean;
+  /** Its title and lead's meaning (`embed.ts`), when it has been embedded by the model in use. */
+  vector?: Float32Array;
 }
 
 export interface OpenStory {
@@ -220,58 +243,109 @@ export function commonTerms(stories: OpenStory[]): Set<string> {
   return new Set([...count].filter(([, n]) => n >= floor).map(([k]) => k));
 }
 
-/** One clustering pass's reading of its articles, by the topic's stopwords. */
+/** One clustering pass's reading of its articles, by the topic's stopwords and, with vectors, its direction. */
 class Reader {
   private cache = new Map<ClusterArticle, Features>();
-  constructor(readonly stop: ReadonlySet<string>) {}
+  private vectors = new Map<ClusterArticle, Float32Array | undefined>();
+  constructor(readonly stop: ReadonlySet<string>, readonly topicVector?: Float32Array) {}
   read(a: ClusterArticle): Features {
     let f = this.cache.get(a);
     if (!f) this.cache.set(a, (f = topicFeatures(featuresOf(a.sequence), this.stop)));
     return f;
   }
+  /** The article's meaning without the topic's, or nothing when there is no topic vector or no article vector. */
+  vector(a: ClusterArticle): Float32Array | undefined {
+    if (!this.topicVector || !a.vector || a.vector.length !== this.topicVector.length) return undefined;
+    if (!this.vectors.has(a)) this.vectors.set(a, without(a.vector, this.topicVector));
+    return this.vectors.get(a);
+  }
 }
 
-function storyScore(article: ClusterArticle, story: OpenStory, reader: Reader): number {
-  if (story.members.length === 0) return 0;
+/** Both name things and share none of it, in either language's spelling: never one story, whatever else they share. */
+function namesApart(a: Features, b: Features): boolean {
+  const x = namesOf(a);
+  if (x.size === 0) return false;
+  const y = namesOf(b);
+  return y.size > 0 && ![...x].some((n) => y.has(n));
+}
+
+const topMean = (scores: number[]): number => {
+  const top = [...scores].sort((x, y) => y - x).slice(0, Math.min(TOP_K, Math.ceil(scores.length / 2)));
+  return top.length === 0 ? 0 : top.reduce((s, x) => s + x, 0) / top.length;
+};
+
+/** How an article stands against a story: its likeness, whether it joins, and which road decided. */
+export interface StoryMatch {
+  score: number;
+  joins: boolean;
+  by: 'wording' | 'meaning' | 'band' | 'words' | 'refused';
+}
+
+function storyScore(article: ClusterArticle, story: OpenStory, reader: Reader): StoryMatch {
+  const refused: StoryMatch = { score: 0, joins: false, by: 'refused' };
+  if (story.members.length === 0) return refused;
   const byTime = [...story.members].sort((x, y) => x.publishedAt.getTime() - y.publishedAt.getTime() || x.id.localeCompare(y.id));
   const seed = byTime[0]!;
-  if (!!seed.deal !== !!article.deal) return 0;
+  if (!!seed.deal !== !!article.deal) return refused;
   const mine = reader.read(article);
+  const myVector = reader.vector(article);
   const scores: number[] = [];
+  const cosines: number[] = [];
   let same = 0;
   for (const member of byTime.slice(-COMPARE_MAX)) {
     if (!!member.deal !== !!article.deal) continue;
+    const theirs = reader.read(member);
     const across = !!article.language && !!member.language && article.language !== member.language;
-    const p = pair(mine, reader.read(member), across, reader.stop);
+    const p = pair(mine, theirs, across, reader.stop);
     if (p.same) same = Math.max(same, p.score);
     scores.push(p.score);
+    const v = myVector && reader.vector(member);
+    if (myVector && v) cosines.push(namesApart(mine, theirs) ? 0 : dot(myVector, v));
   }
-  if (same > 0) return same;
+  if (same > 0) return { score: same, joins: true, by: 'wording' };
   // The story's first article names what it is about.
   const seedNames = namesOf(reader.read(seed));
   const myNames = namesOf(mine);
-  if (seedNames.size > 0 && myNames.size > 0 && ![...myNames].some((n) => seedNames.has(n))) return 0;
-  const top = scores.sort((x, y) => y - x).slice(0, Math.min(TOP_K, Math.ceil(scores.length / 2)));
-  return top.length === 0 ? 0 : top.reduce((s, x) => s + x, 0) / top.length;
+  if (seedNames.size > 0 && myNames.size > 0 && ![...myNames].some((n) => seedNames.has(n))) return refused;
+  const words = topMean(scores);
+  if (cosines.length === 0) return { score: words, joins: words >= MERGE_THRESHOLD, by: 'words' };
+  const meaning = topMean(cosines);
+  if (meaning >= MEANING_MERGE) return { score: meaning, joins: true, by: 'meaning' };
+  if (meaning >= MEANING_BAND) return { score: meaning, joins: words >= MERGE_THRESHOLD, by: 'band' };
+  return { score: meaning, joins: false, by: 'meaning' };
 }
 
 function best(article: ClusterArticle, stories: OpenStory[], reader: Reader): { id: string; score: number } | null {
   let found: { id: string; score: number } | null = null;
   for (const story of stories) {
     if (Math.abs(article.publishedAt.getTime() - story.updatedAt.getTime()) > WINDOW_MS) continue;
-    const score = storyScore(article, story, reader);
-    if (score >= MERGE_THRESHOLD && (!found || score > found.score)) found = { id: story.id, score };
+    const match = storyScore(article, story, reader);
+    if (match.joins && (!found || match.score > found.score)) found = { id: story.id, score: match.score };
   }
   return found;
 }
 
-/** The best open story for an article, or null when it starts one. `stop` is the topic's stopwords. */
-export function bestStory(article: ClusterArticle, stories: OpenStory[], stop: ReadonlySet<string> = NONE): { id: string; score: number } | null {
-  return best(article, stories, new Reader(stop));
+/**
+ * The best open story for an article, or null when it starts one. `stop` is
+ * the topic's stopwords; `topicVector` the topic name's meaning, without
+ * which vectors are not used.
+ */
+export function bestStory(
+  article: ClusterArticle,
+  stories: OpenStory[],
+  stop: ReadonlySet<string> = NONE,
+  topicVector?: Float32Array,
+): { id: string; score: number } | null {
+  return best(article, stories, new Reader(stop, topicVector));
 }
 
-function pass(incoming: ClusterArticle[], open: OpenStory[], newId: () => string, stop: ReadonlySet<string>) {
-  const reader = new Reader(stop);
+/** How an article stands against one story, for tests and diagnostics. */
+export function matchStory(article: ClusterArticle, story: OpenStory, stop: ReadonlySet<string> = NONE, topicVector?: Float32Array): StoryMatch {
+  return storyScore(article, story, new Reader(stop, topicVector));
+}
+
+function pass(incoming: ClusterArticle[], open: OpenStory[], newId: () => string, stop: ReadonlySet<string>, topicVector?: Float32Array) {
+  const reader = new Reader(stop, topicVector);
   const stories = open.map((s) => ({ ...s, members: [...s.members] }));
   const assignments = new Map<string, string>();
   const created: string[] = [];
@@ -302,15 +376,19 @@ function pass(incoming: ClusterArticle[], open: OpenStory[], newId: () => string
  * terms turn out to run through `COMMON_SHARE` of the stories it made, a
  * second with those as stopwords too. Counting stories, not articles, keeps a
  * story told by twenty outlets from making its own words common.
+ *
+ * `topicVector`, the topic name's meaning from the same model as the
+ * articles' vectors, turns meaning on; without it, words alone decide.
  */
 export function assignStories(
   incoming: ClusterArticle[],
   open: OpenStory[],
   newId: () => string,
   topic: ReadonlySet<string> = NONE,
+  topicVector?: Float32Array,
 ): { assignments: Map<string, string>; created: string[] } {
   let drafts = 0;
-  const draft = pass(incoming, open, () => `draft:${drafts++}`, topic);
+  const draft = pass(incoming, open, () => `draft:${drafts++}`, topic, topicVector);
   const common = commonTerms(draft.stories);
   const extra = [...common].filter((t) => !topic.has(t));
   const stop = extra.length === 0 ? topic : new Set([...topic, ...extra]);
@@ -320,6 +398,6 @@ export function assignStories(
     const assignments = new Map([...draft.assignments].map(([a, s]) => [a, names.get(s) ?? s]));
     return { assignments, created: [...names.values()] };
   }
-  const { assignments, created } = pass(incoming, open, newId, stop);
+  const { assignments, created } = pass(incoming, open, newId, stop, topicVector);
   return { assignments, created };
 }
