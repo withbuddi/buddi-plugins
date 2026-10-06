@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { BuddiHost } from '@buddi/core/plugin';
 import { canonicalUrl, outletHost } from './canonical.js';
-import { assignStories, bestStory, commonNames, likeness, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
+import { assignStories, likeness, topicTerms, WINDOW_MS, type ClusterArticle, type OpenStory } from './cluster.js';
 import type { FetchedItem } from './fetch.js';
 import { articleSequence, featuresOf, isDeal, isNews, isOpinion, LEAD_MARK, normalise, stripOutletSuffix } from './text.js';
 import { EVERY_SECONDS, STARTER_OUTLETS, STARTER_SOURCES, STARTER_TOPICS, starterSources, type Language, type SourceKind } from './starter.js';
@@ -307,7 +307,7 @@ export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: stri
       open.set(m.story_id, story);
     }
     const incoming: ClusterArticle[] = fresh.map((a) => ({ id: a.id, publishedAt: a.published_at, sequence: a.tokens, language: a.language, deal: a.kind === 'deal' }));
-    const { assignments, created } = assignStories(incoming, [...open.values()], () => newId('s'));
+    const { assignments, created } = assignStories(incoming, [...open.values()], () => newId('s'), await topicWords(tx, topicId));
     for (const id of created) {
       const first = incoming.find((a) => assignments.get(a.id) === id)!;
       await tx.query(`insert into news.stories (id, topic_id, first_seen, updated_at) values ($1, $2, $3, $3)`, [id, topicId, first.publishedAt]);
@@ -326,15 +326,26 @@ export async function clusterTopic(db: Db, topicId: string, ownerLanguage?: stri
   });
 }
 
+/** A topic's own words, which say nothing about which story an article tells (`topicTerms`). */
+async function topicWords(db: Query, topicId: string): Promise<Set<string>> {
+  const { rows } = await db.query<{ name: string }>(`select name from news.topics where id = $1`, [topicId]);
+  return topicTerms(rows[0]?.name ?? '');
+}
+
 /**
- * Bring the open stories of a topic up to today's clustering, once a process
- * (news 0.2.1 learnt to join English and French): the last 48 hours'
- * articles get their terms read again, and an open story the current rules
- * would have joined to an earlier one is merged into it, its told-marks with
- * it. A story the owner turned away is left as it is. Answers how many
- * stories were merged away.
+ * Group a topic's open stories again by today's rules, once after the rules
+ * change (`CLUSTER_RULES`; 0.2.4 stopped one shared name, the topic's own,
+ * from making a story): the last 48 hours' articles get their terms read
+ * again, then every article of a story still open is grouped from scratch.
+ * Each new group keeps the id of the old story it shares most articles with
+ * (the one holding the old title first), so a story that survives keeps its
+ * told-marks; a part split off is a new story, untold, and a story whose
+ * articles all went elsewhere hands its told-marks to the one that took most
+ * of them. Titles, counts and timelines follow the members. A story the owner
+ * turned away is left as it is. Run twice, the second run changes nothing.
+ * Answers how many stories were made or removed.
  */
-export async function regroupOpen(db: Db, topicId: string, now: Date, ownerLanguage?: string): Promise<number> {
+export async function reclusterOpen(db: Db, topicId: string, now: Date, ownerLanguage?: string): Promise<number> {
   const since = new Date(now.getTime() - WINDOW_MS);
   const { rows: fresh } = await db.query<{ id: string; title: string; lead: string; tokens: string[] }>(
     `select a.id, a.title, a.lead, a.tokens from news.article_topics at join news.articles a on a.id = at.article_id
@@ -348,53 +359,85 @@ export async function regroupOpen(db: Db, topicId: string, now: Date, ownerLangu
   }
   return db.transaction(async (tx) => {
     await tx.query(`select pg_advisory_xact_lock(hashtext('news.cluster:' || $1))`, [topicId]);
-    const { rows } = await tx.query<{ story_id: string; first_seen: Date; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
-      `select s.id as story_id, s.first_seen, a.id, a.published_at, a.tokens, a.language, a.kind
+    const { rows } = await tx.query<{ story_id: string; first_seen: Date; title_article_id: string | null; id: string; published_at: Date; tokens: string[]; language: string; kind: string | null }>(
+      `select s.id as story_id, s.first_seen, s.title_article_id, a.id, a.published_at, a.tokens, a.language, a.kind
          from news.stories s join news.article_topics at on at.story_id = s.id and at.topic_id = s.topic_id join news.articles a on a.id = at.article_id
         where s.topic_id = $1 and s.updated_at >= $2 and s.hidden is null`,
       [topicId, since],
     );
-    const stories = new Map<string, OpenStory & { firstSeen: Date }>();
+    if (rows.length === 0) return 0;
+    const old = new Map<string, { firstSeen: Date; titleArticle: string | null; members: Set<string> }>();
+    const articles: ClusterArticle[] = [];
     for (const r of rows) {
-      const story = stories.get(r.story_id) ?? { id: r.story_id, firstSeen: r.first_seen, updatedAt: r.published_at, members: [] };
-      story.members.push({ id: r.id, publishedAt: r.published_at, sequence: r.tokens, language: r.language, deal: r.kind === 'deal' });
-      if (r.published_at > story.updatedAt) story.updatedAt = r.published_at;
-      stories.set(r.story_id, story);
+      const story = old.get(r.story_id) ?? { firstSeen: r.first_seen, titleArticle: r.title_article_id, members: new Set<string>() };
+      story.members.add(r.id);
+      old.set(r.story_id, story);
+      articles.push({ id: r.id, publishedAt: r.published_at, sequence: r.tokens, language: r.language, deal: r.kind === 'deal' });
     }
-    const ordered = [...stories.values()].sort((a, b) => a.firstSeen.getTime() - b.firstSeen.getTime() || a.id.localeCompare(b.id));
-    const common = commonNames(ordered, []);
-    const kept: OpenStory[] = [];
-    const merges: Array<[from: string, into: string]> = [];
-    for (const story of ordered) {
-      let best: { id: string; score: number } | null = null;
-      for (const member of story.members) {
-        const found = bestStory(member, kept, common);
-        if (found && (!best || found.score > best.score)) best = found;
-      }
-      const into = best ? kept.find((k) => k.id === best!.id) : undefined;
-      if (into) {
-        into.members.push(...story.members);
-        if (story.updatedAt > into.updatedAt) into.updatedAt = story.updatedAt;
-        merges.push([story.id, into.id]);
-      } else {
-        kept.push({ ...story, members: [...story.members] });
+    let drafts = 0;
+    const { assignments } = assignStories(articles, [], () => `group:${drafts++}`, await topicWords(tx, topicId));
+    const groups = new Map<string, Set<string>>();
+    for (const [article, group] of assignments) groups.set(group, (groups.get(group) ?? new Set()).add(article));
+
+    // Each group keeps the old id it shares most with; each old id goes to one group.
+    const pairs: Array<{ group: string; story: string; shared: number; title: boolean; firstSeen: number }> = [];
+    for (const [group, members] of groups) {
+      for (const [story, o] of old) {
+        let shared = 0;
+        for (const m of members) if (o.members.has(m)) shared += 1;
+        if (shared > 0) pairs.push({ group, story, shared, title: !!o.titleArticle && members.has(o.titleArticle), firstSeen: o.firstSeen.getTime() });
       }
     }
-    for (const [from, into] of merges) {
-      await tx.query(`update news.article_topics set story_id = $2 where story_id = $1 and topic_id = $3`, [from, into, topicId]);
+    pairs.sort((a, b) => b.shared - a.shared || Number(b.title) - Number(a.title) || a.firstSeen - b.firstSeen || a.story.localeCompare(b.story) || a.group.localeCompare(b.group));
+    const idOf = new Map<string, string>();
+    const taken = new Set<string>();
+    for (const p of pairs) {
+      if (idOf.has(p.group) || taken.has(p.story)) continue;
+      idOf.set(p.group, p.story);
+      taken.add(p.story);
+    }
+
+    const touched = new Set<string>();
+    let changed = 0;
+    for (const [group, members] of groups) {
+      let id = idOf.get(group);
+      if (!id) {
+        id = newId('s');
+        const first = new Date(Math.min(...articles.filter((a) => members.has(a.id)).map((a) => a.publishedAt.getTime())));
+        await tx.query(`insert into news.stories (id, topic_id, first_seen, updated_at) values ($1, $2, $3, $3)`, [id, topicId, first]);
+        idOf.set(group, id);
+        changed += 1;
+      }
+      const before = old.get(id)?.members;
+      if (before && before.size === members.size && [...members].every((m) => before.has(m))) continue;
+      await tx.query(`update news.article_topics set story_id = $1 where topic_id = $2 and article_id = any($3)`, [id, topicId, [...members]]);
+      touched.add(id);
+    }
+    // A story whose articles all went elsewhere: its told-marks go where most of them went.
+    for (const [story, o] of old) {
+      if (taken.has(story)) continue;
+      const counts = new Map<string, number>();
+      for (const m of o.members) {
+        const into = idOf.get(assignments.get(m)!)!;
+        counts.set(into, (counts.get(into) ?? 0) + 1);
+      }
+      const into = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]![0];
       await tx.query(
         `insert into news.told (edition_id, story_id, told_at, article_count, outlet_count, was_update)
          select edition_id, $2, told_at, article_count, outlet_count, was_update from news.told where story_id = $1
          on conflict (edition_id, story_id) do nothing`,
-        [from, into],
+        [story, into],
       );
-      await tx.query(`update news.stories set last_told_at = greatest(last_told_at, (select last_told_at from news.stories where id = $1)) where id = $2`, [from, into]);
-      await tx.query(`delete from news.stories where id = $1`, [from]);
+      await tx.query(`update news.stories set last_told_at = greatest(last_told_at, (select last_told_at from news.stories where id = $1)) where id = $2`, [story, into]);
+      await tx.query(`delete from news.stories where id = $1`, [story]);
+      touched.add(into);
+      changed += 1;
     }
-    const touched = [...new Set(merges.map(([, into]) => into))];
-    await refreshStories(tx, touched, ownerLanguage);
-    await linkTwins(tx, touched);
-    return merges.length;
+    const ids = [...touched];
+    await tx.query(`update news.stories set twin_of = null where id = any($1)`, [ids]);
+    await refreshStories(tx, ids, ownerLanguage);
+    await linkTwins(tx, ids);
+    return changed;
   });
 }
 

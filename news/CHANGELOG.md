@@ -2,7 +2,13 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
-## 0.2.3 — unreleased
+## 0.2.4 — unreleased
+
+### Fixed
+
+- One shared name no longer makes a story: the topic's own name ("Togo" in Togo and West Africa) and the terms running through a tenth of its stories that day no longer count as names, a year is a word, one name in common needs two other words in common too, and an article is compared with the story as a whole and must share a name with its first article, so a story cannot drift from a football match to a tax meeting, nor Malaysia's 2027 budget join France's. On the first tick after the update, the last 48 hours' open stories are grouped again once: a story that survives keeps its id and told-marks, a part split off becomes a new story, and each one's title, counts and "How it moved" follow its own articles.
+
+## 0.2.3
 
 ### Added
 
