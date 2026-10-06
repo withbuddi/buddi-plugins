@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '@buddi/core/plugin';
 import { z } from 'zod';
 import { payoff } from '../amortization.js';
-import { findAccount, loadPreferences, num, today, toDateString } from './shared.js';
+import { findAccount, loadPreferences, recordCurrency, num, today, toDateString } from './shared.js';
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a YYYY-MM-DD date');
 
@@ -91,6 +91,7 @@ export const setLiability: ToolDefinition<z.infer<typeof setInput>, unknown> = {
   tier: 'auto',
   input: setInput,
   async execute(input, ctx) {
+    await recordCurrency(ctx.buddi!.db, ctx.buddi!.owner);
     let paidFromId: string | null = null;
     if (input.paidFrom) {
       const account = await findAccount(ctx.buddi!.db, input.paidFrom);
@@ -206,7 +207,7 @@ export const listLiabilities: ToolDefinition<z.infer<typeof listInput>, unknown>
   input: listInput,
   async execute(input, ctx) {
     const activeOnly = input.activeOnly ?? true;
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { rows } = await ctx.buddi!.db.query(
       `select l.id, l.name, l.kind, l.balance, l.credit_limit, l.minimum_payment, l.due_day,
               l.apr, l.paid_from_account_id, l.as_of, l.active, l.statement_day,
@@ -275,7 +276,7 @@ export const payoffEstimate: ToolDefinition<z.infer<typeof payoffInput>, unknown
   tier: 'auto',
   input: payoffInput,
   async execute(input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { rows } = await ctx.buddi!.db.query(
       `select name, kind, balance, apr, minimum_payment from finance.liabilities
         where lower(name) = lower($1) and active`,

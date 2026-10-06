@@ -11,6 +11,11 @@
  *
  * A balance that was *seen* is the one number the model cannot recompute. It
  * has to be written down at the moment it is read.
+ *
+ * The third exists because of another: handed a card's CSV export, the
+ * advisor read it as text and retyped "clean CSVs split by year" into new
+ * files — which failed on size — instead of handing the export to
+ * `finance.stage_import` as it was.
  */
 import type { SuggestedSkill } from '@buddi/core/plugin';
 
@@ -131,5 +136,33 @@ Before recommending a payment, check it against \`finance.project_cashflow\`: a 
 - A score you were not told. There is no way to compute one; \`finance.credit_score_history\` is the only source, and "no score recorded yet" is the honest answer.
 - A comparison across bureaus or models. Experian and Equifax do not hold the same file; FICO 8 and VantageScore 3 do not score the same file the same way. A trend is only ever within one bureau.
 - A promise of points. "Should help" is the strongest claim available; how much a score moves depends on the file, and the file is not visible here.`,
+  },
+  {
+    name: 'a-statement-goes-in-by-file',
+    description:
+      'What to do with a statement or export the owner hands you — a CSV, a PDF, a spreadsheet. Read this before reading, converting or retyping any bank or card file.',
+    body: `A file the owner hands you is staged **as it is**. You never rewrite it.
+
+## The rule
+- **A CSV export** (from the bank or the card's website) goes straight to \`finance.stage_import\` with \`file\` set to its artifact id — \`account\` for a bank account, \`liability\` for a card. Do not open it as text first, do not clean it, do not split it by year, do not convert it to another layout. The reader takes every common export as written: a summary above the header, Withdrawals/Deposits or Debit/Credit columns, \`$1,234.56\` and \`(500.00)\`, month-first dates, no header at all. On a card, charges the export writes positive are flipped for you.
+- **A PDF statement** is read by you, page by page: stage the lines you read with \`rows\` and \`artifactId\` set to the PDF, up to 200 rows a call. Passing a PDF as \`file\` is refused with that instruction.
+- **A spreadsheet** (.xlsx) is not read: ask the owner for the CSV export of the same statement; nearly every bank offers one beside it.
+
+## Never retype a file
+Typing out more than about thirty rows by hand — into \`rows\`, into a new file, into \`artifacts.write\` — is never the answer. It is slow, it hits size limits, and every retyped digit is a chance to invent money. If a CSV will not stage, the file goes back to the owner, not through you.
+
+## When a file cannot be read
+\`finance.stage_import\` refuses with \`could not read: <why>\` and the header it saw. Tell the owner, in a sentence or two:
+- what the file looks like (its header row, how many lines);
+- what is missing (no date column, no amount, an empty file);
+- what would work (the bank's CSV download for that account and period).
+
+Then stop. Do not rewrite the file into a shape you think will pass.
+
+## When some lines were left out
+The result's \`file\` says how many lines were read, how many were left out with the first reasons, and what was decided (\`notes\`: dates read month-first, charges flipped). A total line or a blank one left out is normal; say so in a clause. More than a few real transactions left out: name them to the owner before asking to commit.
+
+## Then, as always
+Show the summary in plain words and ask before \`finance.commit_import\`. Record the closing balance the statement states with \`finance.set_balance\` (for a card, \`finance.set_liability\`), as of the statement's own date.`,
   },
 ];

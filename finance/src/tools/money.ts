@@ -15,7 +15,7 @@ import { addDays, occurrencesBetween, type Cadence } from '../projection.js';
 import { ADVISOR_ROLES } from '../sentinels/roles.js';
 import { setBalance } from './accounts.js';
 import { setPreferences } from './preferences.js';
-import { ensureAccount, findAccount, loadPreferences, num, today, toDateString } from './shared.js';
+import { ensureAccount, findAccount, loadPreferences, num, recordCurrency, today, toDateString } from './shared.js';
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a YYYY-MM-DD date');
 
@@ -138,7 +138,7 @@ export const setMoneySettings: ToolDefinition<z.infer<typeof settingsInput>, unk
 };
 
 export async function moneySettings(ctx: ToolContext): Promise<{ currency: string; safetyFloor: number; amountsOnLockScreen: boolean }> {
-  const prefs = await loadPreferences(ctx.buddi!.db);
+  const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
   return { currency: prefs.currency, safetyFloor: prefs.safetyFloor, amountsOnLockScreen: await lockScreenAmounts(ctx.buddi!.db) };
 }
 
@@ -153,6 +153,9 @@ const setupInput = z
     balance: z.number().optional().describe('What it holds now. Required unless a statement is handed in.'),
     asOf: z.union([DATE, EMPTY]).optional().describe('The day that balance is from; today when left out.'),
     institution: z.union([z.string().trim().min(1).max(80), EMPTY]).optional().describe('The bank, when it is not in the name.'),
+    currency: z.union([z.string().trim().regex(/^[A-Za-z]{3}$/, 'a three-letter currency code'), EMPTY]).optional().describe(
+      "The currency the owner confirmed on the sheet: 'USD', 'EUR'. Left out, the one their time zone suggests is kept.",
+    ),
     artifactId: z.union([z.string().uuid(), EMPTY]).optional().describe(
       'A statement already in the Files library: handed to the advisor, who reads it into this account and asks before anything is written.',
     ),
@@ -183,7 +186,7 @@ export interface SetupResult {
 export function statementPrompt(account: string, artifactId: string, filename: string | null): string {
   return [
     `The owner just set up the account "${account}" and handed in a statement${filename ? ` (${filename})` : ''}, file ${artifactId} in the Files library.`,
-    `Read it and stage its rows with finance.stage_import (account "${account}", source "statement", artifactId "${artifactId}").`,
+    `Stage it with finance.stage_import (account "${account}", source "statement", artifactId "${artifactId}"): a CSV goes in as it is, with file "${artifactId}" — never retyped or cleaned first; a PDF you read yourself and stage as rows.`,
     'Record the closing balance the statement states with finance.set_balance, as of the statement\'s own date.',
     'Then show the owner the staged summary in plain words and ask before committing; never commit on your own.',
     `End by naming the Money page (${MONEY_ROUTE}) where the account now shows.`,
@@ -206,7 +209,11 @@ export const setupTool: ToolDefinition<SetupInput, SetupResult> = {
       asOf: said(raw.asOf),
       institution: said(raw.institution),
       artifactId: said(raw.artifactId),
+      currency: said(raw.currency),
     };
+    // The sheet showed a currency: what the owner left there is what they confirmed.
+    if (input.currency) await setPreferences.execute({ currency: input.currency.toUpperCase() }, ctx);
+    else await recordCurrency(db, ctx.buddi!.owner);
     const existing = await findAccount(db, input.name);
     let account: { id: string; name: string; kind: AccountKind; balance: number | null; balanceAsOf: string | null };
     if (input.balance !== undefined) {

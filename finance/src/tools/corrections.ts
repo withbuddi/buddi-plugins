@@ -215,7 +215,7 @@ export const findTransactions: ToolDefinition<z.infer<typeof findInput>, unknown
       params,
     );
     const found = rows.map(mapRow);
-    const { currency } = await loadPreferences(db);
+    const { currency } = await loadPreferences(db, ctx.buddi!.owner);
     return {
       currency,
       total: Number(countRows[0]?.n ?? 0),
@@ -397,7 +397,7 @@ export const updateTransactions: ToolDefinition<z.infer<typeof updateInput>, unk
   async describe(input, ctx) {
     const db = ctx.buddi!.db;
     const planned = await planUpdate(db, input.changes);
-    const { currency } = await loadPreferences(db);
+    const { currency } = await loadPreferences(db, ctx.buddi!.owner);
     const lines = planned.map((p) => changeLine(p, currency));
     return {
       envelope: {
@@ -599,7 +599,7 @@ export const deleteTransactions: ToolDefinition<DeleteInput, unknown> = {
   async describe(input, ctx) {
     const db = ctx.buddi!.db;
     const plan = await planDelete(db, input);
-    const { currency } = await loadPreferences(db);
+    const { currency } = await loadPreferences(db, ctx.buddi!.owner);
     return {
       envelope: {
         tool: 'finance.delete_transactions',

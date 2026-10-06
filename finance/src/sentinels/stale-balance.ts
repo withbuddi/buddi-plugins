@@ -23,7 +23,7 @@ export const staleBalance: RoleAwareSentinel = {
   coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { rows } = await ctx.buddi!.db.query(
       `select name, balance, balance_as_of from finance.accounts
         where include_in_cashflow and balance_as_of < $1::date - $2::int

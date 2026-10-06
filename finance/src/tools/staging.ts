@@ -12,10 +12,10 @@
  */
 import { ToolRefusal, type DbArea, type ToolDefinition } from '@buddi/core/plugin';
 import { z } from 'zod';
-import { dedupHash, occurrenceIndexes, resolveLedger, type Ledger } from './shared.js';
+import { dedupHash, loadPreferences, occurrenceIndexes, recordCurrency, resolveLedger, type Ledger } from './shared.js';
 import { insertTransaction, type TransactionSource } from './transactions.js';
 import { runReconcile } from './reconcile.js';
-import { rowsFromFile } from './staging-file.js';
+import { rowsFromFile, type FileDiagnostic } from './staging-file.js';
 import { bestMatch, normalizeMerchant, SUPERSESSION_WINDOW } from '../merchant.js';
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a YYYY-MM-DD date');
@@ -83,7 +83,7 @@ const stageInput = z
         'The extracted rows, in statement order. For more than a couple of hundred rows, do not type them: pass `file` with the artifact id of the CSV, or write the rows to an artifact and pass its id.',
       ),
     file: UUID.optional().describe(
-      'Artifact id of a file holding the rows, instead of rows: a CSV with a header row naming date, amount and description (category and status optional), dates YYYY-MM-DD and amounts plain numbers; or a JSON array of rows. A path in a workspace is not accepted: return the file from host.exec as an output to get its artifact id. Exactly one of rows or file.',
+      "Artifact id of a file holding the rows, instead of rows: the bank's or card's CSV export exactly as the owner dropped it — any common layout (Date/Description/Amount, Withdrawals/Deposits, a Debit/Credit column, $ and parentheses, month-first dates, a summary above the header, no header at all) — or a JSON array of rows. Never rewrite or clean the file first: pass it as it is. On a card, charges the export writes positive are flipped for you. The result's `file` says what was read, what was decided (`notes`) and how many lines were left out and why. A path in a workspace is not accepted: return the file from host.exec as an output to get its artifact id. Exactly one of rows or file.",
     ),
   })
   .refine((v) => Boolean(v.account) !== Boolean(v.liability), {
@@ -100,13 +100,26 @@ function round2(n: number): number {
 export const stageImport: ToolDefinition<z.infer<typeof stageInput>, unknown> = {
   name: 'finance.stage_import',
   description:
-    "Stage rows read off a statement WITHOUT writing them to the ledger. It validates them, works out which are already recorded, and returns a summary — row count, how many are new, how many are duplicates, the date range, money in, money out, and the five biggest categories. Show that summary to the owner in plain words and ask whether to commit; write it with finance.commit_import only after an explicit yes, or drop it with finance.discard_import. Pass `liability` instead of `account` for a credit-card statement: the rows then live on the card, where a negative amount is a charge and a positive one a payment. The staging expires in two hours. Extract the rows from the document yourself — never invent a row, and if part of the document is unreadable, stage what is legible and say which part you could not read. For more than a couple of hundred rows, do not type them: pass `file` with the artifact id of the CSV, or write the rows to an artifact and pass its id.",
+    "Stage rows read off a statement WITHOUT writing them to the ledger. It validates them, works out which are already recorded, and returns a summary — row count, how many are new, how many are duplicates, the date range, money in, money out, and the five biggest categories. Show that summary to the owner in plain words and ask whether to commit; write it with finance.commit_import only after an explicit yes, or drop it with finance.discard_import. Pass `liability` instead of `account` for a credit-card statement: the rows then live on the card, where a negative amount is a charge and a positive one a payment. The staging expires in two hours. Extract the rows from the document yourself — never invent a row, and if part of the document is unreadable, stage what is legible and say which part you could not read. A CSV or PDF statement the owner hands you goes in by `file` with its artifact id — the CSV exactly as exported, never retyped, cleaned or split; type `rows` only for what you read off a PDF, a screenshot or the owner's words, and never more than about thirty of them by hand. If a file cannot be read the refusal says why: tell the owner what the file looks like and what is missing instead of rewriting it.",
   tier: 'auto',
   input: stageInput,
   async execute(input, ctx) {
-    const rowsIn: StagedRow[] = input.file === undefined
-      ? (input.rows ?? [])
-      : rowsFromFile(await ctx.buddi!.files!.read(input.file), stagedRow);
+    await recordCurrency(ctx.buddi!.db, ctx.buddi!.owner);
+    let rowsIn: StagedRow[] = input.rows ?? [];
+    let diagnostic: FileDiagnostic | undefined;
+    if (input.file !== undefined) {
+      const bytes = await ctx.buddi!.files!.read(input.file);
+      const { currency } = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
+      try {
+        ({ rows: rowsIn, diagnostic } = rowsFromFile(bytes, stagedRow, {
+          ledger: input.liability ? 'liability' : 'account',
+          // 03/04/2026 is the 4th of March to a dollar owner, the 3rd of April to everyone else.
+          dateOrder: currency === 'USD' ? 'mdy' : 'dmy',
+        }));
+      } catch (error) {
+        throw new ToolRefusal(error instanceof Error ? error.message : String(error));
+      }
+    }
     const artifactId = input.artifactId ?? input.file;
     const ledger = await resolveLedger(ctx.buddi!.db, input);
 
@@ -228,7 +241,11 @@ export const stageImport: ToolDefinition<z.infer<typeof stageInput>, unknown> = 
       source: input.source,
       expiresAt: (rows[0].expires_at as Date).toISOString(),
       summary,
-      note: 'Nothing has been written yet. Show this to the owner and ask before committing.',
+      ...(diagnostic ? { file: diagnostic } : {}),
+      note:
+        diagnostic && diagnostic.rejected > 0
+          ? `Nothing has been written yet. ${diagnostic.rejected} line${diagnostic.rejected === 1 ? '' : 's'} of the file could not be read (${diagnostic.reasons.join('; ')}): tell the owner which, show the summary and ask before committing.`
+          : 'Nothing has been written yet. Show this to the owner and ask before committing.',
     };
   },
 };

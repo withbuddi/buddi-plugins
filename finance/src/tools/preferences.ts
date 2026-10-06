@@ -61,7 +61,7 @@ export const setPreferences: ToolDefinition<z.infer<typeof setInput>, unknown> =
         [JSON.stringify(input.utilizationTarget)],
       );
     }
-    return loadPreferences(ctx.buddi!.db);
+    return loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
   },
 };
 
@@ -70,10 +70,10 @@ const getInput = z.object({});
 export const getPreferences: ToolDefinition<z.infer<typeof getInput>, unknown> = {
   name: 'finance.get_preferences',
   description:
-    "Read the owner's finance preferences: reporting currency (default EUR), safety floor (default 0) and the default credit-card utilization target in percent (default 30).",
+    "Read the owner's finance preferences: reporting currency (until set, the one the owner's time zone suggests: USD in America/*, GBP in London, EUR across Europe), safety floor (default 0) and the default credit-card utilization target in percent (default 30).",
   tier: 'auto',
   input: getInput,
   async execute(_input, ctx) {
-    return loadPreferences(ctx.buddi!.db);
+    return loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
   },
 };

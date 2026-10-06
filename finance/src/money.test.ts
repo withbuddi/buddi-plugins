@@ -34,28 +34,57 @@ describe('the pages', () => {
     expect(parsed.pages.map((p) => [p.id, p.place])).toEqual([['money', 'rail'], ['settings', 'settings']]);
   });
 
-  it('draw Accounts, Coming up, Cards & debts and Statements read, with the empty line the owner reads', () => {
-    // One wrapping section holds everything with an amount, so one Show reveals it all.
-    const wrapper = moneyPages[0]!.body.find((c) => c.kind === 'section') as unknown as { title?: string; body: Array<{ kind: string; title: string; body: Array<{ empty?: string }> }> };
-    expect(wrapper.title).toBeUndefined();
-    const sections = wrapper.body.filter((c) => c.kind === 'section');
+  type Node = { kind: string; title?: string; when?: unknown; query?: { query: string; params?: unknown }; body?: Node[]; tabs?: Array<{ body: Node[] }>; pick?: { param: string; options: Array<{ value: string }> }; empty?: string; drawer?: { id?: string; button?: string }; submit?: { tool: string; args?: Record<string, unknown> }; fields?: Array<{ name: string; from?: string }>; initial?: unknown; items?: string };
+  const body = moneyPages[0]!.body as unknown as Node[];
+  const tabs = body.find((c) => c.kind === 'tabs')!;
+  const shown = tabs.tabs![0]!.body;
+
+  it('draw the figures as cards, then Accounts, Coming up, Cards & debts and Statements read, once anything is recorded', () => {
+    expect(tabs.when).toEqual({ path: 'hasAnything', equals: true });
+    expect(shown[0]).toMatchObject({ kind: 'tiles', items: 'cards', query: { query: 'money_totals' } });
+    const sections = shown.filter((c) => c.kind === 'section');
     expect(sections.map((s) => s.title)).toEqual(['Accounts', 'Coming up', 'Cards & debts', 'Statements read']);
-    expect(sections[0]!.body[0]!.empty).toBe('No accounts yet');
+    expect(sections[0]!.body![0]!.empty).toMatch(/^No bank account yet/);
   });
 
-  it('opens the first-run sheet by `?open=setup`, with finance.setup behind it', () => {
-    const drawers = moneyPages[0]!.body.filter((c) => c.kind === 'form') as Array<{ drawer?: { id?: string }; submit: { tool: string } }>;
-    expect(drawers.map((d) => [d.drawer?.id, d.submit.tool])).toEqual([
-      [undefined, 'finance.setup'], // the empty state's own button
+  it('mask amounts, not structure: no read is sensitive, every read with an amount takes the page’s one choice', () => {
+    expect((manifest.queries ?? []).filter((q) => q.sensitive).map((q) => q.name)).toEqual([]);
+    expect(tabs.pick).toMatchObject({ param: 'amounts', options: [{ value: 'hidden' }, { value: 'shown' }] });
+    const reads: Array<{ query: string; params?: unknown }> = [];
+    const walk = (n: unknown): void => {
+      if (Array.isArray(n)) n.forEach(walk);
+      else if (n && typeof n === 'object') {
+        const q = (n as Node).query;
+        if (q && typeof q === 'object') reads.push(q);
+        Object.values(n).forEach(walk);
+      }
+    };
+    walk(shown);
+    expect(reads.map((r) => r.query).sort()).toEqual(['accounts', 'coming_up', 'debts', 'money_totals', 'statements']);
+    for (const r of reads) expect(r.params).toEqual({ amounts: { param: 'amounts' } });
+    // Hidden is first, so it is what the page starts on.
+    expect(tabs.pick!.options[0]!.value).toBe('hidden');
+  });
+
+  it('teach the three ways in on an empty page, the third with the first-run sheet', () => {
+    const empty = body.find((c) => c.kind === 'section' && c.title === 'Three ways in')!;
+    expect(empty.when).toEqual({ path: 'hasAnything', equals: false });
+    expect(empty.body!.map((c) => c.kind)).toEqual(['list', 'form']);
+    expect(empty.body![1]!.drawer?.button).toBe('Say what an account holds');
+  });
+
+  it('opens the first-run sheet by `?open=setup`, with finance.setup behind it and the currency to confirm', () => {
+    const drawers = [...body, ...body.flatMap((c) => c.body ?? [])].filter((c) => c.kind === 'form');
+    expect(drawers.map((d) => [d.drawer?.id, d.submit!.tool])).toEqual([
       ['account', 'finance.set_balance'],
       ['recurring', 'finance.add_recurring'],
       ['setup', 'finance.setup'],
+      [undefined, 'finance.setup'], // the empty state's own button
     ]);
-  });
-
-  it('masks every read that carries an amount', () => {
-    const sensitive = (manifest.queries ?? []).filter((q) => q.sensitive).map((q) => q.name).sort();
-    expect(sensitive).toEqual(['accounts', 'coming_up', 'debts', 'money_totals', 'statements']);
+    const setup = drawers.find((d) => d.drawer?.id === 'setup')!;
+    expect(setup.initial).toEqual({ query: 'money_settings' });
+    expect(setup.fields!.find((f) => f.name === 'currency')).toMatchObject({ from: 'currency' });
+    expect(setup.submit!.args).toMatchObject({ currency: { field: 'currency' } });
   });
 });
 

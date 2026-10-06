@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { parseAmount, parseBankCsv, parseCsvDate } from './csv.js';
 
 const FRENCH = [
@@ -191,5 +192,104 @@ describe('pending markers', () => {
       ['Date,Status,Amount,Memo', '2026-09-13,Pending,-9.99,Bakery'].join('\n'),
     );
     expect(rows[0]).toMatchObject({ description: 'Bakery', status: 'pending' });
+  });
+});
+
+describe('US bank and card exports (PNC-style, synthetic)', () => {
+  const fixture = (name: string): string => readFileSync(new URL(`./testing/fixtures/${name}`, import.meta.url), 'utf8');
+
+  it('reads a checking export: summary line above the header, Withdrawals/Deposits, $ amounts, month-first dates', () => {
+    const { rows, warnings, header, notes } = parseBankCsv(fixture('pnc-checking.csv'));
+    expect(warnings).toEqual([]);
+    expect(header).toEqual(['Date', 'Description', 'Withdrawals', 'Deposits', 'Category', 'Balance']);
+    expect(notes).toContain('skipped 1 line above the header');
+    expect(notes).toContain('dates read as month/day/year');
+    expect(rows).toHaveLength(7);
+    expect(rows[0]).toEqual({ date: '2026-09-02', amount: -54.12, description: "DEBIT CARD PURCHASE XXXXX1234 TRADER JOE'S #552 PITTSBURGH PA", category: 'Groceries' });
+    expect(rows[1]).toMatchObject({ date: '2026-09-03', amount: 3100 });
+    expect(rows[5]).toMatchObject({ date: '2026-09-15', amount: -1650, description: 'CHECK 1042' });
+    expect(rows[6]).toMatchObject({ date: '2026-09-30', amount: 0.21 });
+  });
+
+  it('reads a card export into the card ledger: positive charges flipped, parenthesised payments positive', () => {
+    const { rows, warnings, notes } = parseBankCsv(fixture('pnc-card.csv'), { ledger: 'liability' });
+    expect(warnings).toEqual([]);
+    expect(notes.join(' ')).toMatch(/charges were positive in the file/);
+    expect(rows.map((r) => [r.date, r.amount])).toEqual([
+      ['2026-09-01', -23.45],
+      ['2026-09-04', -87.1],
+      ['2026-09-05', 500],
+      ['2026-09-09', -41.88],
+      ['2026-09-18', -1204.1],
+      ['2026-09-20', 23.45],
+    ]);
+    expect(rows[2]?.description).toBe('ONLINE PAYMENT - THANK YOU');
+  });
+
+  it('leaves a card file already signed the ledger way alone', () => {
+    const { rows, notes } = parseBankCsv('date,amount,description\n2026-09-01,-20.00,SHOP\n2026-09-02,-5.00,CAFE\n2026-09-05,300.00,PAYMENT THANK YOU', { ledger: 'liability' });
+    expect(rows.map((r) => r.amount)).toEqual([-20, -5, 300]);
+    expect(notes.join(' ')).not.toMatch(/flipped/);
+  });
+
+  it('never flips a cash account', () => {
+    const { rows } = parseBankCsv(fixture('pnc-card.csv'));
+    expect(rows[0]?.amount).toBe(23.45);
+  });
+
+  it('reads a card export with Debit and Credit columns: a charge is negative', () => {
+    const { rows } = parseBankCsv('Transaction Date,Description,Debit,Credit\n10/01/2026,NETFLIX,15.49,\n10/03/2026,PAYMENT,,200.00', { ledger: 'liability' });
+    expect(rows.map((r) => r.amount)).toEqual([-15.49, 200]);
+  });
+
+  it('reads a headerless export with a DEBIT/CREDIT column by what the columns hold', () => {
+    const { rows, notes } = parseBankCsv(
+      ['2026/09/03,45.67,"POS PURCHASE GIANT EAGLE",,REF1001,DEBIT', '2026/09/04,1200.00,"DIRECT DEPOSIT ACME",,REF1002,CREDIT'].join('\n'),
+    );
+    expect(notes).toContain('no header row: columns found by what they hold');
+    expect(rows).toEqual([
+      { date: '2026-09-03', amount: -45.67, description: 'POS PURCHASE GIANT EAGLE' },
+      { date: '2026-09-04', amount: 1200, description: 'DIRECT DEPOSIT ACME' },
+    ]);
+  });
+
+  it('takes a Debit/Credit indicator column for the sign only when the amounts carry none', () => {
+    const { rows } = parseBankCsv('Date,Description,Amount,Debit/Credit\n09/03/2026,GROCER,45.67,Debit\n09/04/2026,SALARY,1200.00,Credit');
+    expect(rows.map((r) => r.amount)).toEqual([-45.67, 1200]);
+  });
+
+  it('reads an ambiguous date the owner’s way, and the file’s way once one date settles it', () => {
+    expect(parseBankCsv('Date,Description,Amount\n03/04/2026,X,-1', { dateOrder: 'mdy' }).rows[0]?.date).toBe('2026-03-04');
+    expect(parseBankCsv('Date,Description,Amount\n03/04/2026,X,-1', { dateOrder: 'dmy' }).rows[0]?.date).toBe('2026-04-03');
+    expect(parseBankCsv('Date,Description,Amount\n03/04/2026,X,-1\n03/25/2026,Y,-2', { dateOrder: 'dmy' }).rows[0]?.date).toBe('2026-03-04');
+    // A dollar sign is a month-first hint when nothing else says.
+    expect(parseBankCsv('Date,Description,Amount\n03/04/2026,X,$-1.00').rows[0]?.date).toBe('2026-03-04');
+  });
+
+  it('counts the rows it leaves out, with the header it saw', () => {
+    const out = parseBankCsv('Date,Description,Amount\n09/02/2026,OK,$1.00\nTotal,,$1.00\n09/03/2026,BAD,n/a');
+    expect(out.rows).toHaveLength(1);
+    expect(out.rejected).toBe(2);
+    expect(out.header).toEqual(['Date', 'Description', 'Amount']);
+    expect(out.warnings[0]).toMatch(/line 3: unparseable date "Total"/);
+  });
+});
+
+describe('parseAmount, US styles', () => {
+  it('reads dollar signs, parentheses on either side of the sign, and CR/DR', () => {
+    expect(parseAmount('$1,234.56')).toBe(1234.56);
+    expect(parseAmount('-$45.00')).toBe(-45);
+    expect(parseAmount('$-45.00')).toBe(-45);
+    expect(parseAmount('($500.00)')).toBe(-500);
+    expect(parseAmount('$(500.00)')).toBe(-500);
+    expect(parseAmount('45.00 CR')).toBe(45);
+    expect(parseAmount('12.00 DR')).toBe(-12);
+    expect(parseAmount('USD 9.99')).toBe(9.99);
+  });
+
+  it('reads named-month dates', () => {
+    expect(parseCsvDate('Sep 3, 2026')).toBe('2026-09-03');
+    expect(parseCsvDate('3 Sep 2026')).toBe('2026-09-03');
+    expect(parseCsvDate('2026/09/03')).toBe('2026-09-03');
   });
 });

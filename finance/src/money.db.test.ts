@@ -35,7 +35,10 @@ suite('the Money page (postgres)', () => {
     if (!result.ok) throw new Error(`${name} refused (${result.reason}): ${result.message}`);
     return result.output;
   };
-  const query = (name: string, over = {}): Promise<any> => manifest.queries!.find((q) => q.name === name)!.produce({}, ctx(over));
+  // Amounts shown, as after the owner picks "Amounts shown"; `masked` reads as the page first does.
+  const query = (name: string, over = {}, params: Record<string, string> = { amounts: 'shown' }): Promise<any> =>
+    manifest.queries!.find((q) => q.name === name)!.produce(name === 'money' || name === 'money_settings' ? {} : params, ctx(over));
+  const masked = (name: string): Promise<any> => query(name, {}, {});
   const widget = (id: string, size: 'small' | 'medium'): Promise<WidgetBody | null> =>
     manifest.widgets!.find((w) => w.id === id)!.produce(ctx(), { size, settings: {} });
 
@@ -63,6 +66,12 @@ suite('the Money page (postgres)', () => {
     expect(await query('accounts')).toEqual({ accounts: [], count: 0 });
     expect(await widget('finance.money', 'medium')).toMatchObject({ kind: 'text' });
     expect(await widget('finance.due', 'small')).toMatchObject({ kind: 'text' });
+  });
+
+  it('offers the currency the owner’s zone suggests, before anything is recorded', async () => {
+    expect((await query('money_settings', { timezone: 'America/New_York' })).currency).toBe('USD');
+    expect((await query('money_settings', { timezone: 'Europe/London' })).currency).toBe('GBP');
+    expect((await query('money_settings')).currency).toBe('EUR'); // UTC says nothing: the euro
   });
 
   it('loads the fixtures', async () => {
@@ -96,6 +105,34 @@ suite('the Money page (postgres)', () => {
     expect(totals).toMatchObject({ cash: '€10,400', netWorth: '€29,600', debt: '€10,800' });
   });
 
+  it('masks every amount and keeps every name, institution, date and card readable until amounts are shown', async () => {
+    const { accounts } = await masked('accounts');
+    expect(accounts.map((a: any) => [a.name, a.line, a.balance])).toEqual([
+      ['Checking', 'Current account · Example Bank · as of 3 Oct', '••••'],
+      ['Old 401k', 'Retirement · not spendable · as of 1 Sep', '••••'],
+      ['Savings', 'Savings · as of 1 Oct', '••••'],
+    ]);
+    const totals = await masked('money_totals');
+    expect(totals.cards.map((c: any) => [c.label, c.value, c.line])).toEqual([
+      ['Cash', '••••', '2 accounts · as of 3 Oct'],
+      ['Net worth', '••••', 'everything, less what you owe'],
+      ['Owed', '••••', 'cards and loans'],
+      ['Low point', '••••', expect.stringMatching(/^lowest, /)],
+    ]);
+    const { due, total } = await masked('coming_up');
+    expect(due.map((d: any) => [d.name, d.line, d.side, d.amount])).toEqual([
+      ['Phone', 'Due tomorrow · on Amex · Monthly', '••••', 0],
+      ['Rent', 'Due Thu · from Checking · Monthly', '••••', 0],
+    ]);
+    expect(total).toBe('••••');
+    const { debts } = await masked('debts');
+    const amex = debts.find((d: any) => d.name === 'Amex');
+    expect(amex).toMatchObject({ owed: '••••', over: 'Over target', advice: null, minimum: 0 });
+    expect(amex.line).toMatch(/^Card · [0-9.]+% used · closes Fri · •••• due Thu 15 Oct$/);
+    // Nothing in a masked answer is a figure.
+    expect(JSON.stringify([accounts, totals, due, debts])).not.toMatch(/€/);
+  });
+
   it('shows the charges coming up in 30 days, the card\'s on the card, and marks one paid', async () => {
     const { due } = await query('coming_up');
     expect(due.map((d: any) => [d.name, d.when, d.line, d.side])).toEqual([
@@ -127,14 +164,19 @@ suite('the Money page (postgres)', () => {
   });
 
   it('lists the statement read, its account, its date and what it added, with the file to open', async () => {
+    // Committed on the database's clock, not the test's: the day it really ran, in UTC.
+    const [, m, d] = new Date().toISOString().slice(0, 10).split('-').map(Number);
+    const readOn = `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m! - 1]}`;
     const { statements } = await query('statements');
     expect(statements).toEqual([
       {
-        id: expect.any(String), artifactId: STATEMENT, title: 'Checking · read 5 Oct',
+        id: expect.any(String), artifactId: STATEMENT, title: `Checking · read ${readOn}`,
         line: '3 new lines · −€1,314 out · +€3,200 in · 2 Sep – 28 Sep',
-        summary: 'Checking · read 5 Oct — 3 new lines · −€1,314 out · +€3,200 in · 2 Sep – 28 Sep',
+        summary: `Checking · read ${readOn} — 3 new lines · −€1,314 out · +€3,200 in · 2 Sep – 28 Sep`,
       },
     ]);
+    // Masked: when it was read and what range it covered, never how much.
+    expect((await masked('statements')).statements[0].line).toBe('3 new lines · 2 Sep – 28 Sep');
   });
 
   it('draws the Money widget with the cash and the next bills, and Coming up without amounts until allowed', async () => {
@@ -147,6 +189,10 @@ suite('the Money page (postgres)', () => {
     await call('finance.set_money_settings', { amountsOnLockScreen: true, currency: '', safetyFloor: 500 });
     expect(await query('money_settings')).toEqual({ currency: 'EUR', safetyFloor: 500, amountsOnLockScreen: true });
     expect(await widget('finance.due', 'small')).toEqual({ kind: 'list', rows: [{ title: 'Phone', side: '€19.99 · tomorrow' }] });
+  });
+
+  it('fixed the guessed currency at the first record: a move to another zone does not flip it', async () => {
+    expect((await query('money_settings', { timezone: 'America/New_York' })).currency).toBe('EUR');
   });
 
   it('keeps setup and the settings from an agent', async () => {
@@ -177,5 +223,11 @@ suite('the Money page (postgres)', () => {
     expect(alone).toMatchObject({ accountId: handed.accountId, statement: { handedTo: null } });
     await expect(setupTool.execute({ name: 'Joint', artifactId: '33333333-3333-4333-8333-333333333333' }, { ...ctx(), buddi: withFile(host()) }))
       .rejects.toThrow(/not in your Files library/);
+  });
+
+  it('takes the currency the owner confirmed on the first-run sheet', async () => {
+    await call('finance.setup', { name: 'Chase', balance: 100, currency: 'usd' });
+    expect((await query('money_settings')).currency).toBe('USD');
+    expect((await query('accounts')).accounts.find((a: any) => a.name === 'Chase').balance).toBe('$100');
   });
 });

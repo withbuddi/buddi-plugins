@@ -3,8 +3,14 @@ import { createHash } from 'node:crypto';
 import type { DbArea, ToolContext } from '@buddi/core/plugin';
 import { defaultIncludeInCashflow } from '../accounts.js';
 import type { AccountKind } from '../accounts.js';
+import { derivedCurrency, FALLBACK_CURRENCY } from '../currency.js';
 
-export const DEFAULT_CURRENCY = 'EUR';
+/**
+ * The currency when nothing says otherwise: no preference recorded and no
+ * owner to guess from (a bare test host). With an owner, `loadPreferences`
+ * guesses from their zone (`currency.ts`).
+ */
+export const DEFAULT_CURRENCY = FALLBACK_CURRENCY;
 export const DEFAULT_SAFETY_FLOOR = 0;
 /** The utilization every card aims at until one of them says otherwise. */
 export const DEFAULT_UTILIZATION_TARGET = 30;
@@ -44,7 +50,41 @@ export function today(ctx: Pick<ToolContext, 'buddi'>): string {
   return ctx.buddi!.clock.today();
 }
 
-export async function loadPreferences(db: DbArea): Promise<Preferences> {
+/** What the currency guess reads of the owner: `ctx.buddi.owner`. */
+export interface CurrencyOwner {
+  readonly timezone?: string;
+  language?(): Promise<string | undefined>;
+}
+
+/** The owner's language tag, or undefined when the host has none or it fails. */
+async function ownerLanguage(owner: CurrencyOwner | undefined): Promise<string | undefined> {
+  if (!owner || typeof owner.language !== 'function') return undefined;
+  return owner.language().catch(() => undefined);
+}
+
+/**
+ * The currency the owner's zone and language suggest, written down once: the
+ * first record of anything fixes the guess, so a later move to another zone
+ * never flips the currency under amounts already kept. A currency already set
+ * (by the owner, the CFO or an earlier guess) is left alone. Returns the
+ * currency in force.
+ */
+export async function recordCurrency(db: DbArea, owner: CurrencyOwner | undefined): Promise<string> {
+  const guess = derivedCurrency(owner?.timezone, await ownerLanguage(owner));
+  await db.query(
+    `insert into finance.preferences (key, value) values ('currency', $1::jsonb)
+     on conflict (key) do nothing`,
+    [JSON.stringify(guess)],
+  );
+  const { rows } = await db.query<{ value: unknown }>(`select value from finance.preferences where key = 'currency'`);
+  return typeof rows[0]?.value === 'string' ? rows[0].value : guess;
+}
+
+/**
+ * The owner's preferences. With `owner`, a currency never set is the one their
+ * zone suggests (and what `recordCurrency` will write); without, the euro.
+ */
+export async function loadPreferences(db: DbArea, owner?: CurrencyOwner): Promise<Preferences> {
   const { rows } = await db.query<{ key: string; value: unknown }>(
     `select key, value from finance.preferences
       where key in ('currency', 'safety_floor', 'utilization_target')`,
@@ -54,6 +94,9 @@ export async function loadPreferences(db: DbArea): Promise<Preferences> {
     safetyFloor: DEFAULT_SAFETY_FLOOR,
     utilizationTarget: DEFAULT_UTILIZATION_TARGET,
   };
+  if (owner && !rows.some((r) => r.key === 'currency' && typeof r.value === 'string')) {
+    prefs.currency = derivedCurrency(owner.timezone, await ownerLanguage(owner));
+  }
   for (const row of rows) {
     if (row.key === 'currency' && typeof row.value === 'string') prefs.currency = row.value;
     if (row.key === 'safety_floor') prefs.safetyFloor = num(row.value);

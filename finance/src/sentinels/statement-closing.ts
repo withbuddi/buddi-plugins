@@ -26,7 +26,7 @@ export const statementClosing: RoleAwareSentinel = {
   coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { rows } = await ctx.buddi!.db.query(
       `select id, name, balance, credit_limit, statement_day, reports_day, utilization_target
          from finance.liabilities

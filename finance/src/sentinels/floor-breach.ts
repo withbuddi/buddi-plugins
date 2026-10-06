@@ -39,7 +39,7 @@ export const floorBreach: RoleAwareSentinel = {
   coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const toolCtx = { buddi: ctx.buddi! };
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
 
     // No recorded balance and no items is not a breach, it is an empty ledger.
     const { rows } = await ctx.buddi!.db.query(

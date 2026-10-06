@@ -3,16 +3,19 @@
  *
  * A statement of a few hundred lines is too long to write out as tool
  * arguments: the reply hits the model's output limit part-way through the call.
- * So the rows can come from a file in the Files library — the CSV the owner
- * dropped, or rows the agent parsed and saved as a file.
+ * So the rows come from a file in the Files library — the CSV the owner
+ * dropped, as the bank exported it, or rows the agent saved as a JSON array.
  *
- * Deliberately strict. A CSV here has a header row naming `date`, `amount` and
- * `description`, dates already `YYYY-MM-DD` and amounts plain numbers. Nothing
- * is guessed: a file in another shape is refused with what was found, and the
- * agent converts it first. A JSON file is an array of row objects. Either way
- * every row goes through the same schema an inline row does.
+ * A CSV goes through the same forgiving reader as every bank export
+ * (`csv.ts`): headers in several languages or none, a summary above the
+ * header, `$1,234.56` and `(500.00)`, debit/credit columns, month-first dates,
+ * a card export's positive charges. What it decides is said back
+ * (`FileDiagnostic.notes`), and every row it leaves out is counted with its
+ * reason, so the owner hears what was read and what was not before anything
+ * is committed. A file it cannot read at all is refused with why.
  */
 import type { z } from 'zod';
+import { parseBankCsv, type BankCsvOptions } from '../csv.js';
 
 /** Rows one file may hold. Well past a year of statements for one account. */
 export const MAX_FILE_ROWS = 5000;
@@ -61,57 +64,36 @@ export function parseCsvRecords(text: string): string[][] {
   return records;
 }
 
-const REQUIRED = ['date', 'amount', 'description'] as const;
-const OPTIONAL = ['category', 'status'] as const;
-const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?$/;
+/** What reading a file decided, and what it left out. */
+export interface FileDiagnostic {
+  /** The header row as the file wrote it. */
+  header: string;
+  /** Rows read. */
+  read: number;
+  /** Rows left out. */
+  rejected: number;
+  /** The first three reasons. */
+  reasons: string[];
+  /** What the reader decided on the file's behalf: "dates read as month/day/year". */
+  notes: string[];
+}
 
-/** CSV text to row objects, before the schema sees them. Throws a sentence. */
-function csvRows(text: string): { row: Record<string, unknown>; label: string }[] {
-  const records = parseCsvRecords(text);
-  const header = records[0];
-  if (!header) throw new Error('The file is empty: no header row.');
-  const names = header.map((h) => h.trim().toLowerCase());
-  const index = new Map<string, number>();
-  names.forEach((name, i) => {
-    if (!index.has(name)) index.set(name, i);
-  });
-  const missing = REQUIRED.filter((name) => !index.has(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `The file has no ${missing.join(', ')} column. The header row reads: ${header.join(', ')}. It needs date, amount and description, and may add category and status.`,
-    );
+/** CSV text to row objects, before the schema sees them. Throws "could not read: …". */
+function csvRows(text: string, options: BankCsvOptions): { raw: { row: Record<string, unknown>; label: string }[]; diagnostic: FileDiagnostic } {
+  const parsed = parseBankCsv(text, options);
+  const header = parsed.header.join(', ');
+  if (parsed.unreadable || parsed.rows.length === 0) {
+    const why = parsed.unreadable
+      ? parsed.warnings[0] ?? 'nothing in it looks like a statement'
+      : parsed.warnings.length > 0
+        ? `none of its ${parsed.warnings.length} rows could be read (${parsed.warnings.slice(0, 3).join('; ')})`
+        : 'it has a header row but no rows';
+    throw new Error(`could not read: ${why}.${header && !why.includes(header) ? ` The header row reads: ${header}.` : ''} It needs a date and an amount (or debit and credit columns) on every line.`);
   }
-  const problems: string[] = [];
-  const out: { row: Record<string, unknown>; label: string }[] = [];
-  records.slice(1).forEach((cells, i) => {
-    const label = `row ${i + 2}`;
-    const cell = (name: string): string => {
-      const at = index.get(name);
-      return at === undefined ? '' : (cells[at] ?? '').trim();
-    };
-    const date = cell('date');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      problems.push(`${label}: date "${date}" is not YYYY-MM-DD`);
-      return;
-    }
-    const amount = cell('amount');
-    if (!PLAIN_NUMBER.test(amount)) {
-      problems.push(`${label}: amount "${amount}" is not a plain number like -12.50`);
-      return;
-    }
-    const row: Record<string, unknown> = {
-      date,
-      amount: Number(amount),
-      description: cell('description'),
-    };
-    for (const name of OPTIONAL) {
-      const value = cell(name);
-      if (value !== '') row[name] = name === 'status' ? value.toLowerCase() : value;
-    }
-    out.push({ row, label });
-  });
-  if (problems.length > 0) throw new Error(refusal(problems));
-  return out;
+  return {
+    raw: parsed.rows.map((row, i) => ({ row: { ...row }, label: `row ${i + 1}` })),
+    diagnostic: { header, read: parsed.rows.length, rejected: parsed.rejected, reasons: parsed.warnings.slice(0, 3), notes: parsed.notes },
+  };
 }
 
 /** JSON text to row objects, before the schema sees them. Throws a sentence. */
@@ -131,17 +113,30 @@ function jsonRows(text: string): { row: Record<string, unknown>; label: string }
 function refusal(problems: string[]): string {
   const shown = problems.slice(0, MAX_REPORTED).join('; ');
   const more = problems.length > MAX_REPORTED ? `; and ${problems.length - MAX_REPORTED} more` : '';
-  return `The file has rows that cannot be staged: ${shown}${more}. Dates must be YYYY-MM-DD and amounts plain numbers; convert the file and try again.`;
+  return `The file has rows that cannot be staged: ${shown}${more}. Each row needs a YYYY-MM-DD date, a signed amount and a description.`;
 }
 
 /**
  * The rows a file holds, each checked by `schema`. CSV or a JSON array,
- * told apart by the first character. Throws a sentence the model can act on.
+ * told apart by the first character. A CSV comes back with what reading it
+ * decided and left out; a JSON array is taken as written. Throws a sentence
+ * the model can act on.
  */
-export function rowsFromFile<T>(bytes: Buffer, schema: z.ZodType<T>): T[] {
-  const text = bytes.toString('utf8').replace(/^﻿/, '');
-  const raw = text.trimStart().startsWith('[') ? jsonRows(text) : csvRows(text);
-  if (raw.length === 0) throw new Error('The file has a header row but no rows.');
+export function rowsFromFile<T>(bytes: Buffer, schema: z.ZodType<T>, options: BankCsvOptions = {}): { rows: T[]; diagnostic?: FileDiagnostic } {
+  if (bytes.subarray(0, 5).toString('latin1') === '%PDF-') {
+    throw new Error(
+      'could not read: this file is a PDF, not a CSV. Read its lines off the document yourself and stage them as rows, with artifactId set to this file (up to 200 rows a call); a bank\'s CSV export, when there is one, goes in by file instead.',
+    );
+  }
+  if (bytes.subarray(0, 2).toString('latin1') === 'PK') {
+    throw new Error('could not read: this file is a spreadsheet (.xlsx) or an archive, not a CSV. Ask the owner for the CSV export of the same statement; most banks offer one beside the spreadsheet.');
+  }
+  const text = bytes.toString('utf8').replace(/^\ufeff/, '');
+  let raw: { row: Record<string, unknown>; label: string }[];
+  let diagnostic: FileDiagnostic | undefined;
+  if (text.trimStart().startsWith('[')) raw = jsonRows(text);
+  else ({ raw, diagnostic } = csvRows(text, options));
+  if (raw.length === 0) throw new Error('could not read: the file has a header row but no rows.');
   if (raw.length > MAX_FILE_ROWS) {
     throw new Error(`The file has ${raw.length} rows; one staging takes at most ${MAX_FILE_ROWS}. Split it by date.`);
   }
@@ -157,5 +152,5 @@ export function rowsFromFile<T>(bytes: Buffer, schema: z.ZodType<T>): T[] {
     }
   }
   if (problems.length > 0) throw new Error(refusal(problems));
-  return rows;
+  return diagnostic ? { rows, diagnostic } : { rows };
 }

@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '@buddi/core/plugin';
 import { z } from 'zod';
-import { num, resolveLedger, toDateString } from './shared.js';
+import { num, recordCurrency, resolveLedger, toDateString } from './shared.js';
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a YYYY-MM-DD date');
 
@@ -64,6 +64,7 @@ export const addRecurring: ToolDefinition<z.infer<typeof addInput>, unknown> = {
   tier: 'auto',
   input: addInput,
   async execute(input, ctx) {
+    await recordCurrency(ctx.buddi!.db, ctx.buddi!.owner);
     // An item with neither account nor liability stays legal: it is assumed to
     // hit the cash, which is how most of the owner's items are already recorded.
     const ledger =

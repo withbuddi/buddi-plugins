@@ -5,6 +5,7 @@ import { daysBetween } from '../projection.js';
 import { ACCOUNT_KINDS, BALANCE_FRESH_DAYS, balanceIsStale, defaultIncludeInCashflow, splitTotals } from '../accounts.js';
 import type { AccountRow } from './shared.js';
 import {
+  recordCurrency,
   ACCOUNT_COLUMNS,
   ensureAccount,
   findAccount,
@@ -86,6 +87,8 @@ export const setBalance: ToolDefinition<z.infer<typeof setBalanceInput>, unknown
   tier: 'auto',
   input: setBalanceInput,
   async execute(input, ctx) {
+    // The first amount recorded fixes the currency the owner's zone suggests.
+    await recordCurrency(ctx.buddi!.db, ctx.buddi!.owner);
     const asOf = input.asOf ?? today(ctx);
     const existing = await findAccount(ctx.buddi!.db, input.account);
     const account =
@@ -209,7 +212,7 @@ export const listAccounts: ToolDefinition<z.infer<typeof listAccountsInput>, unk
     const { rows } = await ctx.buddi!.db.query(
       `select ${ACCOUNT_COLUMNS} from finance.accounts order by name`,
     );
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const day = today(ctx);
     // A balance is a *reading*, and a reading has an age. The flag is on the
     // row rather than in a note at the end, because the model quotes rows.

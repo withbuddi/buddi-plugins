@@ -2,7 +2,16 @@
 
 What changes in @withbuddi/plugin-finance from one release to the next, newest first.
 
-## 0.1.5 — unreleased
+## 0.1.6 — unreleased
+
+### Changed
+
+- The Money page hides amounts, not the page: account names, banks, "as of" dates, what is coming up and your cards stay readable, every amount reads •••• until you pick Amounts shown, and the totals are cards at the top. Before anything is recorded it shows the three ways in: drop a statement, let your CFO read your bank in the browser, or say what an account holds.
+- Your currency starts as the one your time zone suggests (dollars in America/…, pounds in London, francs in Zurich, yen in Tokyo; euros otherwise), shown on the first-run sheet to confirm or change, and kept once anything is recorded.
+- A bank or card CSV goes in as exported: PNC and other US layouts (Withdrawals/Deposits, Debit/Credit, $ and parentheses, month-first dates, a summary line above the header, no header at all), and a card export's positive charges are flipped. Staging says which lines it could not read and why; a file it cannot read at all says what is missing.
+- Your CFO is told to hand a statement file to the import as it is, never to retype or rewrite it.
+
+## 0.1.5 — 2026-10-05
 
 ### Added
 

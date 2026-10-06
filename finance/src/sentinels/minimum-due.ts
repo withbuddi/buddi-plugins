@@ -26,7 +26,7 @@ export const minimumDue: RoleAwareSentinel = {
   coalesce: WAKE_COALESCE,
   async run(ctx: MaybeRoleAwareContext): Promise<Finding[]> {
     const day = today(ctx);
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
 
     // Every liability, plus the due dates a payment_events row already marks
     // paid. The comparison is on the exact upcoming due date, computed the

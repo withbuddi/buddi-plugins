@@ -85,7 +85,7 @@ export const projectCashflow: ToolDefinition<z.infer<typeof input>, unknown> = {
   input,
   async execute(args, ctx) {
     const horizonDays = args.horizonDays ?? 60;
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
 
     let startBalance = 0;
     let accountId: string | undefined;

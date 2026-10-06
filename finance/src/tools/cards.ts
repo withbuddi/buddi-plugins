@@ -108,7 +108,7 @@ export const statementForecastTool: ToolDefinition<z.infer<typeof forecastInput>
   tier: 'auto',
   input: forecastInput,
   async execute(input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const liability = await findLiability(ctx.buddi!.db, input.liability);
     if (!liability) {
       return {
@@ -157,7 +157,7 @@ export const cardActivity: ToolDefinition<z.infer<typeof activityInput>, unknown
   tier: 'auto',
   input: activityInput,
   async execute(input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const liability = await findLiability(ctx.buddi!.db, input.liability);
     if (!liability) {
       return {

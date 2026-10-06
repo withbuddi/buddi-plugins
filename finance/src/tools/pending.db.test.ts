@@ -5,6 +5,7 @@
  * Like the other DB suite, this never touches the developer's data: it creates
  * a throwaway database, migrates this plugin into it, and drops it at the end.
  */
+import { readFileSync } from 'node:fs';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ToolRegistry, createPluginHost, createPool, hostBindingOf, migrate } from '@buddi/core/testing';
@@ -585,17 +586,39 @@ suite('pending, receipts and staged imports (postgres)', () => {
         expect(staged.summary).toMatchObject({ rows: 2, newRows: 2, pending: 1, totalOut: -29.99 });
       });
 
-      it('refuses a CSV without a description column, naming it', async () => {
-        await expect(stage({ file: BAD_ID })).rejects.toThrow(
-          'The file has no description column. The header row reads: date, amount, label.',
-        );
+      it('refuses a file it cannot read, saying why and what header it saw', async () => {
+        files[BAD_ID] = 'when,how much,what\nyesterday,lots,coffee\n';
+        await expect(stage({ file: BAD_ID })).rejects.toThrow('could not read: no date column found in header: when,how much,what');
       });
 
-      it('refuses a date or amount it would have to guess', async () => {
-        files[BAD_ID] = 'date,amount,description\n01/07/2026,"1.234,56",CAFE\n2026-07-02,1.234,SHOP\n2026-07-03,"1.234,56",SHOP\n';
-        const attempt = stage({ file: BAD_ID });
-        await expect(attempt).rejects.toThrow('row 2: date "01/07/2026" is not YYYY-MM-DD');
-        await expect(attempt).rejects.toThrow('row 4: amount "1.234,56" is not a plain number like -12.50');
+      it('refuses a PDF handed in as a file, saying what to do instead', async () => {
+        files[BAD_ID] = '%PDF-1.7\n%binary';
+        await expect(stage({ file: BAD_ID })).rejects.toThrow(/could not read: this file is a PDF/);
+      });
+
+      it('stages what it can read and says what it left out', async () => {
+        files[BAD_ID] = 'Date,Description,Amount\n09/02/2026,COFFEE,-3.50\nTotal,,-3.50\n09/03/2026,LUNCH,-12.00\n';
+        const staged = await stage({ file: BAD_ID, account: 'Diagnostic' });
+        expect(staged.summary).toMatchObject({ rows: 2, newRows: 2 });
+        expect(staged.file).toMatchObject({ header: 'Date, Description, Amount', read: 2, rejected: 1 });
+        expect(staged.file.reasons[0]).toMatch(/line 3: unparseable date "Total"/);
+        expect(staged.note).toMatch(/1 line of the file could not be read/);
+      });
+
+      it('stages a PNC-style card export on the card, charges negative', async () => {
+        await call('finance.set_liability', { name: 'PNC Mastercard', kind: 'credit_card', balance: 832.53, minimumPayment: 35, dueDay: 25 });
+        files[BAD_ID] = readFileSync(new URL('../testing/fixtures/pnc-card.csv', import.meta.url), 'utf8');
+        const staged = await stage({ file: BAD_ID, account: undefined, liability: 'PNC Mastercard' });
+        expect(staged.liability).toBe('PNC Mastercard');
+        expect(staged.summary).toMatchObject({ rows: 6, newRows: 6, totalIn: 523.45, totalOut: -1356.53 });
+        expect(staged.file.notes.join(' ')).toMatch(/charges were positive in the file/);
+      });
+
+      it('stages a PNC-style checking export as the bank wrote it', async () => {
+        files[BAD_ID] = readFileSync(new URL('../testing/fixtures/pnc-checking.csv', import.meta.url), 'utf8');
+        const staged = await stage({ file: BAD_ID, account: 'PNC Spend' });
+        expect(staged.summary).toMatchObject({ rows: 7, newRows: 7, totalIn: 3140.21, totalOut: -2322.52, dateRange: { from: '2026-09-02', to: '2026-09-30' } });
+        expect(staged.file.rejected).toBe(0);
       });
 
       it('takes at most 200 rows inline, and rows or file but not both', () => {

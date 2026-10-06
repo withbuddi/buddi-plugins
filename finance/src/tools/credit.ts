@@ -262,7 +262,7 @@ export const paymentHistory: ToolDefinition<z.infer<typeof paymentHistoryInput>,
   input: paymentHistoryInput,
   async execute(input, ctx) {
     const months = input.months ?? 12;
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { rows } = await ctx.buddi!.db.query(
       `select p.id, p.due_on, p.paid_on, p.amount, p.status, l.name as liability
          from finance.payment_events p
@@ -312,7 +312,7 @@ export const creditUtilization: ToolDefinition<Record<string, never>, unknown> =
   tier: 'auto',
   input: z.object({}),
   async execute(_input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const cards = await loadCards(ctx.buddi!.db);
     const report = utilizationReport(cards);
     return {
@@ -362,7 +362,7 @@ export const creditPlanTool: ToolDefinition<z.infer<typeof planInput>, unknown> 
   tier: 'auto',
   input: planInput,
   async execute(input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const cards = await loadCards(ctx.buddi!.db);
     const forecasts = await loadForecasts(ctx.buddi!.db, cards, today(ctx));
     const plan = creditPlan(cards, input.monthlyBudget);
@@ -412,7 +412,7 @@ export const upcomingStatementsTool: ToolDefinition<z.infer<typeof upcomingInput
   input: upcomingInput,
   async execute(input, ctx) {
     const days = input.days ?? 30;
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const cards = await loadCards(ctx.buddi!.db);
     const from = today(ctx);
     const statements = upcomingStatements(cards, from, days);
@@ -493,7 +493,7 @@ export const creditOverviewTool: ToolDefinition<Record<string, never>, unknown> 
   tier: 'auto',
   input: z.object({}),
   async execute(_input, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const asOf = today(ctx);
     const cards = await loadCardTerms(ctx.buddi!.db);
     // The balance a card will REPORT includes the charges billed to it that are
@@ -661,7 +661,7 @@ export const setCardTerms: ToolDefinition<z.infer<typeof setTermsInput>, unknown
       ],
     );
     const row = rows[0];
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const card = overviewCard(
       {
         name: row.name as string,

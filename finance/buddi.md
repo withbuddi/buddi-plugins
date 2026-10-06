@@ -15,8 +15,13 @@ one, and an account recorded by mistake and holding nothing can be deleted.
 
 A place on the rail, **Money** (`#/p/finance/money`), and a Settings entry,
 **Settings → Money** (`#/settings/p.finance`). Every figure is read through
-the same tools an agent reads, so the page and the CFO never disagree, and
-every read that carries an amount is masked until the owner presses Show.
+the same tools an agent reads, so the page and the CFO never disagree. Amounts
+are masked, structure is not: names, banks, "as of" dates, what is coming up
+and the cards stay readable, and every amount reads `••••` until the owner picks
+**Amounts shown** at the top of the page (the reads leave figures out of their
+answer until then). Before anything is recorded the page teaches the three ways
+in: drop a statement, let the CFO read the bank in the browser, or say what an
+account holds.
 
 - **Accounts**: one line per account — its name, kind, bank, what it holds and
   the day that was read ("as of 3 Oct"), marked when it is older than a week.
@@ -114,11 +119,26 @@ address, with `finance.*`, its own memory, reminders and schedules.
 ## Imports
 
 `finance.stage_import` stages rows without writing them; `finance.commit_import`
-writes them after the owner says yes. Up to 200 rows can be passed inline. For
-more, pass `file`: the artifact id of a CSV with a header row naming `date`,
-`amount` and `description` (`category` and `status` optional), dates
-`YYYY-MM-DD` and amounts plain numbers, or of a JSON array of rows. A file in
-another shape is refused with what was found; nothing is guessed.
+writes them after the owner says yes. Up to 200 rows can be passed inline. A
+CSV goes in by `file` — its artifact id — exactly as the bank or card exported
+it: headers in several languages or none, a summary above the header,
+Withdrawals/Deposits or Debit/Credit columns, a DEBIT/CREDIT indicator, `$`
+and parentheses, month-first dates (settled once per file, or by the owner's
+currency when no date settles it). On a card, an export that writes charges
+positive is flipped so a charge is negative. The result's `file` says the
+header it saw, what it decided, and how many lines it left out with the first
+three reasons; a file it cannot read at all is refused as `could not read:
+<why>`. A JSON array of rows is taken as written. A PDF passed as `file` is
+refused with what to do instead: the agent reads it and stages rows.
+
+## Currency
+
+Until the owner or the CFO sets one, the currency is the one the owner's time
+zone suggests (America/* → USD, Europe/* → EUR, Europe/London → GBP,
+Europe/Zurich → CHF, Asia/Tokyo → JPY, Australia/* → AUD, …; the language's
+region when the zone says nothing; else EUR). The first-run sheet shows it to
+confirm or change, and the first record of anything writes it down, so a
+later move to another zone never flips it.
 
 ## Fixing mistakes
 

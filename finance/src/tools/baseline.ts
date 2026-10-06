@@ -205,7 +205,7 @@ export const spendingBaseline: ToolDefinition<z.infer<typeof input>, unknown> = 
   tier: 'auto',
   input,
   async execute(args, ctx) {
-    const prefs = await loadPreferences(ctx.buddi!.db);
+    const prefs = await loadPreferences(ctx.buddi!.db, ctx.buddi!.owner);
     const { baseline, scope, months, includeCardSpend } = await loadBaseline(ctx, {
       months: args.months ?? 3,
       account: args.account,
