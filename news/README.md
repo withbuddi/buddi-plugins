@@ -18,17 +18,15 @@ catalogue) needs to write its editions.
 buddi plugins install @withbuddi/plugin-news
 ```
 
-It needs buddi with host API 1.27 or later (its logos, the News page and the
-widget's five rows). Nothing is followed until you
+It needs buddi with host API 1.32 or later (buddi's engine for local models,
+on top of the logos, the News page and the widget's five rows). Nothing is followed until you
 turn on the starter sources or add a topic: the Plugins page says "Add a topic
 or turn on the starter sources" until then.
 
-Since 0.2.5 the install is about 200 MB larger: it carries ONNX Runtime
-(`onnxruntime-node`, which ships every platform's binaries in one package) and
-a tokenizer, for the meaning model, whether or not you download the model.
-`buddi plugins install` therefore warns that the plugin "wants to run code at
-install": that is expected, and nothing runs (install scripts are skipped; the
-runtime's CPU binaries come prebuilt in the package).
+The install stays small: the plugin carries only a tokenizer for the meaning
+model. The model runs on buddi's own ONNX engine, which buddi downloads for
+this platform only the first time a plugin needs it (about 114 MB, 45 MB on
+disk), on the same card as the model.
 
 ## Topics and sources
 
@@ -130,9 +128,9 @@ age.
 
 Once the meaning model is downloaded (Settings → News), each tick also embeds
 up to 128 new articles within about four seconds, and stories join by meaning
-first. Downloading holds the 118 MB model file in memory while it is checked;
-once loaded, the model and its tokenizer stay resident, about 150 MB, for as
-long as buddi runs.
+first. Once loaded, the model and its tokenizer take about 150 MB of memory;
+buddi unloads the model after five minutes without new articles and loads it
+again with the next ones.
 
 ## For agents
 
@@ -194,9 +192,11 @@ cookies, no referrer, no account, tracking parameters stripped from stored
 links. Nothing about you, your agents or your conversations is sent. Hosts the
 manifest cannot know (a feed you add, an outlet a search names) are declared
 when first seen and listed on the Plugins page. Download on Settings → News
-fetches the meaning model (paraphrase-multilingual-MiniLM-L12-v2, int8 ONNX,
-135 MB) from Hugging Face, each file pinned to a commit and checked by its
-SHA-256; nothing is sent.
+asks buddi, on one card you approve, for the meaning model
+(paraphrase-multilingual-MiniLM-L12-v2, int8 ONNX, 135 MB, from Hugging Face,
+each file pinned to a commit and checked by its SHA-256) and, the first time
+a plugin needs it, the engine it runs on; buddi downloads both, the plugin
+fetches neither, and nothing is sent.
 
 ## License
 

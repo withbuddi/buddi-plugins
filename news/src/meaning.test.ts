@@ -6,16 +6,14 @@
  * poller's step keeps to its time budget. No model runs here; the real one
  * is `meaning.real.test.ts`, opt-in.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { HttpArea, HttpRequest } from '@buddi/core/plugin';
+import { describe, expect, it } from 'vitest';
+import type { OnnxTensor } from '@buddi/core/plugin';
 import { assignStories, matchStory, MEANING_BAND, MEANING_MERGE, topicTerms, type ClusterArticle } from './cluster.js';
 import { articleText, embedPending, fromBytes, toBytes, type Embedder } from './embed.js';
-import { downloadModel, isDownloaded, Meaning, MEANING_MODEL, type MeaningModel } from './meaning.js';
+import { loadEmbedder, Meaning, MEANING_MODEL, MEANING_REASON, modelRequest, type MeaningHost } from './meaning.js';
 import { meaningRow } from './settings.js';
 import { articleSequence } from './text.js';
 
@@ -255,70 +253,170 @@ describe('embedding in the poller', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * The model's download and its state
+ * The model on buddi's engine: the host's states, the one card, the load
  * ------------------------------------------------------------------ */
 
-describe('the meaning model', () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-  });
-  const tempDir = (): string => {
-    const d = mkdtempSync(path.join(tmpdir(), 'news-meaning-'));
-    dirs.push(d);
-    return d;
+type EngineState = 'absent' | 'downloading' | 'ready' | 'failed';
+
+/** A host with buddi's engine and shared models (1.32), faked: what the settings line and the poller see. */
+function fakeHost(folder = '/models/minilm-l12-multilingual-q8') {
+  const calls: { ensure: unknown[]; sessions: Array<{ path: string; opts: unknown }>; feeds: Array<Record<string, OnnxTensor>> } = { ensure: [], sessions: [], feeds: [] };
+  const world = {
+    engine: 'absent' as EngineState,
+    model: 'absent' as EngineState,
+    engineReason: undefined as string | undefined,
+    pending: undefined as string | undefined,
+    received: 0,
   };
-  const bodies: Record<string, Buffer> = { 'tokenizer.json': Buffer.from('{"tok":1}'), 'onnx/model_quantized.onnx': Buffer.from('ONNX-BYTES') };
-  const tiny: MeaningModel = {
-    ...MEANING_MODEL,
-    files: Object.entries(bodies).map(([p, b]) => ({ path: p, url: `https://huggingface.co/x/resolve/c/${p}`, bytes: b.length, sha256: createHash('sha256').update(b).digest('hex') })),
-  };
-  const fakeHttp = (asked: string[], tamper = false): HttpArea => ({
-    async request(req: HttpRequest) {
-      asked.push(req.url);
-      const url = new URL(req.url);
-      if (url.host === 'huggingface.co') {
-        return { ok: false, status: 302, statusText: '', headers: { get: (n: string) => (n === 'location' ? `https://us.aws.cdn.hf.co${url.pathname}` : null) }, text: async () => '', json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) };
-      }
-      const file = url.pathname.replace('/x/resolve/c/', '');
-      const body = tamper ? Buffer.from('something else') : bodies[file]!;
-      return { ok: true, status: 200, statusText: '', headers: { get: () => null }, text: async () => '', json: async () => ({}), arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer };
+  const host: MeaningHost = {
+    onnx: {
+      async state() {
+        return {
+          state: world.engine, version: '1.30.0', sizeBytes: 45_000_000, downloadBytes: 114_000_000, platform: 'darwin-arm64', available: world.engine !== 'failed',
+          ...(world.engineReason ? { reason: world.engineReason } : {}), ...(world.engine === 'downloading' ? { receivedBytes: world.received } : {}),
+          ...(world.pending ? { pending: world.pending } : {}),
+        };
+      },
+      async ensure(req) {
+        calls.ensure.push(req);
+        if (world.engine === 'absent' || world.model === 'absent') world.pending = 'card-1';
+        return host.onnx!.state();
+      },
+      async createSession(modelPath, opts) {
+        calls.sessions.push({ path: modelPath, opts });
+        let loaded = false;
+        return {
+          async names() { return { inputs: ['input_ids', 'attention_mask', 'token_type_ids'], outputs: ['last_hidden_state'] }; },
+          async run(feeds) {
+            loaded = true;
+            calls.feeds.push(feeds);
+            // Hidden states: token t of every row is the unit vector on axis (id % 3), so pooling is checkable.
+            const [rows, width] = feeds.input_ids!.dims;
+            const ids = feeds.input_ids!.data as BigInt64Array;
+            const hidden = new Float32Array(rows! * width! * 3);
+            for (let i = 0; i < rows! * width!; i++) hidden[i * 3 + Number(ids[i]! % 3n)] = 1;
+            return { last_hidden_state: { type: 'float32', data: hidden, dims: [rows!, width!, 3] } };
+          },
+          get loaded() { return loaded; },
+          async close() {},
+        };
+      },
     },
-  });
+    models: {
+      async state(id) {
+        return { id, state: world.model, sizeBytes: 135_391_535, ...(world.model === 'ready' ? { path: folder } : {}), ...(world.model === 'downloading' ? { receivedBytes: world.received } : {}) };
+      },
+      async ensure(req) {
+        calls.ensure.push(req);
+        return host.models!.state(req.id);
+      },
+    },
+  };
+  return { host, world, calls };
+}
 
-  it('fetches each pinned file through the redirect, checks it, and puts the model in place', async () => {
-    const dir = tempDir();
-    const asked: string[] = [];
-    await downloadModel(dir, fakeHttp(asked), () => {}, tiny);
-    expect(isDownloaded(dir, tiny)).toBe(true);
-    expect(asked.filter((u) => u.includes('cdn.hf.co'))).toHaveLength(2);
-  });
+describe('the meaning model on buddi\'s engine', () => {
+  const MODEL = MEANING_MODEL.files.reduce((n, f) => n + f.bytes, 0);
 
-  it('keeps nothing when a file does not match its checksum', async () => {
-    const dir = tempDir();
-    await expect(downloadModel(dir, fakeHttp([], true), () => {}, tiny)).rejects.toThrow(/did not match its checksum/);
-    expect(isDownloaded(dir, tiny)).toBe(false);
-  });
-
-  it('says where it stands for the settings line: not downloaded, downloading, ready, failed', async () => {
-    const dir = tempDir();
+  it('asks for the engine and the model on one card, then follows the host: waiting, downloading, ready, loaded', async () => {
+    const { host, world, calls } = fakeHost();
     let loads = 0;
-    const meaning = new Meaning(dir, { model: tiny, load: async () => { loads += 1; return fixtureEmbedder; } });
-    expect(meaning.state().state).toBe('absent');
-    expect(meaningRow(meaning.state())).toMatchObject({ action: 'Download (1 MB)', line: expect.stringMatching(/^Not downloaded/) });
-    expect(meaning.ready()).toBeUndefined();
-    expect(meaning.start(fakeHttp([])).state).toBe('downloading');
-    while (meaning.busy) await new Promise((r) => setTimeout(r, 5));
-    expect(meaning.state()).toMatchObject({ state: 'ready', loaded: true });
-    expect(meaning.ready()).toBe(fixtureEmbedder);
-    expect(loads).toBe(1);
-    expect(meaningRow(meaning.state()).done).toMatch(/stories cluster by meaning/);
+    const meaning = new Meaning({ load: async (_h, folder) => { loads += 1; expect(folder).toBe('/models/minilm-l12-multilingual-q8'); return fixtureEmbedder; } });
 
-    const broken = new Meaning(dir, { model: tiny, load: async () => { throw new Error('no ONNX Runtime for this CPU'); } });
-    expect(broken.ready()).toBeUndefined(); // never waits
+    const absent = await meaning.state(host);
+    expect(absent).toEqual({ state: 'absent', bytes: MODEL + 114_000_000 });
+    expect(meaningRow(absent)).toMatchObject({ state: 'absent', action: 'Download (249 MB)', heading: 'Multilingual MiniLM · 135 MB', line: expect.stringMatching(/^Not downloaded.*with the engine buddi runs it on/) });
+    expect(meaning.ready(host)).toBeUndefined();
+    await meaning.settled();
+    expect(loads).toBe(0);
+
+    const asked = await meaning.start(host);
+    expect(calls.ensure).toEqual([{ reason: MEANING_REASON, model: modelRequest() }]);
+    expect(modelRequest().files.map((f) => f.name)).toEqual(['tokenizer_config.json', 'tokenizer.json', 'onnx/model_quantized.onnx']);
+    expect(asked).toMatchObject({ state: 'absent', pending: 'card-1' });
+    expect(meaningRow(asked)).toMatchObject({ state: 'waiting', line: expect.stringMatching(/^Waiting for your answer/) });
+
+    // The owner approves: buddi downloads the engine, then the model.
+    world.pending = undefined;
+    world.engine = 'downloading';
+    world.received = 50_000_000;
+    const downloading = await meaning.state(host);
+    expect(downloading).toEqual({ state: 'downloading', bytes: 50_000_000, total: MODEL + 114_000_000 });
+    expect(meaningRow(downloading)).toMatchObject({ line: 'Downloading: 50 of 249 MB.', bytes: 50_000_000, total: MODEL + 114_000_000 });
+
+    world.engine = 'ready';
+    world.model = 'downloading';
+    world.received = 10_000_000;
+    expect(await meaning.state(host)).toEqual({ state: 'downloading', bytes: 10_000_000, total: MODEL });
+
+    world.model = 'ready';
+    expect(await meaning.state(host)).toEqual({ state: 'ready', bytes: MODEL, loaded: false });
+    expect(meaning.ready(host)).toBeUndefined(); // never waits
+    await meaning.settled();
+    expect(meaning.ready(host)).toBe(fixtureEmbedder);
+    expect(await meaning.state(host)).toMatchObject({ state: 'ready', loaded: true });
+    expect(loads).toBe(1);
+    expect(meaningRow(await meaning.state(host)).done).toMatch(/stories cluster by meaning/);
+  });
+
+  it('asks for the model alone once the engine is here, and nothing once both are', async () => {
+    const { host, world, calls } = fakeHost();
+    world.engine = 'ready';
+    const meaning = new Meaning({ load: async () => fixtureEmbedder });
+    expect(await meaning.state(host)).toEqual({ state: 'absent', bytes: MODEL });
+    expect(meaningRow(await meaning.state(host)).action).toBe('Download (135 MB)');
+    world.model = 'ready';
+    expect(await meaning.start(host)).toMatchObject({ state: 'ready' });
+    await meaning.settled();
+    expect(meaning.ready(host)).toBe(fixtureEmbedder);
+    expect(calls.ensure).toHaveLength(1);
+  });
+
+  it('says why when the engine failed, when the load failed, and when this buddi has no engine', async () => {
+    const { host, world } = fakeHost();
+    world.engine = 'failed';
+    world.engineReason = 'The engine is not available on this platform (win32-x64).';
+    const meaning = new Meaning({ load: async () => fixtureEmbedder });
+    const failed = await meaning.state(host);
+    expect(failed).toMatchObject({ state: 'failed', reason: 'The engine is not available on this platform (win32-x64).' });
+    expect(meaningRow(failed)).toMatchObject({ action: 'Try again', line: expect.stringMatching(/grouped by their words meanwhile/) });
+
+    world.engine = 'ready';
+    world.engineReason = undefined;
+    world.model = 'ready';
+    const broken = new Meaning({ load: async () => { throw new Error('the session would not open'); } });
+    expect(broken.ready(host)).toBeUndefined();
     await broken.settled();
-    expect(broken.state()).toMatchObject({ state: 'failed', reason: 'The model did not load: no ONNX Runtime for this CPU' });
-    expect(broken.ready()).toBeUndefined();
-    expect(meaningRow(broken.state())).toMatchObject({ action: 'Try again' });
+    expect(await broken.state(host)).toMatchObject({ state: 'failed', reason: 'The model did not load: the session would not open' });
+    expect(broken.ready(host)).toBeUndefined();
+
+    expect(await new Meaning().state({ onnx: undefined, models: undefined })).toMatchObject({ state: 'failed', reason: expect.stringMatching(/no engine for local models/) });
+  });
+
+  it('feeds the session int64 ids, mask and token types, and mean-pools and normalises what it answers', async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'news-meaning-'));
+    try {
+      writeFileSync(path.join(folder, 'tokenizer.json'), JSON.stringify({
+        version: '1.0', truncation: null, padding: null, added_tokens: [], normalizer: null, pre_tokenizer: { type: 'Whitespace' }, post_processor: null, decoder: null,
+        model: { type: 'WordLevel', vocab: { '[UNK]': 0, fed: 1, cuts: 2, rates: 3, togo: 4 }, unk_token: '[UNK]' },
+      }));
+      writeFileSync(path.join(folder, 'tokenizer_config.json'), '{}');
+      const { host, calls } = fakeHost(folder);
+      const embedder = await loadEmbedder(host, folder);
+      expect(embedder.model).toBe(MEANING_MODEL.id);
+      expect(calls.sessions).toEqual([{ path: path.join(folder, 'onnx/model_quantized.onnx'), opts: { threads: 2 } }]);
+      expect(await embedder.embed([])).toEqual([]);
+      const [a, b] = await embedder.embed(['fed cuts rates', 'togo']);
+      const feeds = calls.feeds[0]!;
+      expect(feeds.input_ids).toMatchObject({ type: 'int64', dims: [2, 3] });
+      expect([...(feeds.input_ids!.data as BigInt64Array)]).toEqual([1n, 2n, 3n, 4n, 0n, 0n]);
+      expect([...(feeds.attention_mask!.data as BigInt64Array)]).toEqual([1n, 1n, 1n, 1n, 0n, 0n]);
+      expect(feeds.token_type_ids).toMatchObject({ type: 'int64', dims: [2, 3] });
+      // ids 1, 2, 3 land on axes 1, 2, 0: their mean is (1,1,1)/3, normalised; the padding of row two is left out.
+      expect([...a!].map((x) => +x.toFixed(4))).toEqual([0.5774, 0.5774, 0.5774]);
+      expect([...b!]).toEqual([0, 1, 0]);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 });

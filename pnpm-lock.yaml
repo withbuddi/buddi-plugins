@@ -155,9 +155,6 @@ importers:
       '@huggingface/tokenizers':
         specifier: 0.2.0
         version: 0.2.0
-      onnxruntime-node:
-        specifier: 1.21.0
-        version: 1.21.0
       zod:
         specifier: ^3.24.1
         version: 3.25.76

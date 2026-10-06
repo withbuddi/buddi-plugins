@@ -1,20 +1,38 @@
 /**
- * The real meaning model, opt-in: set `NEWS_MEANING_DIR` to a directory
- * holding a downloaded model (`<dir>/meaning`, as Download leaves it under
- * the plugin's own; `isDownloaded` must say yes). It loads onnxruntime-node
- * and the tokenizer, embeds every fixture text, checks the vectors against
- * the recorded ones the other tests use, and clusters the Togo day by them.
- * Skipped otherwise: no test fetches 135 MB.
+ * The real meaning model, opt-in: set `NEWS_MEANING_DATA` to a buddi data
+ * directory where Download on Settings → News has left buddi's engine
+ * (`runtimes/onnx/…`) and the model (`models/minilm-l12-multilingual-q8`).
+ * It runs on buddi's own engine through core's runtimes area, loads the
+ * tokenizer, embeds every fixture text, checks the vectors against the
+ * recorded ones the other tests use, and clusters the Togo day by them.
+ * Skipped otherwise: no test fetches 249 MB.
+ *
+ * Core's runtimes are not in `@buddi/core/plugin` or `@buddi/core/testing`, so
+ * this opt-in test alone reaches them by the package's main entry, resolved
+ * at run time; no other test, and no plugin code, does.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { assignStories, topicTerms } from './cluster.js';
 import { articleText, dot, fromBytes } from './embed.js';
-import { isDownloaded, loadEmbedder, MEANING_MODEL } from './meaning.js';
+import { loadEmbedder, MEANING_MODEL, type MeaningHost } from './meaning.js';
 import { articleSequence } from './text.js';
 
-const dir = process.env.NEWS_MEANING_DIR;
-const suite = dir ? describe : describe.skip;
+const data = process.env.NEWS_MEANING_DATA;
+const suite = data ? describe : describe.skip;
+
+/** The host's engine and shared models, as buddi binds them for this plugin, over `data`. */
+async function realHost(): Promise<MeaningHost> {
+  const main = ['@buddi', 'core'].join('/');
+  const core = (await import(main)) as {
+    configureRuntimes(c: { env: Record<string, string | undefined> }): void;
+    onnxAreaOf(f: object): NonNullable<MeaningHost['onnx']>;
+    modelsAreaOf(f: object): NonNullable<MeaningHost['models']>;
+  };
+  core.configureRuntimes({ env: { ...process.env, BUDDI_DATA_DIR: data } });
+  const facts = { plugin: 'news', dir: () => data!, pool: () => { throw new Error('no cards in this test'); }, now: () => new Date() };
+  return { onnx: core.onnxAreaOf(facts), models: core.modelsAreaOf(facts) };
+}
 
 interface Fixture { lang: string; at: string; title: string; lead: string }
 const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as Record<string, Fixture[] | Array<[Fixture, Fixture]>>;
@@ -22,8 +40,11 @@ const recorded = JSON.parse(readFileSync(new URL('./fixtures/vectors.json', impo
 
 suite('the meaning model on this machine', () => {
   it('embeds the fixtures as recorded, and keeps the Togo day apart by them', async () => {
-    expect(isDownloaded(dir!)).toBe(true);
-    const embedder = await loadEmbedder(dir!);
+    const host = await realHost();
+    expect((await host.onnx!.state()).state).toBe('ready');
+    const model = await host.models!.state(MEANING_MODEL.id);
+    expect(model.state).toBe('ready');
+    const embedder = await loadEmbedder(host, model.path!);
     expect(embedder.model).toBe(MEANING_MODEL.id);
     const texts = Object.keys(recorded.vectors);
     const vectors = await embedder.embed(texts);

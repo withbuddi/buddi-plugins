@@ -642,7 +642,7 @@ export const sourcesPage: PageDescriptor = {
           key: 'id',
           poll: { seconds: 2, while: { path: 'busy', equals: true } },
           body: [
-            { kind: 'notice', text: { path: 'line' }, when: { path: 'state', in: ['absent', 'failed'] } },
+            { kind: 'notice', text: { path: 'line' }, when: { path: 'state', in: ['absent', 'waiting', 'failed'] } },
             {
               kind: 'progress',
               when: { path: 'state', in: ['downloading', 'ready'] },
@@ -654,7 +654,7 @@ export const sourcesPage: PageDescriptor = {
             {
               kind: 'button',
               when: { path: 'state', in: ['absent', 'failed'] },
-              action: { tool: 'news.download_meaning', label: '{action}', busy: 'Starting…', confirm: '{confirm}', done: { path: 'note' } },
+              action: { tool: 'news.download_meaning', label: '{action}', busy: 'Asking…', done: { path: 'note' } },
             },
           ],
         },

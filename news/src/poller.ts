@@ -62,13 +62,7 @@ export interface RefreshOptions {
 
 /** The process's meaning model when it is loaded; nothing otherwise, its load started in the background. Never waits. */
 export function loadedEmbedder(buddi: BuddiHost): Embedder | undefined {
-  let dir: string;
-  try {
-    dir = buddi.dir.path;
-  } catch {
-    return undefined;
-  }
-  return meaningFor(dir).ready();
+  return meaningFor().ready(buddi);
 }
 
 /** For tests: forget what this process did. */

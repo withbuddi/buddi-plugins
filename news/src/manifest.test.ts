@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ToolRegistry } from '@buddi/core/testing';
 import { parseWidgets } from '@buddi/core/plugin';
-import { manifest, MODEL_HOSTS } from './index.js';
+import { manifest } from './index.js';
 import { starterHosts } from './starter.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -56,15 +56,16 @@ describe('news manifest', () => {
   });
 
   it('declares what leaves the machine and what it uses, as package.json and buddi.md do', () => {
-    expect(manifest.network?.map((n) => n.host)).toEqual([...starterHosts(), ...MODEL_HOSTS]);
+    expect(manifest.network?.map((n) => n.host)).toEqual(starterHosts());
     expect(manifest.network?.map((n) => n.host)).toEqual(expect.arrayContaining(['news.google.com', 'hn.algolia.com', 'feeds.bbci.co.uk', '*.lemonde.fr']));
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe(manifest.name);
     expect(pkg.license).toBe('Apache-2.0');
     expect(manifest.version).toBe(pkg.version);
-    expect(pkg.buddi.hostApi).toBe('^1.27');
+    expect(pkg.buddi.hostApi).toBe('^1.32');
+    expect(manifest.uses).toContain('onnx');
     const md = readFileSync(new URL('../buddi.md', import.meta.url), 'utf8');
     expect(md).toMatch(/^Schema: news$/m);
-    expect(md).toContain(`\nHosts: ${[...starterHosts(), ...MODEL_HOSTS].join(', ')}\n`);
+    expect(md).toContain(`\nHosts: ${starterHosts().join(', ')}\n`);
   });
 });
