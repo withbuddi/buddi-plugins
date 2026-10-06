@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { parsePageContributions } from '@buddi/core/testing';
 import { parseWidgets } from '@buddi/core/plugin';
 import { manifest } from './index.js';
-import { changedWords, dueOccurrences, dueWords, moneyPages, moneyWords, type RecurringRow } from './money.js';
+import { changedWords, dueOccurrences, statementWords, dueWords, moneyPages, moneyWords, type RecurringRow } from './money.js';
 import { occurrencesBetween, project } from './projection.js';
 import { dueRow } from './widget.js';
 import { statementPrompt } from './tools/money.js';
@@ -34,36 +34,30 @@ describe('the pages', () => {
     expect(parsed.pages.map((p) => [p.id, p.place])).toEqual([['money', 'rail'], ['settings', 'settings']]);
   });
 
-  type Node = { kind: string; title?: string; when?: unknown; query?: { query: string; params?: unknown }; body?: Node[]; tabs?: Array<{ body: Node[] }>; pick?: { param: string; options: Array<{ value: string }> }; empty?: string; drawer?: { id?: string; button?: string }; submit?: { tool: string; args?: Record<string, unknown> }; fields?: Array<{ name: string; from?: string }>; initial?: unknown; items?: string };
+  type Node = { kind: string; title?: string; when?: unknown; query?: { query: string; params?: unknown }; body?: Node[]; empty?: string; drawer?: { id?: string; button?: string }; submit?: { tool: string; args?: Record<string, unknown> }; fields?: Array<{ name: string; from?: string }>; initial?: unknown; items?: string };
   const body = moneyPages[0]!.body as unknown as Node[];
-  const tabs = body.find((c) => c.kind === 'tabs')!;
-  const shown = tabs.tabs![0]!.body;
+  const wrapper = body.find((c) => c.kind === 'section' && c.title === undefined)!;
+  const shown = wrapper.body!;
 
   it('draw the figures as cards, then Accounts, Coming up, Cards & debts and Statements read, once anything is recorded', () => {
-    expect(tabs.when).toEqual({ path: 'hasAnything', equals: true });
+    expect(wrapper.when).toEqual({ path: 'hasAnything', equals: true });
     expect(shown[0]).toMatchObject({ kind: 'tiles', items: 'cards', query: { query: 'money_totals' } });
     const sections = shown.filter((c) => c.kind === 'section');
     expect(sections.map((s) => s.title)).toEqual(['Accounts', 'Coming up', 'Cards & debts', 'Statements read']);
     expect(sections[0]!.body![0]!.empty).toMatch(/^No bank account yet/);
   });
 
-  it('mask amounts, not structure: no read is sensitive, every read with an amount takes the page’s one choice', () => {
-    expect((manifest.queries ?? []).filter((q) => q.sensitive).map((q) => q.name)).toEqual([]);
-    expect(tabs.pick).toMatchObject({ param: 'amounts', options: [{ value: 'hidden' }, { value: 'shown' }] });
-    const reads: Array<{ query: string; params?: unknown }> = [];
-    const walk = (n: unknown): void => {
-      if (Array.isArray(n)) n.forEach(walk);
-      else if (n && typeof n === 'object') {
-        const q = (n as Node).query;
-        if (q && typeof q === 'object') reads.push(q);
-        Object.values(n).forEach(walk);
-      }
-    };
-    walk(shown);
-    expect(reads.map((r) => r.query).sort()).toEqual(['accounts', 'coming_up', 'debts', 'money_totals', 'statements']);
-    for (const r of reads) expect(r.params).toEqual({ amounts: { param: 'amounts' } });
-    // Hidden is first, so it is what the page starts on.
-    expect(tabs.pick!.options[0]!.value).toBe('hidden');
+  it('mask amounts, not structure: each read names the paths of its amounts, and nothing else', () => {
+    const sensitive = Object.fromEntries((manifest.queries ?? []).filter((q) => q.sensitive).map((q) => [q.name, q.sensitive]));
+    expect(sensitive).toEqual({
+      money_totals: ['cash', 'netWorth', 'debt', 'low', 'cards[].value'],
+      accounts: ['accounts[].balance'],
+      coming_up: ['due[].amount', 'due[].amountWords', 'due[].side', 'total'],
+      debts: ['debts[].owed', 'debts[].minimum', 'debts[].minimumWords', 'debts[].advice'],
+      statements: ['statements[].moved'],
+    });
+    // No page parameter and no switch: core draws one Show amounts in the head.
+    expect(JSON.stringify(body)).not.toMatch(/"amounts"|"tabs"/);
   });
 
   it('teach the three ways in on an empty page, the third with the first-run sheet', () => {
@@ -126,6 +120,12 @@ describe('words', () => {
     expect(dueWords('2026-10-15', TODAY)).toBe('Thu 15 Oct');
   });
 
+  it('split what a statement changed into words and the money it moved', () => {
+    expect(statementWords({ newRows: 12, totalOut: 1240.3, totalIn: 2100, dateRange: { from: '2026-09-01', to: '2026-09-30' } }, 'EUR'))
+      .toEqual({ line: '12 new lines · 1 Sep – 30 Sep', moved: '−€1,240 out · +€2,100 in' });
+    expect(statementWords({ newRows: 0 }, 'EUR')).toEqual({ line: 'nothing new', moved: '' });
+  });
+
   it('say what a statement changed', () => {
     expect(changedWords({ newRows: 12, totalOut: 1240.3, totalIn: 2100, dateRange: { from: '2026-09-01', to: '2026-09-30' } }, 'EUR'))
       .toBe('12 new lines · −€1,240 out · +€2,100 in · 1 Sep – 30 Sep');
@@ -175,7 +175,7 @@ describe('the manifest\'s new claims', () => {
   it('says what it uses, its host API and its version, as package.json does; buddi.md names the page', () => {
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(manifest.uses).toEqual(['files:library', 'schedule']);
-    expect(pkg.buddi.hostApi).toBe('^1.28');
+    expect(pkg.buddi.hostApi).toBe('^1.31');
     expect(manifest.version).toBe(pkg.version);
     expect(md).toContain('#/p/finance/money');
     expect(md).toContain('finance.setup');

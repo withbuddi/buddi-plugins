@@ -35,10 +35,7 @@ suite('the Money page (postgres)', () => {
     if (!result.ok) throw new Error(`${name} refused (${result.reason}): ${result.message}`);
     return result.output;
   };
-  // Amounts shown, as after the owner picks "Amounts shown"; `masked` reads as the page first does.
-  const query = (name: string, over = {}, params: Record<string, string> = { amounts: 'shown' }): Promise<any> =>
-    manifest.queries!.find((q) => q.name === name)!.produce(name === 'money' || name === 'money_settings' ? {} : params, ctx(over));
-  const masked = (name: string): Promise<any> => query(name, {}, {});
+  const query = (name: string, over = {}): Promise<any> => manifest.queries!.find((q) => q.name === name)!.produce({}, ctx(over));
   const widget = (id: string, size: 'small' | 'medium'): Promise<WidgetBody | null> =>
     manifest.widgets!.find((w) => w.id === id)!.produce(ctx(), { size, settings: {} });
 
@@ -105,32 +102,21 @@ suite('the Money page (postgres)', () => {
     expect(totals).toMatchObject({ cash: '€10,400', netWorth: '€29,600', debt: '€10,800' });
   });
 
-  it('masks every amount and keeps every name, institution, date and card readable until amounts are shown', async () => {
-    const { accounts } = await masked('accounts');
-    expect(accounts.map((a: any) => [a.name, a.line, a.balance])).toEqual([
-      ['Checking', 'Current account · Example Bank · as of 3 Oct', '••••'],
-      ['Old 401k', 'Retirement · not spendable · as of 1 Sep', '••••'],
-      ['Savings', 'Savings · as of 1 Oct', '••••'],
-    ]);
-    const totals = await masked('money_totals');
+  it('keeps every amount in a field of its own: names, institutions, dates and card lines carry no figure', async () => {
+    const { accounts } = await query('accounts');
+    expect(accounts.map((a: any) => a.line).join(' ')).not.toMatch(/€/);
+    const totals = await query('money_totals');
     expect(totals.cards.map((c: any) => [c.label, c.value, c.line])).toEqual([
-      ['Cash', '••••', '2 accounts · as of 3 Oct'],
-      ['Net worth', '••••', 'everything, less what you owe'],
-      ['Owed', '••••', 'cards and loans'],
-      ['Low point', '••••', expect.stringMatching(/^lowest, /)],
+      ['Cash', '€10,400', '2 accounts · as of 3 Oct'],
+      ['Net worth', '€29,600', 'everything, less what you owe'],
+      ['Owed', '€10,800', 'cards and loans'],
+      ['Low point', expect.stringMatching(/^€/), expect.stringMatching(/^lowest, /)],
     ]);
-    const { due, total } = await masked('coming_up');
-    expect(due.map((d: any) => [d.name, d.line, d.side, d.amount])).toEqual([
-      ['Phone', 'Due tomorrow · on Amex · Monthly', '••••', 0],
-      ['Rent', 'Due Thu · from Checking · Monthly', '••••', 0],
-    ]);
-    expect(total).toBe('••••');
-    const { debts } = await masked('debts');
-    const amex = debts.find((d: any) => d.name === 'Amex');
-    expect(amex).toMatchObject({ owed: '••••', over: 'Over target', advice: null, minimum: 0 });
-    expect(amex.line).toMatch(/^Card · [0-9.]+% used · closes Fri · •••• due Thu 15 Oct$/);
-    // Nothing in a masked answer is a figure.
-    expect(JSON.stringify([accounts, totals, due, debts])).not.toMatch(/€/);
+    const { due } = await query('coming_up');
+    expect(due.map((d: any) => d.line).join(' ')).not.toMatch(/€/);
+    const { debts } = await query('debts');
+    expect(debts.map((d: any) => d.line).join(' ')).not.toMatch(/€/);
+    expect(debts.find((d: any) => d.name === 'Amex')).toMatchObject({ minimumWords: '€35 minimum' });
   });
 
   it('shows the charges coming up in 30 days, the card\'s on the card, and marks one paid', async () => {
@@ -154,10 +140,10 @@ suite('the Money page (postgres)', () => {
     const { debts, utilization } = await query('debts');
     const amex = debts.find((d: any) => d.name === 'Amex');
     expect(amex).toMatchObject({ owed: '€1,800', over: 'Over target', dueOn: '2026-10-15', minimum: 35, paid: false });
-    expect(amex.line).toMatch(/^Card · [0-9.]+% used · closes Fri · €35 due Thu 15 Oct$/);
+    expect(amex.line).toMatch(/^Card · [0-9.]+% used · closes Fri · minimum due Thu 15 Oct$/);
     expect(amex.advice).toMatch(/Amex closes/);
     const loan = debts.find((d: any) => d.name === 'Car loan');
-    expect(loan).toMatchObject({ owed: '€9,000', over: null, advice: null, line: 'Loan · €250 due Tue 20 Oct · 4.9% APR' });
+    expect(loan).toMatchObject({ owed: '€9,000', over: null, advice: null, line: 'Loan · minimum due Tue 20 Oct · 4.9% APR', minimumWords: '€250 minimum' });
     expect(utilization).toMatch(/% of your limits, on course to report$/);
     await call('finance.record_payment', { liability: 'Amex', dueOn: '2026-10-15', status: 'paid_on_time', amount: 35 });
     expect((await query('debts')).debts.find((d: any) => d.name === 'Amex')).toMatchObject({ paid: true });
@@ -171,12 +157,11 @@ suite('the Money page (postgres)', () => {
     expect(statements).toEqual([
       {
         id: expect.any(String), artifactId: STATEMENT, title: `Checking · read ${readOn}`,
-        line: '3 new lines · −€1,314 out · +€3,200 in · 2 Sep – 28 Sep',
-        summary: `Checking · read ${readOn} — 3 new lines · −€1,314 out · +€3,200 in · 2 Sep – 28 Sep`,
+        line: '3 new lines · 2 Sep – 28 Sep',
+        summary: `Checking · read ${readOn} — 3 new lines · 2 Sep – 28 Sep`,
+        moved: '−€1,314 out · +€3,200 in',
       },
     ]);
-    // Masked: when it was read and what range it covered, never how much.
-    expect((await masked('statements')).statements[0].line).toBe('3 new lines · 2 Sep – 28 Sep');
   });
 
   it('draws the Money widget with the cash and the next bills, and Coming up without amounts until allowed', async () => {

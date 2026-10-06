@@ -17,9 +17,9 @@ A place on the rail, **Money** (`#/p/finance/money`), and a Settings entry,
 **Settings → Money** (`#/settings/p.finance`). Every figure is read through
 the same tools an agent reads, so the page and the CFO never disagree. Amounts
 are masked, structure is not: names, banks, "as of" dates, what is coming up
-and the cards stay readable, and every amount reads `••••` until the owner picks
-**Amounts shown** at the top of the page (the reads leave figures out of their
-answer until then). Before anything is recorded the page teaches the three ways
+and the cards stay readable, and every amount reads `••••` until the owner
+presses **Show amounts** in the page head (each read names its amounts'
+paths in `sensitive`, host API 1.31; `buddi mcp` returns them as "(hidden)"). Before anything is recorded the page teaches the three ways
 in: drop a statement, let the CFO read the bank in the browser, or say what an
 account holds.
 

@@ -8,12 +8,11 @@
  * is formatted here in the owner's currency and words; the dashboard draws
  * text.
  *
- * Amounts are masked, structure is not. Names, institutions, "as of", what is
- * coming up and the cards stay readable; every amount reads `••••` until the
- * owner picks "Amounts shown" (the page parameter `amounts`), and the reads
- * leave the figures out of their answer while it is not — so nothing masked
- * ever reaches the browser. Core's `sensitive` masks whole reads only, which
- * is what hid the whole page behind one Show (see the report on host grammar).
+ * Amounts are masked, structure is not (host API 1.31): each read names the
+ * paths of its amounts in `sensitive`, so names, institutions, "as of", what
+ * is coming up and the cards stay readable while every amount reads `••••`
+ * until Show amounts — and `buddi mcp` hands them over as "(hidden)". An
+ * amount therefore lives in a field of its own, never inside a sentence.
  */
 import { z } from 'zod';
 import type { BuddiHost, PageDescriptor, PageQuery, ToolContext } from '@buddi/core/plugin';
@@ -32,20 +31,6 @@ import { loadPreferences, num, today, toDateString } from './tools/shared.js';
 export const COMING_UP_DAYS = 30;
 /** Statements the page lists. */
 export const STATEMENTS_SHOWN = 8;
-/** What stands where an amount is, until the owner shows amounts. */
-export const MASK = '••••';
-
-/** A read's answer with amounts, or with `MASK` in their place. */
-export interface Reveal {
-  show: boolean;
-}
-const SHOWN: Reveal = { show: true };
-
-/** An amount, or the mask. */
-function amount(reveal: Reveal, words: string): string {
-  return reveal.show ? words : MASK;
-}
-
 /* ------------------------------------------------------------------ *
  * Words
  * ------------------------------------------------------------------ */
@@ -218,20 +203,20 @@ interface ListedAccounts {
   currency: string;
 }
 
-export async function accountLines(ctx: ToolContext, reveal: Reveal = SHOWN): Promise<{ accounts: AccountLine[]; count: number }> {
+export async function accountLines(ctx: ToolContext): Promise<{ accounts: AccountLine[]; count: number }> {
   const listed = (await listAccounts.execute({}, ctx)) as ListedAccounts;
   const day = today(ctx);
   const accounts = listed.accounts.map((a) => ({
     id: a.id,
     name: a.name,
     line: [KIND_WORDS[a.kind] ?? a.kind, ...(a.institution ? [a.institution] : []), ...(a.includeInCashflow ? [] : ['not spendable']), asOfWords(a.balanceAsOf, day)].join(' · '),
-    balance: amount(reveal, moneyWords(a.balance, listed.currency)),
+    balance: moneyWords(a.balance, listed.currency),
     stale: a.stale ? `Not updated in ${a.balanceAgeDays} days` : null,
   }));
   return { accounts, count: accounts.length };
 }
 
-export async function moneyTotals(ctx: ToolContext, reveal: Reveal = SHOWN): Promise<Totals> {
+export async function moneyTotals(ctx: ToolContext): Promise<Totals> {
   const listed = (await listAccounts.execute({}, ctx)) as ListedAccounts;
   const c = listed.currency;
   const day = today(ctx);
@@ -240,15 +225,15 @@ export async function moneyTotals(ctx: ToolContext, reveal: Reveal = SHOWN): Pro
   let breaches = false;
   try {
     const p = (await projectCashflow.execute({ horizonDays: COMING_UP_DAYS, includeBaseline: false } as never, ctx)) as Record<string, unknown>;
-    if (typeof p.minBalance === 'number') low = amount(reveal, moneyWords(p.minBalance, c, { whole: true }));
+    if (typeof p.minBalance === 'number') low = moneyWords(p.minBalance, c, { whole: true });
     if (typeof p.minBalanceDate === 'string') lowNote = `lowest, ${dueWords(p.minBalanceDate, day)}`;
     breaches = p.breachesFloor === true;
   } catch {
     // No account yet: the projection has nothing to start from.
   }
-  const cash = amount(reveal, moneyWords(listed.cashTotal, c, { whole: true }));
-  const netWorth = amount(reveal, moneyWords(listed.netWorth, c, { whole: true }));
-  const debt = amount(reveal, moneyWords(listed.totalLiabilities, c, { whole: true }));
+  const cash = moneyWords(listed.cashTotal, c, { whole: true });
+  const netWorth = moneyWords(listed.netWorth, c, { whole: true });
+  const debt = moneyWords(listed.totalLiabilities, c, { whole: true });
   const spendable = listed.accounts.filter((a) => a.includeInCashflow);
   const newest = spendable.map((a) => a.balanceAsOf).sort().at(-1);
   const cashLine = spendable.length === 0
@@ -303,7 +288,7 @@ export interface RecurringRow {
 }
 
 /** Every occurrence of the charges in `[day, day + days)`, soonest first. Pure. */
-export function dueOccurrences(items: readonly RecurringRow[], day: string, currency: string, days = COMING_UP_DAYS, reveal: Reveal = SHOWN): DueItem[] {
+export function dueOccurrences(items: readonly RecurringRow[], day: string, currency: string, days = COMING_UP_DAYS): DueItem[] {
   const end = addDays(day, days - 1);
   const out: DueItem[] = [];
   for (const item of items) {
@@ -325,7 +310,7 @@ export function dueOccurrences(items: readonly RecurringRow[], day: string, curr
           CADENCE_WORDS[item.cadence],
         ].filter(Boolean).join(' · '),
         account: item.account,
-        side: amount(reveal, amountWords),
+        side: amountWords,
       });
     }
   }
@@ -355,14 +340,11 @@ export async function loadRecurring(db: BuddiHost['db']): Promise<RecurringRow[]
   }));
 }
 
-export async function comingUp(ctx: ToolContext, reveal: Reveal = SHOWN): Promise<{ due: DueItem[]; total: string; count: number }> {
+export async function comingUp(ctx: ToolContext): Promise<{ due: DueItem[]; total: string; count: number }> {
   const db = ctx.buddi!.db;
   const prefs = await loadPreferences(db, ctx.buddi!.owner);
-  const all = dueOccurrences(await loadRecurring(db), today(ctx), prefs.currency, COMING_UP_DAYS, reveal);
-  const total = amount(reveal, moneyWords(all.reduce((s, d) => s + d.amount, 0), prefs.currency, { whole: true }));
-  // Masked, a row carries no figure at all: not in its words, not in its fields.
-  const due = reveal.show ? all : all.map((d) => ({ ...d, amount: 0, amountWords: MASK }));
-  return { due, total, count: due.length };
+  const due = dueOccurrences(await loadRecurring(db), today(ctx), prefs.currency);
+  return { due, total: moneyWords(due.reduce((s, d) => s + d.amount, 0), prefs.currency, { whole: true }), count: due.length };
 }
 
 /* ------------------------------------------------------------------ *
@@ -378,13 +360,15 @@ export interface DebtLine {
   advice: string | null;
   /** "Over target" on a card closing over its utilization target; null otherwise. */
   over: string | null;
+  /** "€35 minimum": the row's second figure, empty when there is none or it is paid. */
+  minimumWords: string;
   /** The next due date of the minimum, and the minimum itself: I paid it. */
   dueOn: string;
   minimum: number;
   paid: boolean;
 }
 
-export async function cardsAndDebts(ctx: ToolContext, reveal: Reveal = SHOWN): Promise<{ debts: DebtLine[]; utilization: string | null }> {
+export async function cardsAndDebts(ctx: ToolContext): Promise<{ debts: DebtLine[]; utilization: string | null }> {
   const db = ctx.buddi!.db;
   const day = today(ctx);
   const overview = (await creditOverviewTool.execute({} as never, ctx)) as {
@@ -414,19 +398,20 @@ export async function cardsAndDebts(ctx: ToolContext, reveal: Reveal = SHOWN): P
       r.kind === 'credit_card' ? 'Card' : r.kind === 'loan' ? 'Loan' : 'Debt',
       ...(used !== null ? [`${Number(used.toFixed(1))}% used`] : []),
       ...(card?.statementClosesOn ? [`closes ${dueWords(card.statementClosesOn, day)}`] : []),
-      ...(minimum > 0 ? [paid ? `minimum paid for ${dayMonth(dueOn)}` : `${amount(reveal, moneyWords(minimum, c))} due ${dueWords(dueOn, day)}`] : []),
+      ...(minimum > 0 ? [paid ? `minimum paid for ${dayMonth(dueOn)}` : `minimum due ${dueWords(dueOn, day)}`] : []),
       ...(r.apr !== null && r.apr !== undefined && r.kind !== 'credit_card' ? [`${num(r.apr)}% APR`] : []),
     ];
     return {
       id: r.id as string,
       name,
       line: parts.join(' · '),
-      owed: amount(reveal, moneyWords(num(r.balance), c)),
-      // The computed sentence names a payment: masked, the pill says it is over and no more.
-      advice: card?.overTarget && reveal.show ? card.sentence : null,
+      owed: moneyWords(num(r.balance), c),
+      // The computed sentence names a payment: masked whole (`sensitive`); the pill is not.
+      advice: card?.overTarget ? card.sentence : null,
       over: card?.overTarget ? 'Over target' : null,
       dueOn,
-      minimum: reveal.show ? minimum : 0,
+      minimum,
+      minimumWords: minimum > 0 && !paid ? `${moneyWords(minimum, c)} minimum` : '',
       paid,
     };
   });
@@ -442,9 +427,23 @@ export interface StatementLine {
   id: string;
   artifactId: string | null;
   title: string;
+  /** What it added, without a figure: "12 new lines · 1 Sep – 30 Sep". */
   line: string;
-  /** Both, as one line: "Checking · read 3 Oct — 12 new lines · …". */
+  /** Title and line, as one: "Checking · read 3 Oct — 12 new lines · 1 Sep – 30 Sep". */
   summary: string;
+  /** The money it moved, on its own so it can be masked: "−€1,240 out · +€2,100 in"; empty when none. */
+  moved: string;
+}
+
+/** A statement's summary, split: what it added in words, and the money it moved. Pure. */
+export function statementWords(s: StagingSummary, currency: string): { line: string; moved: string } {
+  const fresh = s.newRows ?? 0;
+  const line = [fresh === 0 ? 'nothing new' : fresh === 1 ? '1 new line' : `${fresh} new lines`];
+  if (s.dateRange) line.push(`${dayMonth(s.dateRange.from)} – ${dayMonth(s.dateRange.to)}`);
+  const moved: string[] = [];
+  if ((s.totalOut ?? 0) !== 0) moved.push(`${moneyWords(-Math.abs(s.totalOut ?? 0), currency, { whole: true })} out`);
+  if ((s.totalIn ?? 0) !== 0) moved.push(`${moneyWords(Math.abs(s.totalIn ?? 0), currency, { whole: true, signed: true })} in`);
+  return { line: line.join(' · '), moved: moved.join(' · ') };
 }
 
 interface StagingSummary {
@@ -456,20 +455,16 @@ interface StagingSummary {
 }
 
 /** "12 new lines · −€1,240 out · +€2,100 in · 1 Sep – 30 Sep". Pure. */
-export function changedWords(s: StagingSummary, currency: string, reveal: Reveal = SHOWN): string {
+export function changedWords(s: StagingSummary, currency: string): string {
   const fresh = s.newRows ?? 0;
   const parts = [fresh === 0 ? 'nothing new' : fresh === 1 ? '1 new line' : `${fresh} new lines`];
-  if (!reveal.show) {
-    if (s.dateRange) parts.push(`${dayMonth(s.dateRange.from)} – ${dayMonth(s.dateRange.to)}`);
-    return parts.join(' · ');
-  }
   if ((s.totalOut ?? 0) !== 0) parts.push(`${moneyWords(-Math.abs(s.totalOut ?? 0), currency, { whole: true })} out`);
   if ((s.totalIn ?? 0) !== 0) parts.push(`${moneyWords(Math.abs(s.totalIn ?? 0), currency, { whole: true, signed: true })} in`);
   if (s.dateRange) parts.push(`${dayMonth(s.dateRange.from)} – ${dayMonth(s.dateRange.to)}`);
   return parts.join(' · ');
 }
 
-export async function statementsRead(ctx: ToolContext, reveal: Reveal = SHOWN): Promise<{ statements: StatementLine[] }> {
+export async function statementsRead(ctx: ToolContext): Promise<{ statements: StatementLine[] }> {
   const db = ctx.buddi!.db;
   const prefs = await loadPreferences(db, ctx.buddi!.owner);
   const zone = ctx.buddi!.owner.timezone;
@@ -487,8 +482,8 @@ export async function statementsRead(ctx: ToolContext, reveal: Reveal = SHOWN): 
     statements: rows.map((r) => {
       const read = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(r.committed_at as Date);
       const title = `${(r.ledger as string | null) ?? 'A removed account'} · read ${dayMonth(read)}`;
-      const line = changedWords(r.summary as StagingSummary, prefs.currency, reveal);
-      return { id: r.id as string, artifactId: (r.artifact_id as string | null) ?? null, title, line, summary: `${title} — ${line}` };
+      const { line, moved } = statementWords(r.summary as StagingSummary, prefs.currency);
+      return { id: r.id as string, artifactId: (r.artifact_id as string | null) ?? null, title, line, summary: `${title} — ${line}`, moved };
     }),
   };
 }
@@ -498,17 +493,14 @@ export async function statementsRead(ctx: ToolContext, reveal: Reveal = SHOWN): 
  * ------------------------------------------------------------------ */
 
 const none = z.object({}).strict();
-/** The reads that carry amounts take the page's `amounts` choice: `shown`, or masked. */
-const withAmounts = z.object({ amounts: z.string().max(16).optional() }).strict();
-const revealOf = (params: unknown): Reveal => ({ show: (params as { amounts?: string } | undefined)?.amounts === 'shown' });
-
 export const moneyQueries: PageQuery[] = [
   { name: 'money', params: none, produce: async (_p, ctx) => moneyOverview(ctx.buddi!) },
-  { name: 'money_totals', params: withAmounts, produce: async (p, ctx) => moneyTotals(ctx, revealOf(p)) },
-  { name: 'accounts', params: withAmounts, produce: async (p, ctx) => accountLines(ctx, revealOf(p)) },
-  { name: 'coming_up', params: withAmounts, produce: async (p, ctx) => comingUp(ctx, revealOf(p)) },
-  { name: 'debts', params: withAmounts, produce: async (p, ctx) => cardsAndDebts(ctx, revealOf(p)) },
-  { name: 'statements', params: withAmounts, produce: async (p, ctx) => statementsRead(ctx, revealOf(p)) },
+  // Every amount by its path (host API 1.31): masked as •••• until Show amounts, "(hidden)" over MCP.
+  { name: 'money_totals', params: none, sensitive: ['cash', 'netWorth', 'debt', 'low', 'cards[].value'], produce: async (_p, ctx) => moneyTotals(ctx) },
+  { name: 'accounts', params: none, sensitive: ['accounts[].balance'], produce: async (_p, ctx) => accountLines(ctx) },
+  { name: 'coming_up', params: none, sensitive: ['due[].amount', 'due[].amountWords', 'due[].side', 'total'], produce: async (_p, ctx) => comingUp(ctx) },
+  { name: 'debts', params: none, sensitive: ['debts[].owed', 'debts[].minimum', 'debts[].minimumWords', 'debts[].advice'], produce: async (_p, ctx) => cardsAndDebts(ctx) },
+  { name: 'statements', params: none, sensitive: ['statements[].moved'], produce: async (_p, ctx) => statementsRead(ctx) },
   { name: 'money_settings', params: none, produce: async (_p, ctx) => moneySettings(ctx) },
   {
     name: 'account_names',
@@ -529,9 +521,7 @@ const ACCOUNT_OPTIONS = { query: { query: 'account_names' }, rows: 'accounts', v
 
 const CURRENCY_OPTIONS = CURRENCY_CHOICES.map((code) => ({ value: code, label: code }));
 
-/** The page's `amounts` choice, handed to every read that carries an amount. */
-const AMOUNTS = { amounts: { param: 'amounts' } };
-const read = (query: string) => ({ query, params: AMOUNTS });
+const read = (query: string) => ({ query });
 
 /**
  * "Which bank or account?": the first-run sheet, `#/p/finance/money?open=setup`.
@@ -596,127 +586,117 @@ export const moneyPage: PageDescriptor = {
         { ...SETUP_FORM, drawer: { title: 'Which bank or account?', button: 'Say what an account holds' } },
       ],
     },
-    // Amounts masked, structure readable: one choice over every figure on the page.
+    // Structure readable, amounts masked by their reads' `sensitive` paths: one Show amounts in the head.
     {
-      kind: 'tabs',
+      kind: 'section',
       when: { path: 'hasAnything', equals: true },
-      pick: {
-        param: 'amounts',
-        label: 'Amounts',
-        options: [{ value: 'hidden', label: 'Amounts hidden' }, { value: 'shown', label: 'Amounts shown' }],
-      },
-      tabs: [
+      body: [
         {
-          id: 'money',
-          label: 'Money',
+          kind: 'tiles',
+          query: read('money_totals'),
+          items: 'cards',
+          icon: { path: 'icon' },
+          value: 'value',
+          label: 'label',
+          lines: ['line'],
+          tone: 'tone',
+          layout: 'grid',
+        },
+        {
+          kind: 'section',
+          title: 'Accounts',
           body: [
             {
-              kind: 'tiles',
-              query: read('money_totals'),
-              items: 'cards',
-              icon: { path: 'icon' },
-              value: 'value',
-              label: 'label',
-              lines: ['line'],
-              tone: 'tone',
-              layout: 'grid',
-            },
-            {
-              kind: 'section',
-              title: 'Accounts',
-              body: [
+              kind: 'list',
+              query: read('accounts'),
+              rows: 'accounts',
+              key: 'id',
+              empty: 'No bank account yet. Add one, or drop its statement in your CFO’s chat.',
+              item: {
+                title: { path: 'name' },
+                sub: { path: 'line' },
+                meta: [{ path: 'balance' }],
+                pill: { value: { path: 'stale' }, tone: 'warning' },
+              },
+              actions: [
                 {
-                  kind: 'list',
-                  query: read('accounts'),
-                  rows: 'accounts',
-                  key: 'id',
-                  empty: 'No bank account yet. Add one, or drop its statement in your CFO’s chat.',
-                  item: {
-                    title: { path: 'name' },
-                    sub: { path: 'line' },
-                    meta: [{ path: 'balance' }],
-                    pill: { value: { path: 'stale' }, tone: 'warning' },
+                  tool: 'finance.set_balance', label: 'Update', args: { account: { row: 'name' }, balance: { field: 'balance' } },
+                  form: { title: 'What {name} holds now', fields: [{ name: 'balance', label: 'Balance', type: 'number', required: true, step: 0.01, hint: 'Recorded as of today.' }], submit: 'Save' },
+                  done: 'Saved, as of today.',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          kind: 'section',
+          title: 'Coming up',
+          note: 'Bills and charges due in the next 30 days.',
+          body: [
+            {
+              kind: 'list',
+              query: read('coming_up'),
+              rows: 'due',
+              key: 'key',
+              empty: 'Nothing due in the next 30 days. Add your rent, subscriptions and loan payments to see them here.',
+              item: { title: { path: 'name' }, sub: { path: 'line' }, meta: [{ path: 'side' }] },
+              actions: [
+                {
+                  tool: 'finance.mark_paid', label: 'Mark paid', busy: 'Marking…', done: { path: 'message' },
+                  args: { id: { row: 'id' }, through: { row: 'date' }, balance: { field: 'balance' } },
+                  form: {
+                    title: 'Mark {name} paid',
+                    fields: [{ name: 'balance', label: 'What the account holds now (optional)', type: 'number', step: 0.01, hint: 'Leave it empty if the money has not left yet: the forecast keeps your last balance until you update it.' }],
+                    submit: 'Mark paid',
                   },
-                  actions: [
-                    {
-                      tool: 'finance.set_balance', label: 'Update', args: { account: { row: 'name' }, balance: { field: 'balance' } },
-                      form: { title: 'What {name} holds now', fields: [{ name: 'balance', label: 'Balance', type: 'number', required: true, step: 0.01, hint: 'Recorded as of today.' }], submit: 'Save' },
-                      done: 'Saved, as of today.',
-                    },
-                  ],
                 },
               ],
             },
+          ],
+        },
+        {
+          kind: 'section',
+          title: 'Cards & debts',
+          body: [
             {
-              kind: 'section',
-              title: 'Coming up',
-              note: 'Bills and charges due in the next 30 days.',
-              body: [
+              kind: 'list',
+              query: read('debts'),
+              rows: 'debts',
+              key: 'id',
+              empty: 'No cards or loans recorded. Tell your CFO about one, or drop its statement in the chat.',
+              item: {
+                title: { path: 'name' },
+                sub: { path: 'line' },
+                meta: [{ path: 'owed' }, { path: 'minimumWords' }],
+                pill: { value: { path: 'over' }, tone: 'warning' },
+                status: { text: { path: 'advice' }, tone: 'warning' },
+              },
+              actions: [
                 {
-                  kind: 'list',
-                  query: read('coming_up'),
-                  rows: 'due',
-                  key: 'key',
-                  empty: 'Nothing due in the next 30 days. Add your rent, subscriptions and loan payments to see them here.',
-                  item: { title: { path: 'name' }, sub: { path: 'line' }, meta: [{ path: 'side' }] },
-                  actions: [
-                    {
-                      tool: 'finance.mark_paid', label: 'Mark paid', busy: 'Marking…', done: { path: 'message' },
-                      args: { id: { row: 'id' }, through: { row: 'date' }, balance: { field: 'balance' } },
-                      form: {
-                        title: 'Mark {name} paid',
-                        fields: [{ name: 'balance', label: 'What the account holds now (optional)', type: 'number', step: 0.01, hint: 'Leave it empty if the money has not left yet: the forecast keeps your last balance until you update it.' }],
-                        submit: 'Mark paid',
-                      },
-                    },
-                  ],
+                  tool: 'finance.record_payment', label: 'I paid it', when: { path: 'paid', equals: false },
+                  args: { liability: { row: 'name' }, dueOn: { row: 'dueOn' }, status: { const: 'paid_on_time' }, amount: { field: 'amount' } },
+                  form: { title: 'Payment on {name}', fields: [{ name: 'amount', label: 'Amount paid', type: 'number', required: true, step: 0.01 }], submit: 'Record it' },
+                  done: 'Recorded.',
                 },
               ],
             },
+          ],
+        },
+        {
+          kind: 'section',
+          title: 'Statements read',
+          note: 'The last statements your CFO read into an account, and what they added.',
+          body: [
             {
-              kind: 'section',
-              title: 'Cards & debts',
+              kind: 'repeat',
+              query: read('statements'),
+              rows: 'statements',
+              key: 'id',
+              empty: 'No statement read yet. Drop one in your CFO’s chat: it reads it and asks before anything is written.',
               body: [
-                {
-                  kind: 'list',
-                  query: read('debts'),
-                  rows: 'debts',
-                  key: 'id',
-                  empty: 'No cards or loans recorded. Tell your CFO about one, or drop its statement in the chat.',
-                  item: {
-                    title: { path: 'name' },
-                    sub: { path: 'line' },
-                    meta: [{ path: 'owed' }],
-                    pill: { value: { path: 'over' }, tone: 'warning' },
-                    status: { text: { path: 'advice' }, tone: 'warning' },
-                  },
-                  actions: [
-                    {
-                      tool: 'finance.record_payment', label: 'I paid it', when: { path: 'paid', equals: false },
-                      args: { liability: { row: 'name' }, dueOn: { row: 'dueOn' }, status: { const: 'paid_on_time' }, amount: { field: 'amount' } },
-                      form: { title: 'Payment on {name}', fields: [{ name: 'amount', label: 'Amount paid', type: 'number', required: true, step: 0.01 }], submit: 'Record it' },
-                      done: 'Recorded.',
-                    },
-                  ],
-                },
-              ],
-            },
-            {
-              kind: 'section',
-              title: 'Statements read',
-              note: 'The last statements your CFO read into an account, and what they added.',
-              body: [
-                {
-                  kind: 'repeat',
-                  query: read('statements'),
-                  rows: 'statements',
-                  key: 'id',
-                  empty: 'No statement read yet. Drop one in your CFO’s chat: it reads it and asks before anything is written.',
-                  body: [
-                    { kind: 'notice', look: 'quiet', icon: 'clock', text: { path: 'summary' } },
-                    { kind: 'artifact', path: 'artifactId', label: 'Open the statement' },
-                  ],
-                },
+                { kind: 'notice', look: 'quiet', icon: 'clock', text: { path: 'summary' } },
+                { kind: 'notice', look: 'quiet', text: { path: 'moved' }, when: { path: 'moved', not: true, equals: '' } },
+                { kind: 'artifact', path: 'artifactId', label: 'Open the statement' },
               ],
             },
           ],

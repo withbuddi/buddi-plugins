@@ -18,8 +18,8 @@ buddi offers it the CFO's updates while you have not edited it.
 read, the bills coming up in the next 30 days (Mark paid when one went out
 early), your cards and loans, and the statements your CFO has read. Add an
 account or a bill from the page; Upload a statement opens your CFO's chat.
-Names, banks and dates stay readable; amounts stay hidden until you pick
-Amounts shown.
+Names, banks and dates stay readable; amounts stay hidden until you press
+Show amounts.
 Two widgets for Home and the lock screen: **Money** (your cash and the next
 bills, hidden until you tap Show) and **Coming up** (what is due and when,
 amounts only if you allow them in Settings → Money).

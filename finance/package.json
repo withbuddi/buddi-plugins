@@ -37,7 +37,7 @@
       "files:library",
       "schedule"
     ],
-    "hostApi": "^1.28"
+    "hostApi": "^1.31"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
