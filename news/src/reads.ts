@@ -14,11 +14,16 @@ type Db = BuddiHost['db'];
 /** Age halves the score's weight about every 5.5 hours (spec §4.5: e^(−age_h / 8)). */
 export const AGE_SCALE_HOURS = 8;
 
+export interface StoryImage { key: string; caption?: string; credit?: string; outlet: string; url: string }
+
 export interface StorySummary {
+  image?: StoryImage;
   id: string;
   topic: string;
   topicId: string;
   title: string;
+  titleOutlet?: string;
+  leadOutlet?: string;
   /** The title article's lead, plain text. */
   lead: string;
   /** The best article to open: the owner's language first, an outlet's own page before a Google redirect. */
@@ -99,6 +104,7 @@ interface CandidateRow {
 }
 
 export interface ArticleRow {
+  image_key?: string | null; image_caption?: string | null; image_credit?: string | null;
   story_id: string; id: string; title: string; lead: string; url: string; language: string; published_at: Date; fetched_at: Date;
   opinion: boolean; outlet_id: string | null; outlet: string; outlet_kind: string | null; paywall: boolean; logo: string | null;
   lean: string | null; source_id: string; source_kind: SourceKind;
@@ -111,7 +117,7 @@ export async function visibleArticles(db: Db, storyIds: string[]): Promise<Map<s
   const out = new Map<string, ArticleRow[]>();
   if (storyIds.length === 0) return out;
   const { rows } = await db.query<ArticleRow>(
-    `select at.story_id, a.id, a.title, a.lead, a.url, a.language, a.published_at, a.fetched_at, a.opinion, a.outlet_id,
+    `select at.story_id, a.image_key, a.image_caption, a.image_credit, a.id, a.title, a.lead, a.url, a.language, a.published_at, a.fetched_at, a.opinion, a.outlet_id,
             coalesce(o.name, src.name) as outlet, o.kind as outlet_kind, coalesce(o.paywall, false) as paywall,
             o.logo_key as logo, o.lean, a.source_id, src.kind as source_kind, coalesce(a.kind, 'news') as kind
        from news.article_topics at
@@ -178,7 +184,15 @@ function summarise(c: CandidateRow, articles: ArticleRow[], lastTold: { outlets:
     Math.exp(-ageHours / AGE_SCALE_HOURS) * (allOpinion ? 0.5 : gdeltOnly ? 0.6 : 1);
   const status: StorySummary['status'] = c.last_told_at === null ? 'new'
     : materialUpdate(articles.map((a) => ({ title: a.title, fetchedAt: a.fetched_at, outlet: outletKey(a) })), c.last_told_at, lastTold?.outlets ?? outlets.length) ? 'update' : 'told';
+  const titleArticle = articles.find((a) => a.id === c.title_article_id);
+  const imageArticle = titleArticle?.image_key ? titleArticle : articles.find(a => a.image_key);
+  const leadOutlets = [...new Set(articles.filter((a) => a.lead && a.lead === c.lead).map((a) => a.outlet))];
+  // A fallback excerpt may come from a different article. Never guess its publisher.
+  const leadOutlet = titleArticle?.lead === c.lead ? titleArticle.outlet : leadOutlets.length === 1 ? leadOutlets[0] : undefined;
   return {
+    ...(imageArticle?.image_key ? { image: { key: imageArticle.image_key, outlet: imageArticle.outlet, url: imageArticle.url, ...(imageArticle.image_caption ? { caption: imageArticle.image_caption } : {}), ...(imageArticle.image_credit ? { credit: imageArticle.image_credit } : {}) } } : {}),
+    ...(titleArticle ? { titleOutlet: titleArticle.outlet } : {}),
+    ...(leadOutlet ? { leadOutlet } : {}),
     id: c.id,
     topic: c.topic,
     topicId: c.topic_id,
@@ -306,6 +320,7 @@ export async function story(db: Db, now: Date, id: string, ownerLanguage?: strin
 }
 
 export interface SearchHit {
+  image?: StoryImage;
   articleId: string;
   storyId: string | null;
   topic: string | null;
@@ -341,10 +356,16 @@ export async function search(db: Db, now: Date, q: { text: string; topicId?: str
       limit $4`,
     [patterns, new Date(now.getTime() - q.days * 86_400_000), q.topicId ?? null, q.n, now],
   );
-  return rows.map((r) => ({
+  // Use the same cached story illustration as the News page, in one batch.
+  const images = await visibleArticles(db, [...new Set(rows.flatMap(r => r.story_id ? [r.story_id] : []))]);
+  return rows.map((r) => {
+    const article = (images.get(r.story_id ?? '') ?? []).find(a => a.id === r.id && a.image_key)
+      ?? (images.get(r.story_id ?? '') ?? []).find(a => a.image_key);
+    return {
+    ...(article?.image_key ? { image: { key: article.image_key, outlet: article.outlet, url: article.url, ...(article.image_caption ? { caption: article.image_caption } : {}), ...(article.image_credit ? { credit: article.image_credit } : {}) } } : {}),
     articleId: r.id, storyId: r.story_id, topic: r.topic, title: r.title, lead: r.lead, outlet: r.outlet, url: r.url, language: r.language,
     publishedAt: iso(r.published_at), opinion: r.opinion,
-  }));
+  }; });
 }
 
 export interface SourceHealth {

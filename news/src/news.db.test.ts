@@ -19,12 +19,12 @@ import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
 import { manifest } from './index.js';
 import { fetchMissingLogos, moveKeptLogos, refresh, resetPoller, fetchSourceDefinition } from './poller.js';
 import { resetPoliteness } from './fetch.js';
-import { gnewsUrl } from './starter.js';
+import { gnewsUrl, type StarterTopic, type StarterSource, type StarterOutlet } from './starter.js';
 import { FIRST_READ_NOTE, SETUP_NOTE } from './setup.js';
 import type { HeadlinesOutput } from './tools.js';
 import type { StoryDetail } from './reads.js';
-import { storiesFor } from './dashboard.js';
-import { reclusterOpen } from './store.js';
+import { setupView, storiesFor } from './dashboard.js';
+import { reclusterOpen, ensureTopic, ensureOutlet, addSourceRow } from './store.js';
 import { fromBytes, type Embedder } from './embed.js';
 import { MEANING_MODEL } from './meaning.js';
 
@@ -34,6 +34,7 @@ const TEST_DB = `buddi_news_test_${process.pid}`;
 
 interface Fixture { outlet: string; lang: string; at: string; title: string; lead: string }
 const fx = JSON.parse(readFileSync(new URL('./fixtures/stories.json', import.meta.url), 'utf8')) as { fedCut: Fixture[]; crossLanguage: Array<[Fixture, Fixture]>; togoMix: Fixture[] };
+const legacy = JSON.parse(readFileSync(new URL('./testing/legacy-starters.json', import.meta.url), 'utf8')) as { topics: StarterTopic[]; sources: StarterSource[]; outlets: StarterOutlet[] };
 const recorded = JSON.parse(readFileSync(new URL('./fixtures/vectors.json', import.meta.url), 'utf8')) as { vectors: Record<string, string> };
 /** The meaning model, faked: the recorded vector of a fixture text, a fixed vector of its own for any other. */
 const fakeMeaning = (onEmbed: (n: number) => void = () => {}): Embedder => ({
@@ -97,6 +98,22 @@ suite('news (postgres)', () => {
   const asOwner = { agentId: 'owner' };
   const fetchAll = (topicId = 'economy') => refresh(host(), { topicId, sleep: noSleep });
 
+  // Recorded clustering scenarios remain independent of the public starter kit.
+  const seedFixtureTopic = async (id: string) => {
+    const db = host().db;
+    const topic = legacy.topics.find((t) => t.id === id)!;
+    await ensureTopic(db, { ...topic, builtin: true });
+    for (const outlet of legacy.outlets) await ensureOutlet(db, outlet.domain, outlet.name, {
+      kind: outlet.kind, ...(outlet.language ? { language: outlet.language } : {}), ...(outlet.paywall ? { paywall: true } : {}),
+    });
+    let sources = 0;
+    for (const source of legacy.sources.filter((s) => s.topics.some((t) => t.topic === id))) {
+      const outletId = source.outlet ? await ensureOutlet(db, source.outlet, '') : null;
+      if (await addSourceRow(db, { ...source, outletId, addedBy: 'starter' }, source.topics.filter((t) => t.topic === id), now)) sources++;
+    }
+    return { topics: [topic.name], sources };
+  };
+
   const serveEconomy = (): void => {
     web = {
       'https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml': () => ({ status: 200, body: rss([item(cnbc, 'https://www.nytimes.com/2026/09/17/business/fed-cuts-rates.html?smid=rss')]) }),
@@ -159,11 +176,49 @@ suite('news (postgres)', () => {
     await pool.query(`truncate news.topics, news.sources, news.outlets, news.logos, news.articles, news.stories, news.editions cascade`);
   });
 
+  it('gates fresh setup, rejects premature continuation and remembers the explicit fallback', async () => {
+    await pool.query('update news.settings set meaning_setup_done = false');
+    expect((await setupView(host())).rows[0]!.gate).toBe(true);
+    await expect(run('news.finish_meaning_setup', { skip: false }, asOwner)).rejects.toThrow('Wait for the download');
+    expect((await setupView(host())).rows[0]!.gate).toBe(true);
+    await run('news.finish_meaning_setup', { skip: true }, asOwner);
+    expect((await setupView(host())).rows[0]!.gate).toBe(false);
+    expect((await setupView(host())).rows[0]!.gate).toBe(false);
+    await pool.query('update news.settings set meaning_setup_done = false');
+  });
+
+  it('keeps source selection focused until starter or custom sources exist', async () => {
+    await pool.query('update news.settings set meaning_setup_done = true, custom_source_setup = false');
+    expect((await setupView(host())).rows[0]).toMatchObject({ gate: false, sourcesGate: true, settingsReady: false, customSources: false });
+    await run('news.choose_custom_sources', {}, asOwner);
+    expect((await setupView(host())).rows[0]).toMatchObject({ sourcesGate: true, settingsReady: false, customSources: true });
+    const review = await manifest.queries!.find((q) => q.name === 'starter_review')!.produce({}, ctx());
+    expect((review as { sources: unknown[] }).sources).toHaveLength(28);
+    expect((await pool.query('select count(*)::int as n from news.sources')).rows[0].n).toBe(0);
+    await run('news.add_topic', tool('news.add_topic').input!.parse({ name: 'Local news', keywords: 'local news' }), asOwner);
+    expect((await setupView(host())).rows[0]).toMatchObject({ sourcesGate: false, settingsReady: true });
+    await pool.query('update news.settings set meaning_setup_done = false, custom_source_setup = false');
+  });
+
+  it('keeps settings accessible for configured sources', async () => {
+    await pool.query('update news.settings set meaning_setup_done = false');
+    await run('news.enable_starter', {}, asOwner);
+    expect((await setupView(host())).rows[0]).toMatchObject({ gate: false, sourcesGate: false, settingsReady: true });
+  });
+
+  it('enables only US and International by default, without duplicating sources', async () => {
+    const enabled = await run('news.enable_starter', {}, asOwner);
+    expect(enabled.topics).toEqual(['US', 'International']);
+    expect(enabled.sources).toBe(28);
+    expect((await pool.query('select id from news.topics order by id')).rows).toEqual([{ id: 'international' }, { id: 'us-politics' }]);
+    expect((await run('news.enable_starter', {}, asOwner)).sources).toBe(0);
+  });
+
   it('says what to do first, then that it is reading, then is ready', async () => {
     const setup = manifest.setup!;
     expect(await setup.produce(ctx())).toEqual({ ready: false, note: SETUP_NOTE });
     expect(await run('news.headlines', {})).toEqual({ setUp: false, message: expect.stringContaining('No news topic yet') });
-    const enabled = await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    const enabled = await seedFixtureTopic('economy');
     expect(enabled.topics).toEqual(['Economy']);
     expect(enabled.sources).toBe(12);
     expect(await setup.produce(ctx())).toEqual({ ready: false, note: FIRST_READ_NOTE });
@@ -172,7 +227,7 @@ suite('news (postgres)', () => {
   });
 
   it('fetches on the timer only what is due, at most eight a tick', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchSourceDefinition.poll({ buddi: host() });
     // Nothing due yet: a new source's first fetch is up to a minute ahead.
     const { rows: urls } = await pool.query(`select url from news.sources`);
@@ -186,8 +241,26 @@ suite('news (postgres)', () => {
     expect(after[0].n).toBe(8);
   });
 
+  it('keeps feed imagery on existing articles and exposes a locally cached attributed image', async () => {
+    await seedFixtureTopic('economy');
+    await fetchAll();
+    const url = 'https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml';
+    const original = web[url]!;
+    web[url] = (request) => { const reply = original(request); return { ...reply, body: String(reply.body).replace('</item>', '<enclosure url="https://www.nytimes.com/story-photo.png" type="image/png" /></item>') }; };
+    web['https://www.nytimes.com/story-photo.png'] = () => ({ status: 200, body: PNG, headers: { 'content-type': 'image/png' } });
+    await fetchAll();
+    const saved = (await pool.query('select image_url, image_key from news.articles where image_url is not null')).rows;
+    expect(saved).toHaveLength(1);
+    expect(saved[0].image_key).toMatch(/^story-a_/);
+    const out = await run('news.headlines', { topic: 'Economy' });
+    const story = out.stories.find((story: { image?: unknown }) => story.image);
+    expect(story.image).toMatchObject({ key: saved[0].image_key, outlet: 'The New York Times' });
+    const detail = await run('news.story', { id: story.id });
+    expect(detail.image).toEqual(story.image);
+  });
+
   it('groups one story told by six outlets in English and French, and reads it back', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     const report = await fetchAll();
     expect(report.failed).toBeGreaterThan(0);
     const out = (await run('news.headlines', { topic: 'Economy' })) as HeadlinesOutput;
@@ -215,7 +288,7 @@ suite('news (postgres)', () => {
   });
 
   it('embeds new articles within the tick and groups them by meaning; without the model, by words', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     const report = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: fakeMeaning() });
     const articles = (await pool.query(`select count(*)::int as n from news.articles`)).rows[0].n;
     expect(report.embedded).toBe(articles);
@@ -235,7 +308,7 @@ suite('news (postgres)', () => {
   });
 
   it('keeps the tick to its time budget: with a slow model the articles are grouped by words and embedded on a later tick', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     let clock = 0;
     const slow = fakeMeaning(() => { clock += 10_000; });
     const report = await refresh(host(), { topicId: 'economy', sleep: noSleep, embedder: slow, clock: () => clock });
@@ -249,7 +322,7 @@ suite('news (postgres)', () => {
   });
 
   it('groups the stories made by words again once by meaning, when the model has caught up', async () => {
-    await run('news.enable_starter', { topics: ['togo-west-africa'] }, asOwner);
+    await seedFixtureTopic('togo-west-africa');
     now = new Date('2026-10-05T22:00:00Z');
     const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
     // One story by words gone wrong: the Togo day in one.
@@ -272,7 +345,7 @@ suite('news (postgres)', () => {
   });
 
   it('keeps each source\'s health: a failure counted, failing after a day, Try again; a 304 costs nothing', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const health = async (id: string) => (await pool.query(`select state, failures, last_error, etag, last_ok_at, next_at from news.sources where id = $1`, [id])).rows[0];
     expect(await health('bloomberg-markets')).toMatchObject({ state: 'ok', failures: 1, last_error: 'answered 500' });
@@ -299,7 +372,7 @@ suite('news (postgres)', () => {
   });
 
   it('marks what was told, skips it, and brings it back with two new outlets', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const [fed] = ((await run('news.headlines', { topic: 'economy' })) as HeadlinesOutput).stories;
     const told = await run('news.mark_told', { storyIds: [fed!.id, 's_missing'], edition: 'morning' });
@@ -324,7 +397,7 @@ suite('news (postgres)', () => {
   });
 
   it('takes the owner\'s word: not interested, snooze, mute an outlet, mute a topic, and back', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const ids = async (input: object = { topic: 'economy' }) => ((await run('news.headlines', input)) as HeadlinesOutput).stories.map((s) => s.id);
     const [fed, apple] = await ids();
@@ -356,7 +429,7 @@ suite('news (postgres)', () => {
   });
 
   it('searches the articles kept, accents and case aside', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const hits = await run('news.search', { query: 'REDUIT taux' });
     expect(hits.articles.map((a: { outlet: string }) => a.outlet)).toEqual(['Le Figaro', 'Le Monde']);
@@ -366,7 +439,7 @@ suite('news (postgres)', () => {
   });
 
   it('links twins across topics, so a hide or a told-mark on one is on both, and shows a story once across topics', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await run('news.add_topic', { name: 'Fed watch', keywords: ['Fed', 'Réserve fédérale'] }, asOwner);
     for (const id of ['nyt-economy', 'le-monde-economie', 'le-figaro-economie', 'guardian-economics']) {
       const { rows } = await pool.query(`select topic_id from news.topic_sources where source_id = $1`, [id]);
@@ -385,7 +458,7 @@ suite('news (postgres)', () => {
   });
 
   it('keeps an outlet\'s logo through the assets area, refreshes it weekly, and moves the ones 0.1.0 kept', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     await fetchMissingLogos(host(), 1, noSleep, 'nytimes.com'); // the timer may have fetched it already
     const { rows } = await pool.query(`select logo_key, logo_fetched_at from news.outlets where id = 'nytimes.com'`);
@@ -419,7 +492,7 @@ suite('news (postgres)', () => {
   });
 
   it('drops one outlet\'s repeat and items older than three days, and forgets what is past the retention', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     web['https://www.lemonde.fr/economie/rss_full.xml'] = () => ({ status: 200, body: rss([
       item(lemonde, 'https://www.lemonde.fr/economie/article/a.html'),
       item(lemonde, 'https://www.lemonde.fr/economie/article/a-bis.html'),
@@ -440,9 +513,23 @@ suite('news (postgres)', () => {
   const query = (name: string, params: object = {}, over: Partial<CoreToolContext> = {}) =>
     manifest.queries!.find((q) => q.name === name)!.produce(params, ctx(over)) as Promise<any>;
 
+  it('attributes a fallback excerpt to its own publisher rather than the headline publisher', async () => {
+    await seedFixtureTopic('economy');
+    await fetchAll();
+    const { rows } = await pool.query(`select s.id, s.title_article_id, a.outlet_id as title_outlet from news.stories s join news.articles a on a.id = s.title_article_id where s.article_count > 1 limit 1`);
+    const story = rows[0];
+    const { rows: other } = await pool.query(`select a.id, coalesce(o.name, src.name) as outlet from news.article_topics t join news.articles a on a.id = t.article_id join news.sources src on src.id = a.source_id left join news.outlets o on o.id = a.outlet_id where t.story_id = $1 and a.outlet_id <> $2 limit 1`, [story.id, story.title_outlet]);
+    await pool.query(`update news.articles set lead = 'A distinct fallback excerpt for attribution.' where id = $1`, [other[0].id]);
+    await pool.query(`update news.stories set lead = 'A distinct fallback excerpt for attribution.' where id = $1`, [story.id]);
+    const card = (await query('stories')).stories.find((row: { id: string }) => row.id === story.id);
+    expect(card.titleAttribution).toMatch(/^Headline from /);
+    expect(card.summaryAttribution).toBe(`Feed excerpt from ${other[0].outlet}`);
+    expect(card.titleAttribution).not.toBe(`Headline from ${other[0].outlet}`);
+  });
+
   it('draws the News page: the quiet line, chips, stories grouped by topic, and what an empty feed means', async () => {
     expect(await query('stories', {})).toMatchObject({ stories: [], state: 'none' });
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     expect(await query('stories', {})).toMatchObject({ state: 'first' });
     await fetchAll();
     const view = await query('overview');
@@ -459,7 +546,7 @@ suite('news (postgres)', () => {
     expect(fed.languages).toBe('EN · FR');
     expect(fed.ago).toMatch(/^\d+ h ago$/);
     expect(fed.sources[0].url).toMatch(/^https:\/\//);
-    expect(fed.timeline[0].text).toMatch(/^First reported by /);
+    expect(fed.timeline[0].text).toMatch(/^Earliest collected coverage: /);
     expect(fed.mark).toBeUndefined();
 
     // Told in an edition: Told you on the card; Not yet told is then empty, with the way back.
@@ -480,7 +567,7 @@ suite('news (postgres)', () => {
   });
 
   it('runs the ways out of the page: Not interested and Undo, mute an outlet and back, quiet and mute a topic', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const ids = async () => (await query('stories', {})).stories.map((st: { id: string }) => st.id);
     const [fed, apple] = await ids();
@@ -508,7 +595,7 @@ suite('news (postgres)', () => {
   it('lists the sources per topic with their logos, health in words and the starter line; removes one from a topic', async () => {
     let settings = await query('news_settings');
     expect(settings.starterOff).toBe(true);
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     now = new Date(now.getTime() + 25 * 3600_000);
     await fetchAll();
     resetPoller();
@@ -529,7 +616,7 @@ suite('news (postgres)', () => {
   });
 
   it('adds a source only once it answers a feed, and words as a Google News search', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     web['https://www.leprogres.fr/'] = () => ({ status: 200, body: '<html><head><link rel="alternate" type="application/rss+xml" href="/lyon/rss"></head></html>' });
     web['https://www.leprogres.fr/lyon/rss'] = () => ({ status: 200, body: rss([{ title: 'Le tram T10 ouvre lundi aux voyageurs', link: 'https://www.leprogres.fr/t10', at: '2026-09-17T20:00:00Z' }]) });
     const added = await run('news.add_feed', { address: 'www.leprogres.fr', topic: 'Economy' }, asOwner);
@@ -543,12 +630,16 @@ suite('news (postgres)', () => {
   });
 
   it('hands an edition its material untold first, records it, and keeps a quiet day', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await run('news.set_settings', { voiceEditions: ['morning'] }, asOwner);
+    expect(await manifest.exports!.edition_voice!.produce({ edition: 'morning' }, ctx())).toEqual({ enabled: true });
+    expect(await manifest.exports!.edition_voice!.produce({ edition: 'evening' }, ctx())).toEqual({ enabled: false });
     await fetchAll();
     const material = await run('news.edition_material', { edition: 'morning' });
     expect(material).toMatchObject({ edition: 'morning', language: 'en', voice: false, voiceOff: 'the Speech plugin is not installed', quietToday: false, lastEdition: null });
-    expect(material.next).toEqual({ edition: 'midday', at: '12:30' });
+    expect(material.next).toBeNull();
+    expect(material.timezone).toBeDefined();
+    expect(material.localDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(material.topics.map((t: { topicId: string }) => t.topicId)).toEqual(['economy']);
     const [fed] = material.topics[0].stories;
     expect(fed.status).toBe('new');
@@ -571,7 +662,14 @@ suite('news (postgres)', () => {
     const { rows } = await pool.query(`select kind, text, agent_id from news.editions`);
     expect(rows).toEqual([{ kind: 'morning', text, agent_id: 'anchor' }]);
     // The chat's edition card reads it back: Anchor's words, the told story's logos.
+    const history = await run('news.editions', {});
+    expect(history.total).toBe(1);
+    expect(history.editions[0]).toMatchObject({ id: saved.edition, text });
+    expect((await run('news.editions', { kind: 'evening' })).editions).toEqual([]);
+    expect((await run('news.editions', { id: 'e_missing' })).editions).toEqual([]);
     const { edition } = await query('edition', { id: saved.edition });
+    expect((await query('edition', { id: 'latest' })).edition.id).toBe(saved.edition);
+    expect((await query('edition', { id: 'missing' })).edition).toBeNull();
     expect(edition).toMatchObject({ id: saved.edition, kind: 'morning', name: 'Morning edition', lede: 'One story. The Fed moved.', next: '12:30', text });
     expect(edition.when).toMatch(/^Thu 17 Sep · \d{2}:\d{2}$/);
     expect(edition.groups).toHaveLength(1);
@@ -610,7 +708,7 @@ suite('news (postgres)', () => {
   });
 
   it('reads an article once, refuses a paywalled outlet and a page robots.txt closes', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     const { rows } = await pool.query(`select a.id, a.url, a.outlet_id from news.articles a where a.outlet_id in ('lemonde.fr', 'lesechos.fr', 'theguardian.com') order by a.outlet_id`);
     const byOutlet = Object.fromEntries(rows.map((r) => [r.outlet_id, r]));
@@ -631,7 +729,7 @@ suite('news (postgres)', () => {
   it('answers the Top stories widget: logos, five at medium, untold first, a placement\'s topics', async () => {
     const widget = manifest.widgets!.find((w) => w.id === 'news.top')!;
     expect(await widget.produce(ctx(), { size: 'small', settings: {} })).toMatchObject({ kind: 'text' });
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
     await fetchMissingLogos(host(), 1, noSleep, 'nytimes.com');
     const small = (await widget.produce(ctx(), { size: 'small', settings: {} })) as any;
@@ -662,7 +760,7 @@ suite('news (postgres)', () => {
       status: 200,
       body: `)]}'\n\n[["wrb.fr","Fbv4je","[\\"garturlres\\",\\"https://www.reuters.com/business/fed-cuts-rates-2026-09-17/?utm_source=gn\\",1]",null,null,null,"generic"]]`,
     });
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     await fetchAll();
 
     const kinds = (await pool.query(`select title, kind from news.articles where kind = 'deal'`)).rows;
@@ -698,7 +796,7 @@ suite('news (postgres)', () => {
     expect((await pool.query(`select link_state from news.articles where outlet_id = 'reuters.com'`)).rows).toEqual([{ link_state: 'resolved' }]);
   }, 30_000); // the edition's own requests wait their turn at news.google.com, a second apart
   it('joins an open English story and its French twin made before 0.2.1, its told-mark with it', async () => {
-    await run('news.enable_starter', { topics: ['economy'] }, asOwner);
+    await seedFixtureTopic('economy');
     const [en, fr] = fx.crossLanguage[0]!;
     now = new Date('2026-10-03T08:00:00Z');
     const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
@@ -722,7 +820,7 @@ suite('news (postgres)', () => {
   });
 
   it('splits an open story made by one shared name once, on the first tick after the rules change, keeping its told-mark', async () => {
-    await run('news.enable_starter', { topics: ['togo-west-africa'] }, asOwner);
+    await seedFixtureTopic('togo-west-africa');
     now = new Date('2026-10-05T22:00:00Z');
     const source = (await pool.query(`select id from news.sources limit 1`)).rows[0].id;
     // The owner's screenshot: the match, the diaspora, the plastics bill, the

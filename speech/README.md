@@ -265,3 +265,5 @@ loads; `package.json` overrides it with `stubs/onnxruntime-web` (a package that
 throws if anything ever loads it), which saves about 90 MB per install.
 
 Licensed under GPL-3.0-only, because the local voice runs eSpeak NG (GPL-3.0).
+
+Enabling Read aloud for a News edition authorizes `speech.say` within that edition’s mission run, using the configured Speech service and normal daily limits. The host rechecks the saved preference for each call; other agents, conversations and delegated runs do not inherit it. Disabling the edition’s voice removes this consent. Host API 1.33 exposes this as `approvals.configuredForRun(tool)`.

@@ -307,8 +307,10 @@ function outletsOf(articles: ArticleRow[], named: string): Array<{ id: string | 
 export async function editionView(buddi: BuddiHost, id: string): Promise<EditionView | undefined> {
   const db: Db = buddi.db;
   const { rows } = await db.query<{ id: string; kind: string; created_at: Date; text: string | null; story_ids: string[] }>(
-    `select id, kind, created_at, text, story_ids from news.editions where id = $1`,
-    [id],
+    id === 'latest'
+      ? `select id, kind, created_at, text, story_ids from news.editions where text is not null and text <> '' order by created_at desc, id desc limit 1`
+      : `select id, kind, created_at, text, story_ids from news.editions where id = $1`,
+    id === 'latest' ? [] : [id],
   );
   const row = rows[0];
   if (!row || !row.text) return undefined;

@@ -444,6 +444,8 @@ export interface MeaningRow {
   done: string;
   /** "Download (249 MB)", or "Try again". */
   action: string;
+  /** Core's download confirmation, rendered on this page. */
+  approvalId?: string;
 }
 
 /** The meaning model's one line for the settings page. */
@@ -456,7 +458,7 @@ export function meaningRow(state: MeaningState): MeaningRow {
   };
   switch (state.state) {
     case 'absent':
-      if (state.pending) return { ...base, state: 'waiting', line: 'Waiting for your answer on the download card. Stories are grouped by the words they share meanwhile.' };
+      if (state.pending) return { ...base, state: 'waiting', approvalId: state.pending, line: 'Waiting for your answer on the download card. Stories are grouped by the words they share meanwhile.' };
       return {
         ...base,
         line: state.bytes > MODEL_BYTES
@@ -499,9 +501,34 @@ export const downloadMeaningTool: ToolDefinition<Record<string, never>, { note: 
   },
 };
 
+export const finishMeaningSetupTool: ToolDefinition<{ skip: boolean }, { note: string }> = {
+  name: 'news.finish_meaning_setup',
+  description: 'Finish the first News setup step after the model is ready, or explicitly choose word matching for now.',
+  tier: 'auto',
+  ownerOnly: true,
+  input: z.object({ skip: z.boolean() }).strict(),
+  async execute(input, ctx) {
+    if (!input.skip && (await meaningFor().state(ctx.buddi!)).state !== 'ready') {
+      throw new Error('Wait for the download to finish, or choose word matching for now.');
+    }
+    await ctx.buddi!.db.query(`update news.settings set meaning_setup_done = true`);
+    return { note: 'Choose your sources next.' };
+  },
+};
+
+export const chooseCustomSourcesTool: ToolDefinition<Record<string, never>, { note: string }> = {
+  name: 'news.choose_custom_sources',
+  description: 'Choose to add your own first topic and sources during News setup.',
+  tier: 'auto', ownerOnly: true, input: z.object({}).strict(),
+  async execute(_input, ctx) {
+    await ctx.buddi!.db.query('update news.settings set custom_source_setup = true');
+    return { note: 'Add your first topic below.' };
+  },
+};
+
 export const ownerTools = [
   enableStarterTool, addSourceTool, setSourceTool, removeSourceTool, retrySourceTool, addTopicTool, setTopicTool, removeTopicTool,
-  hideStoryTool, setSettingsTool, refreshTool, addFeedTool, downloadMeaningTool,
+  hideStoryTool, setSettingsTool, refreshTool, addFeedTool, downloadMeaningTool, finishMeaningSetupTool, chooseCustomSourcesTool,
 ];
 
 /* ------------------------------------------------------------------ */

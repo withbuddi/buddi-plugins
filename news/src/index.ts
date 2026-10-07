@@ -15,7 +15,7 @@ import type { PluginManifest } from '@buddi/core/plugin';
 import { fetchSourceDefinition } from './poller.js';
 import { newsQueries, ownerTools } from './settings.js';
 import { dashboardQueries, newsPages } from './dashboard.js';
-import { editionMaterialExport, editionTools } from './edition.js';
+import { editionVoiceExport, editionMaterialExport, editionTools } from './edition.js';
 import { topStoriesWidget } from './widget.js';
 import { headlinesExport, newsSetup, storyExport } from './setup.js';
 import { starterHosts } from './starter.js';
@@ -46,11 +46,12 @@ export const manifest: PluginManifest = {
   uses: ['http', 'assets', 'onnx'],
   optional: { speech: '^0.1.3' },
   setup: newsSetup,
-  exports: { headlines: headlinesExport, story: storyExport, edition_material: editionMaterialExport },
+  exports: { headlines: headlinesExport, story: storyExport, edition_material: editionMaterialExport, edition_voice: editionVoiceExport },
   tools: [...modelTools, ...editionTools, ...ownerTools],
   sources: [fetchSourceDefinition],
   queries: [...newsQueries, ...dashboardQueries],
   pages: newsPages,
+  views: [{ tool: 'news.search', renderer: 'story', title: 'Search results', map: {} }, { tool: 'news.story', renderer: 'story', title: 'Story', map: {} }, { tool: 'news.edition_save', renderer: 'edition', title: 'Saved edition', map: {} }],
   widgets: [topStoriesWidget],
 };
 

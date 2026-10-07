@@ -146,3 +146,24 @@ describe('helpers', () => {
     expect(parseDate(undefined)).toBeNull();
   });
 });
+
+describe('article images', () => {
+  const rss = (body: string) => parseFeed(`<rss xmlns:media="http://search.yahoo.com/mrss/"><channel><image><url>https://site.test/logo.png</url></image><item><title>Story</title><link>https://site.test/story</link>${body}</item></channel></rss>`, 'https://site.test/feed');
+  it('keeps Media RSS captions and credits and resolves URLs', () => {
+    expect(rss('<media:content url="/photo.jpg" type="image/jpeg"><media:description>A crowd</media:description><media:credit>Jane Doe</media:credit></media:content>').items[0]?.image).toEqual({ url: 'https://site.test/photo.jpg', caption: 'A crowd', credit: 'Jane Doe' });
+  });
+  it('reads grouped thumbnails and enclosures, excluding channel logos and video', () => {
+    expect(rss('<media:group><media:credit>Agency</media:credit><media:thumbnail url="https://img.test/p.jpg" /></media:group>').items[0]?.image?.credit).toBe('Agency');
+    expect(rss('<enclosure url="/p.png" type="image/png" />').items[0]?.image?.url).toBe('https://site.test/p.png');
+    expect(rss('<media:content url="/movie.mp4" type="video/mp4" />').items[0]?.image).toBeUndefined();
+    expect(rss('').items[0]?.image).toBeUndefined();
+  });
+  it('ignores tracking pixels, unsafe URLs and credentials', () => {
+    expect(rss('<description><![CDATA[<img src="/pixel" width="1" height="1"><img src="/photo.jpg" alt="Sunny day">]]></description>').items[0]?.image).toEqual({ url: 'https://site.test/photo.jpg', caption: 'Sunny day' });
+    for (const url of ['data:image/png;base64,xx', 'https://user:password@site.test/a.jpg']) expect(rss(`<media:thumbnail url="${url}" />`).items[0]?.image).toBeUndefined();
+  });
+  it('reads Atom enclosures', () => {
+    const feed = parseFeed('<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Story</title><link href="https://site.test/story"/><link rel="enclosure" type="image/jpeg" href="/a.jpg" /></entry></feed>', 'https://site.test/feed');
+    expect(feed.items[0]?.image?.url).toBe('https://site.test/a.jpg');
+  });
+});

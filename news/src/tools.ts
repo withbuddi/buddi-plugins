@@ -153,7 +153,7 @@ export const searchTool: ToolDefinition<z.infer<typeof searchInput>, { query: st
   name: 'news.search',
   description:
     'Search the articles kept on this machine from the owner\'s sources for every word of the query, newest first, each ' +
-    'with its story id, outlet, link and language. Answer questions about the news from these, never from memory.',
+    'with its story id, outlet, link, language and available cached image. Once a result matches the story requested, call news.story with its storyId before explaining it, to retrieve all sources and its illustration. Never answer from memory.',
   tier: 'auto',
   untrusted: 'web',
   input: searchInput,

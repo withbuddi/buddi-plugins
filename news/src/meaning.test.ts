@@ -334,7 +334,7 @@ describe('the meaning model on buddi\'s engine', () => {
     expect(calls.ensure).toEqual([{ reason: MEANING_REASON, model: modelRequest() }]);
     expect(modelRequest().files.map((f) => f.name)).toEqual(['tokenizer_config.json', 'tokenizer.json', 'onnx/model_quantized.onnx']);
     expect(asked).toMatchObject({ state: 'absent', pending: 'card-1' });
-    expect(meaningRow(asked)).toMatchObject({ state: 'waiting', line: expect.stringMatching(/^Waiting for your answer/) });
+    expect(meaningRow(asked)).toMatchObject({ state: 'waiting', approvalId: 'card-1', line: expect.stringMatching(/^Waiting for your answer/) });
 
     // The owner approves: buddi downloads the engine, then the model.
     world.pending = undefined;

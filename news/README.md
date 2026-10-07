@@ -30,22 +30,21 @@ disk), on the same card as the model.
 
 ## Topics and sources
 
-Six starter topics, each a curated mix across the spectrum and both
+Two starter topics, each a curated mix across the spectrum and both
 languages, every address checked to answer a feed (2026-10-03):
 
 | Topic | Sources | |
 | --- | --- | --- |
-| Technology | 12 | The Verge, Ars Technica, TechCrunch, Wired, NYT, Hacker News, Google News; Le Monde Pixels, Numerama, 01net, Frandroid, Journal du Net |
-| AI | 10 | MIT Technology Review, The Verge, The Guardian, Import AI, Simon Willison, OpenAI, Google, Hacker News (AI keywords); Le Monde, ActuIA |
-| Togo and West Africa | 15 | Togo First (fr, en), République togolaise, Jeune Afrique, Agence Ecofin, icilome, RFI (fr, en), Le Monde Afrique, Africanews (fr, en), BBC Africa (Togo keywords), Google News (fr, en) |
-| US politics | 14 | AP, NYT, NPR, The Guardian, Politico, Axios, Semafor, The Hill, Fox News, Washington Examiner, National Review, The Economist; Le Monde and RFI Amériques (US keywords) |
+| US | 14 | AP, NYT, NPR, The Guardian, Politico, Axios, Semafor, The Hill, Fox News, Washington Examiner, National Review, The Economist; Le Monde and RFI Amériques (US keywords) |
 | International | 14 | Reuters, AP, BBC, Al Jazeera, The Guardian, DW, France 24 (en, fr), NYT, FT; RFI, Le Monde, Libération, Le Figaro |
-| Economy | 12 | Reuters, NYT, The Guardian, FT, Bloomberg, The Economist, CNBC; Le Monde (two), Le Figaro, Libération, Les Echos |
 
-Outlets whose own feed refuses a reader (AP, Reuters, Jeune Afrique, Agence
-Ecofin, Les Echos, the Togolese government's site) come through a Google News
+Outlets whose own feed refuses a reader (AP and Reuters) come through a Google News
 search of their site. Paywalled outlets are headlines and summaries only. The
 lists are in `src/starter.ts`, with the addresses that did not answer and why.
+
+The starter kit adds 28 feeds for US and International news. US keeps its existing
+`us-politics` ID for compatibility. Existing owners’ topics and sources are not
+removed by this change. International remains worldwide coverage.
 
 Your own topic is a name, keywords and feeds (a page that names its feed is
 fine). With no feed, it follows a Google News search for its keywords in
@@ -66,7 +65,7 @@ the story's), Quiet the topic for a week, Mute the topic. The card gives way to
 what happened and Undo for eight seconds. A card opens its sheet: the summary,
 what is new since you were told, the sources with their logos linked out to
 each article (a new tab, no referrer), how the story moved, and Not
-interested · Less of this… · Ask Anchor.
+interested · Less of this… · Ask Anchor. Ask Anchor opens a new conversation with the story headline and ID attached as a removable reference. Explain this story and Compare the sources send immediately when clicked, preserving any draft in the composer. Anchor retrieves the collected articles with `news.story`.
 
 States: loading, the first fetch, a failed fetch, everything told, a topic
 with no source; on a phone the chips scroll and the ⋯ is a bottom sheet.
@@ -142,7 +141,7 @@ again with the next ones.
 | `news.search { query, topic?, days ≤ 14, n ≤ 10 }` | The articles kept here, by every word, accents aside. |
 | `news.mark_told { storyIds, edition }` | Records an edition's stories, so `untold` skips them until a material update: two more outlets, or an article that says something new. |
 | `news.feedback { storyId \| outlet \| topic, action }` | Not interested, snooze, mute a topic, or clear, when you say so. |
-| `news.edition_material { edition, maxStories?, next? }` | An edition's material: untold stories first (new, or told with an update), grouped by topic in your order, each with its outlets (language, kind, and lean where known), 2 to 4 articles with links, opinion marked; what was told already; your language; whether to read it aloud; whether you asked for quiet news today; the next edition's time. |
+| `news.edition_material { edition, maxStories?, next? }` | An edition's material: untold stories first (new, or told with an update), grouped by topic in your order, each with its outlets (language, kind, and lean where known), 2 to 4 articles with links, opinion marked; what was told already; your language; whether to read it aloud; whether you asked for quiet news today; your local date and timezone. A next edition time is included only when explicitly supplied; no schedule is assumed. |
 | `news.edition_save { edition, storyIds, text }` | Records the edition and what it told, in one transaction. |
 | `news.read { storyId \| articleId }` | An article's text, fetched once when a summary is not enough and kept a week; refused for a paywalled outlet, a page its `robots.txt` closes, and past 20 a day. |
 | `news.mute_outlet { outlet, muted? }` | Mutes an outlet everywhere. Asks you first when an agent calls it; your own button on the page does not. |
@@ -183,7 +182,7 @@ assets area, removed with the plugin.
 
 Only feed fetches: each source's address is asked for its latest items;
 Google News is sent a topic's keywords as the search (so an owner topic's name
-and keywords are visible to Google); Hacker News's front page comes from
+and keywords are visible to Google); an owner-added Hacker News source uses
 Algolia; a Google News item's Google page and Google's decoder are asked once
 for the outlet's own link (nothing about you goes with it); an outlet's site is
 asked for its icon when it is first seen and once a week after; and an article Anchor reads is fetched from its outlet, once,
@@ -201,3 +200,29 @@ fetches neither, and nothing is sent.
 ## License
 
 Apache-2.0.
+
+Fresh setup starts with the meaning-model download. Approve the download and continue to sources when it is ready, or explicitly choose word matching for now. The choice is saved; existing configured installations keep their settings accessible.
+
+Step 2 lets you review the 28 US and International starter feeds before enabling them, or add a custom first topic. Settings appear as separate blocks once sources are configured.
+
+Story drawers attribute original headlines, feed excerpts and distinct updates to their publishers. Coverage timelines describe only the sources News collected; they do not establish who first broke a story.
+
+Latest edition opens the most recent saved edition in a scrollable drawer. A story’s “Read the edition” link and an edition notification open the specific saved edition. Editions remain readable while Do Not Disturb holds their notifications.
+
+Enabling Read aloud for a News edition authorizes `speech.say` within that edition’s mission run, using the configured Speech service and normal daily limits. The host rechecks the saved preference for each call; other agents, conversations and delegated runs do not inherit it. Disabling the edition’s voice removes this consent. Host API 1.33 exposes this as `approvals.configuredForRun(tool)`.
+
+`news.editions { id?, kind?, limit?, attachAudio? }` reads the saved archive, newest first. No arguments returns the latest edition with its original text and the total number of saved editions. Filter `kind` to morning, midday or evening, use `id` for a particular edition, or `limit` (1–10) for a recent list. Set `attachAudio: true` when showing one edition to include its existing recording on Telegram; omit it for counts and lists. It creates no edition and changes no told marks.
+
+### Story images
+
+RSS Media RSS images/thumbnails, image enclosures, Atom image enclosures, and
+images embedded in feed HTML are retained with supplied captions and credits.
+Two recent images are cached per polling tick through host HTTP and assets;
+the browser only reads local PNGs. The cache retains at most 40 photos, pruning
+old photos when its existing bytes exceed 12 MB, within the host’s 20 MB quota.
+Only PNG/JPEG/GIF under 256 KB and the host decoder’s pixel limits are accepted.
+Missing, unsupported or oversized images leave the text layout intact.
+
+Search results include available cached story images and render as article cards
+with source links and attribution. Anchor opens a matching story before explaining
+it, so its full sources and illustration are available alongside the answer.

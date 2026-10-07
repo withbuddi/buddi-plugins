@@ -38,7 +38,7 @@
       "accounts",
       "files:library"
     ],
-    "hostApi": "^1.0"
+    "hostApi": "^1.33"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

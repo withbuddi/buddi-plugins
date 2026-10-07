@@ -2,6 +2,46 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
+## Unreleased
+
+### Added
+
+- News search results show readable article cards with cached story images; Anchor opens the matching story before explaining it, and Telegram includes its available publisher image.
+
+- Read publisher images, captions and credits from RSS/Atom; cache recent images locally and prefer the headline article’s photo in story views.
+
+### Fixed
+
+- Saved edition requests can include the existing recording on Telegram without generating speech again.
+
+### Changed
+
+- Add news.editions so agents can retrieve exact saved editions, filter by edition kind, and count the archive in any chat surface.
+
+- Saved editions include their recording in the drawer; edition players support seeking and local MP3 downloads. Speech and saved-edition canvas results show the content with technical details collapsed.
+
+- Enabling Read aloud for a News edition authorizes Speech for that edition run; other conversations keep their approval rules.
+
+- Edition material supplies the owner’s local date and timezone and no longer invents a next edition time when the active schedule is unknown.
+
+- Latest edition and story edition links open the saved edition in a scrollable drawer, including an empty state when none is saved.
+
+- News story results open as readable canvas stories with attributed excerpts, linked sources, a coverage timeline and collapsed technical details.
+
+- Ask Anchor carries the selected story into a new conversation so follow-up questions use its collected sources.
+
+- Attribute story headlines and excerpts to their source publishers, suppress duplicate update text, and label the coverage timeline without claiming who first reported a story.
+
+- Guide fresh installs through source selection, with a review of the US and International starter feeds or a custom first topic. Show regular settings as separate sections after sources are added.
+
+- Show the shared model download confirmation directly in News setup and settings, so approving it does not require a trip to Home.
+
+- Present first-run News setup as a compact card with clear download, progress, fallback and next-step copy.
+
+- Fresh News setup starts with the shared meaning-model download, live progress, retry and an explicit word-matching fallback. Sources and other settings appear after that choice; existing configured installations stay accessible.
+
+- The starter kit now contains US and International only, with 28 feeds in English and French. Existing topics and sources stay as the owner configured them.
+
 ## 0.2.5 — unreleased
 
 ### Added

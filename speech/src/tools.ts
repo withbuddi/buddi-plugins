@@ -220,6 +220,7 @@ async function oncePerConversation(tool: string, ctx: ToolContext, side: 'listen
   // Nothing to use is a refusal now, not after the owner approved.
   await chooseSide(ctx, side);
   if (ctx.agentId === OWNER_CALLER) return { tier: 'auto' as const };
+  if (side === 'speaking' && await ctx.buddi?.approvals.configuredForRun?.(tool)) return { tier: 'auto' as const };
   if (ctx.conversationId && UUID.test(ctx.conversationId) && (await ctx.buddi!.approvals.approvedInConversation(tool, ctx.conversationId))) {
     return { tier: 'auto' as const };
   }
