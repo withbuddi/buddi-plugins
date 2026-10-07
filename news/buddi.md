@@ -25,7 +25,9 @@ widget for Home and the lock screen. It works better with the Speech plugin
 Nothing is followed until you turn on the starter sources (US and International: 28 checked
 sources) or add a topic of your own, with keywords and feeds. Another plugin
 that requires this one may read headlines and a story (its `headlines` and
-`story` exports), and nothing else of it.
+`story` exports), and nothing else of it. buddi itself asks one more export,
+`consent_for_run`, only whether an edition you set to be read aloud may be
+narrated in its own run.
 
 ## What runs on a timer
 

@@ -12,7 +12,7 @@ What changes in @withbuddi/plugin-news from one release to the next, newest firs
 
 ### Fixed
 
-- Saved edition requests can include the existing recording on Telegram without generating speech again.
+- Saved edition requests can include the existing recording on Telegram without generating speech again (`attachAudio: true` lists it under the answer's `attachments`).
 
 ### Changed
 
@@ -20,7 +20,9 @@ What changes in @withbuddi/plugin-news from one release to the next, newest firs
 
 - Saved editions include their recording in the drawer; edition players support seeking and local MP3 downloads. Speech and saved-edition canvas results show the content with technical details collapsed.
 
-- Enabling Read aloud for a News edition authorizes Speech for that edition run; other conversations keep their approval rules.
+- Enabling Read aloud for a News edition authorizes Speech for that edition run through the `consent_for_run` export (host API 1.33); other conversations keep their approval rules.
+
+- News uses buddi's generic host API 1.33 contracts: StoryRow fields on `news.story` and `news.search` for the `story` renderer, `attachments` and `messenger.mediaFirst` for Telegram pictures and recordings, a `query` view and `sheet`/`digest` components for saved editions. The `story` export is unchanged.
 
 - Edition material supplies the owner’s local date and timezone and no longer invents a next edition time when the active schedule is unknown.
 

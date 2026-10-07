@@ -209,9 +209,9 @@ Story drawers attribute original headlines, feed excerpts and distinct updates t
 
 Latest edition opens the most recent saved edition in a scrollable drawer. A story’s “Read the edition” link and an edition notification open the specific saved edition. Editions remain readable while Do Not Disturb holds their notifications.
 
-Enabling Read aloud for a News edition authorizes `speech.say` within that edition’s mission run, using the configured Speech service and normal daily limits. The host rechecks the saved preference for each call; other agents, conversations and delegated runs do not inherit it. Disabling the edition’s voice removes this consent. Host API 1.33 exposes this as `approvals.configuredForRun(tool)`.
+Enabling Read aloud for a News edition lets Speech narrate that edition in its own mission run, with the configured Speech service and its normal daily limits, without a card each time. News answers buddi's `consent_for_run` export (host API 1.33): yes only for `speech.say`, only in a run started from `edition_material`, and only for an edition you chose — read afresh at every call, so turning it off stops the next one. Speech asks through `approvals.configuredForRun`; other agents, conversations and delegated runs never inherit it.
 
-`news.editions { id?, kind?, limit?, attachAudio? }` reads the saved archive, newest first. No arguments returns the latest edition with its original text and the total number of saved editions. Filter `kind` to morning, midday or evening, use `id` for a particular edition, or `limit` (1–10) for a recent list. Set `attachAudio: true` when showing one edition to include its existing recording on Telegram; omit it for counts and lists. It creates no edition and changes no told marks.
+`news.editions { id?, kind?, limit?, attachAudio? }` reads the saved archive, newest first. No arguments returns the latest edition with its original text and the total number of saved editions. Filter `kind` to morning, midday or evening, use `id` for a particular edition, or `limit` (1–10) for a recent list. Set `attachAudio: true` when showing one edition: its answer then lists the edition's recording under `attachments` (host API 1.33, by the link its report was sent under), and Telegram sends it first with the text below; the dashboard plays it under the call. Omit it for counts and lists. It creates no edition and changes no told marks.
 
 ### Story images
 
@@ -226,3 +226,23 @@ Missing, unsupported or oversized images leave the text layout intact.
 Search results include available cached story images and render as article cards
 with source links and attribution. Anchor opens a matching story before explaining
 it, so its full sources and illustration are available alongside the answer.
+
+### How News uses buddi's generic contracts (host API 1.33)
+
+- `news.story` and `news.search` answer in buddi's StoryRow words as well
+  (`kicker`, `titleAttribution`, `summaryAttribution`, each source's `meta`,
+  the timeline as `{ at, text }` in your zone), drawn by the `story` canvas
+  renderer (`news.search` as a list, `map: { rows: 'articles' }`). The `story`
+  export keeps its earlier shape for plugins that require News.
+- `news.story`'s view declares `messenger: { mediaFirst: true }`, and its answer
+  lists the story's cached picture under `attachments` (this plugin's own
+  asset, captioned with the headline, caption and credit): Telegram sends the
+  picture, then the explanation below it.
+- `news.editions`'s view declares `messenger: { mediaFirst: true, when:
+  { path: 'attachAudio', equals: true } }`.
+- `news.edition_save` draws as a `query` view: the `edition` page query and a
+  `digest` component. The News page's edition drawer is a `sheet` holding the
+  same `digest`; the edition carries its closing line (`foot`) and its report
+  link (`report`), from which buddi plays the recording.
+- The `consent_for_run` export vouches for `speech.say` in a read-aloud
+  edition's run (above).

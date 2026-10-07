@@ -15,6 +15,7 @@ import type { BuddiHost, ToolDefinition } from '@buddi/core/plugin';
 import { ToolRefusal } from '@buddi/core/plugin';
 import { headlines, listTopics, search, sourceHealth, story, type SearchHit, type StoryDetail, type StorySummary, type TopicSummary } from './reads.js';
 import { findOutlet, findTopic, hideStory, markTold, muteOutlet, muteTopic } from './store.js';
+import { languageName, stamp } from './format.js';
 
 export const NOT_SET_UP = 'No news topic yet. Add a topic or turn on the starter sources on Settings → News.';
 export const MAX_HEADLINES = 10;
@@ -127,7 +128,42 @@ export async function readStory(buddi: BuddiHost, id: string): Promise<StoryDeta
   return story(buddi.db, buddi.clock.now(), id, await ownerLanguage(buddi));
 }
 
-export const storyTool: ToolDefinition<z.infer<typeof storyInput>, StoryDetail | { found: false; message: string }> = {
+/**
+ * The story as the tool answers it: the detail, plus what buddi's `story`
+ * canvas renderer reads (host API 1.33's StoryRow words: `kicker`,
+ * attributions, each source's line, the timeline in the owner's zone) and,
+ * when the story has a cached picture, the `attachments` a messenger sends
+ * before the explanation.
+ */
+export type StoryAnswer = Omit<StoryDetail, 'timeline'> & {
+  kicker: string;
+  titleAttribution?: string;
+  summaryAttribution?: string;
+  sources: Array<StoryDetail['sources'][number] & { meta: string }>;
+  timeline: Array<{ at: string; text: string }>;
+  attachments?: Array<{ kind: 'image'; asset: string; caption?: string }>;
+};
+
+export function storyAnswer(detail: StoryDetail, now: Date, zone: string): StoryAnswer {
+  const when = (iso: string): string => stamp(new Date(iso), now, zone);
+  const caption = [detail.title, detail.image?.caption, [detail.image?.credit, detail.image?.outlet].filter(Boolean).join(' · ')]
+    .filter((line): line is string => typeof line === 'string' && line !== '').join('\n').slice(0, 1000);
+  return {
+    ...detail,
+    kicker: detail.topic,
+    ...(detail.titleOutlet ? { titleAttribution: `Headline from ${detail.titleOutlet}` } : {}),
+    ...(detail.lead ? { summaryAttribution: detail.leadOutlet ? `Feed excerpt from ${detail.leadOutlet}` : 'Feed excerpt' } : {}),
+    sources: detail.sources.map((source) => ({
+      ...source,
+      meta: [source.outlet, languageName(source.language), when(source.publishedAt), source.paywall ? 'Paywalled' : '', source.opinion ? 'Opinion' : '']
+        .filter(Boolean).join(' · '),
+    })),
+    timeline: detail.timeline.map((step) => ({ at: when(step.at), text: `${step.outlet}: ${step.title}` })),
+    ...(detail.image ? { attachments: [{ kind: 'image' as const, asset: detail.image.key, ...(caption ? { caption } : {}) }] } : {}),
+  };
+}
+
+export const storyTool: ToolDefinition<z.infer<typeof storyInput>, StoryAnswer | { found: false; message: string }> = {
   name: 'news.story',
   description:
     'One news story in full: every article on it with its outlet, language, title, lead, link and time (the timeline), ' +
@@ -136,7 +172,11 @@ export const storyTool: ToolDefinition<z.infer<typeof storyInput>, StoryDetail |
   untrusted: 'web',
   input: storyInput,
   async execute(input, ctx) {
-    return (await readStory(ctx.buddi!, input.id)) ?? { found: false, message: `No story ${input.id}: it may be past the retention, or the owner turned it away.` };
+    const buddi = ctx.buddi!;
+    const detail = await readStory(buddi, input.id);
+    return detail
+      ? storyAnswer(detail, buddi.clock.now(), buddi.owner.timezone)
+      : { found: false, message: `No story ${input.id}: it may be past the retention, or the owner turned it away.` };
   },
 };
 
@@ -149,7 +189,7 @@ const searchInput = z
   })
   .strict();
 
-export const searchTool: ToolDefinition<z.infer<typeof searchInput>, { query: string; articles: SearchHit[] } | NotSetUp> = {
+export const searchTool: ToolDefinition<z.infer<typeof searchInput>, { query: string; articles: Array<SearchHit & { meta: string }> } | NotSetUp> = {
   name: 'news.search',
   description:
     'Search the articles kept on this machine from the owner\'s sources for every word of the query, newest first, each ' +
@@ -161,7 +201,13 @@ export const searchTool: ToolDefinition<z.infer<typeof searchInput>, { query: st
     const buddi = ctx.buddi!;
     if (!(await hasTopics(buddi))) return { setUp: false, message: NOT_SET_UP };
     const topic = await resolveTopic(buddi, input.topic);
-    const articles = await search(buddi.db, buddi.clock.now(), { text: input.query, ...(topic ? { topicId: topic.id } : {}), days: input.days ?? 7, n: input.n ?? MAX_HEADLINES });
+    const now = buddi.clock.now();
+    const hits = await search(buddi.db, now, { text: input.query, ...(topic ? { topicId: topic.id } : {}), days: input.days ?? 7, n: input.n ?? MAX_HEADLINES });
+    // `meta`: the line buddi's `story` list draws above each title (host API 1.33).
+    const articles = hits.map((hit) => ({
+      ...hit,
+      meta: [hit.topic, hit.outlet, stamp(new Date(hit.publishedAt), now, buddi.owner.timezone), hit.opinion ? 'Opinion' : ''].filter(Boolean).join(' · '),
+    }));
     return { query: input.query, articles };
   },
 };

@@ -266,4 +266,4 @@ throws if anything ever loads it), which saves about 90 MB per install.
 
 Licensed under GPL-3.0-only, because the local voice runs eSpeak NG (GPL-3.0).
 
-Enabling Read aloud for a News edition authorizes `speech.say` within that edition’s mission run, using the configured Speech service and normal daily limits. The host rechecks the saved preference for each call; other agents, conversations and delegated runs do not inherit it. Disabling the edition’s voice removes this consent. Host API 1.33 exposes this as `approvals.configuredForRun(tool)`.
+`speech.say` speaks without a card in a mission run whose context plugin vouches for it: Speech asks `ctx.buddi.approvals.configuredForRun('speech.say')` (host API 1.33), and buddi asks that run's context plugin through its `consent_for_run` export, afresh at every call (News does so for an edition you set to be read aloud). The configured Speech service and its daily limits still apply; other agents, conversations and delegated runs never inherit it. Its result draws as the `audio` canvas renderer.

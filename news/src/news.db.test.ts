@@ -257,6 +257,8 @@ suite('news (postgres)', () => {
     expect(story.image).toMatchObject({ key: saved[0].image_key, outlet: 'The New York Times' });
     const detail = await run('news.story', { id: story.id });
     expect(detail.image).toEqual(story.image);
+    // Telegram leads with it (host API 1.33 `attachments`): this plugin's own asset, captioned.
+    expect(detail.attachments).toEqual([{ kind: 'image', asset: saved[0].image_key, caption: expect.stringContaining('The New York Times') }]);
   });
 
   it('groups one story told by six outlets in English and French, and reads it back', async () => {
@@ -276,7 +278,11 @@ suite('news (postgres)', () => {
 
     const story = (await run('news.story', { id: fed!.id })) as StoryDetail;
     expect(story.sources).toHaveLength(6);
-    expect(story.timeline.map((t) => t.outlet)).toEqual(['The New York Times', 'Reuters', 'The Guardian', 'Le Monde', 'Les Echos', 'Le Figaro']);
+    // The tool answers in buddi's StoryRow words too (host API 1.33 `story` renderer).
+    expect(story.timeline.map((t) => (t as unknown as { text: string }).text.split(':')[0])).toEqual(['The New York Times', 'Reuters', 'The Guardian', 'Le Monde', 'Les Echos', 'Le Figaro']);
+    expect((story as unknown as { kicker: string }).kicker).toBe(story.topic);
+    expect((story.sources.find((s) => s.outlet === 'Les Echos') as unknown as { meta: string }).meta).toMatch(/^Les Echos · French · .* · Paywalled$/);
+    expect((await manifest.exports!.story!.produce({ id: fed!.id }, ctx()) as StoryDetail).timeline[0]).toHaveProperty('outlet');
     expect(story.sources.find((s) => s.outlet === 'Le Monde')!.url).toBe('https://www.lemonde.fr/economie/article/2026/09/17/la-fed-abaisse-ses-taux.html');
     expect(story.sources.find((s) => s.outlet === 'Reuters')!.title).toBe(npr.title);
     expect(story.sources.find((s) => s.outlet === 'Les Echos')!.paywall).toBe(true);
@@ -434,6 +440,7 @@ suite('news (postgres)', () => {
     const hits = await run('news.search', { query: 'REDUIT taux' });
     expect(hits.articles.map((a: { outlet: string }) => a.outlet)).toEqual(['Le Figaro', 'Le Monde']);
     expect(hits.articles[0].storyId).toMatch(/^s_/);
+    expect(hits.articles[0].meta).toContain('Le Figaro');
     expect((await run('news.search', { query: 'iPhone', topic: 'economy' })).articles).toHaveLength(1);
     expect((await run('news.search', { query: 'nothing like this' })).articles).toEqual([]);
   });
@@ -632,8 +639,14 @@ suite('news (postgres)', () => {
   it('hands an edition its material untold first, records it, and keeps a quiet day', async () => {
     await seedFixtureTopic('economy');
     await run('news.set_settings', { voiceEditions: ['morning'] }, asOwner);
-    expect(await manifest.exports!.edition_voice!.produce({ edition: 'morning' }, ctx())).toEqual({ enabled: true });
-    expect(await manifest.exports!.edition_voice!.produce({ edition: 'evening' }, ctx())).toEqual({ enabled: false });
+    // consent_for_run (host API 1.33): Speech may narrate an edition the owner chose, in that edition's run only.
+    const consent = (tool: string, name: string, args: Record<string, unknown>) => manifest.exports!.consent_for_run!.produce({ tool, export: name, args }, ctx());
+    expect(await consent('speech.say', 'edition_material', { edition: 'morning' })).toBe(true);
+    expect(await consent('speech.say', 'edition_material', { edition: 'evening' })).toBe(false);
+    expect(await consent('speech.transcribe', 'edition_material', { edition: 'morning' })).toBe(false);
+    expect(await consent('speech.say', 'headlines', { edition: 'morning' })).toBe(false);
+    expect(await consent('speech.say', 'edition_material', { edition: 'midnight' })).toBe(false);
+    expect(await consent('speech.say', 'edition_material', {})).toBe(false);
     await fetchAll();
     const material = await run('news.edition_material', { edition: 'morning' });
     expect(material).toMatchObject({ edition: 'morning', language: 'en', voice: false, voiceOff: 'the Speech plugin is not installed', quietToday: false, lastEdition: null });
@@ -667,10 +680,15 @@ suite('news (postgres)', () => {
     expect(history.editions[0]).toMatchObject({ id: saved.edition, text });
     expect((await run('news.editions', { kind: 'evening' })).editions).toEqual([]);
     expect((await run('news.editions', { id: 'e_missing' })).editions).toEqual([]);
+    // Playing one saved edition leads with its report's recording (host API 1.33 `attachments`); a list does not.
+    expect(history.attachments).toBeUndefined();
+    expect((await run('news.editions', { attachAudio: true })).attachments).toEqual([{ kind: 'audio', report: `#/p/news/stories?edition=${saved.edition}` }]);
+    expect((await run('news.editions', { attachAudio: true, id: 'e_missing' })).attachments).toBeUndefined();
     const { edition } = await query('edition', { id: saved.edition });
     expect((await query('edition', { id: 'latest' })).edition.id).toBe(saved.edition);
     expect((await query('edition', { id: 'missing' })).edition).toBeNull();
     expect(edition).toMatchObject({ id: saved.edition, kind: 'morning', name: 'Morning edition', lede: 'One story. The Fed moved.', next: '12:30', text });
+    expect(edition).toMatchObject({ report: `#/p/news/stories?edition=${saved.edition}`, foot: 'Next edition at 12:30. Tell me what to leave out, or mute anything from News.' });
     expect(edition.when).toMatch(/^Thu 17 Sep · \d{2}:\d{2}$/);
     expect(edition.groups).toHaveLength(1);
     const [told, stray] = edition.groups[0].stories;
