@@ -23,6 +23,11 @@ import { NOT_SET_UP, type NotSetUp } from './tools.js';
 export const EDITIONS = ['morning', 'midday', 'evening'] as const;
 export type EditionKind = (typeof EDITIONS)[number];
 
+/** The page link an edition's report is sent under: the News page with that edition's drawer open. */
+export function editionLink(id: string): string {
+  return `#/p/news/stories?edition=${encodeURIComponent(id)}`;
+}
+
 /** Candidates an edition is offered by default, and at most. */
 export const MATERIAL_DEFAULT = 12;
 export const MATERIAL_MAX = 20;
@@ -176,12 +181,23 @@ export function chooseMaterial(
   return { picked, told };
 }
 
-/** Read-only consent from the owner's News settings, checked at narration time. */
-export const editionVoiceExport: PluginExport = {
-  params: z.object({ edition: z.enum(EDITIONS) }).strict(),
-  async produce(args, ctx) {
+/**
+ * `consent_for_run` (host API 1.33): buddi asks it while a mission run started
+ * from `edition_material` is running, whenever Speech asks whether that run
+ * may speak. Yes only for `speech.say`, only in an edition run, and only when
+ * the owner chose that edition under Read aloud — read afresh on every call,
+ * so turning it off stops the next one. Every other tool, export or edition
+ * is no: News vouches for nothing else.
+ */
+export const runConsentExport: PluginExport = {
+  description: 'Whether the owner set this edition to be read aloud: Speech may narrate it in this run.',
+  params: z.object({ tool: z.string().max(130), export: z.string().max(64), args: z.record(z.unknown()) }).strict(),
+  async produce(params: { tool: string; export: string; args: Record<string, unknown> }, ctx) {
+    if (params.tool !== 'speech.say' || params.export !== 'edition_material') return false;
+    const edition = params.args['edition'];
+    if (typeof edition !== 'string' || !(EDITIONS as readonly string[]).includes(edition)) return false;
     const settings = await settingsRow(ctx.buddi!.db);
-    return { enabled: settings.voice_editions.includes((args as { edition: EditionKind }).edition) };
+    return settings.voice_editions.includes(edition);
   },
 };
 
@@ -299,7 +315,7 @@ export const editionSaveTool: ToolDefinition<z.infer<typeof editionSaveInput>, E
       buddi.clock.now(),
     );
     const seen = new Set(marked.map((m) => m.id));
-    return { edition: editionId, told: marked, unknown: ids.filter((id) => !seen.has(id)), link: `#/p/news/stories?edition=${encodeURIComponent(editionId)}` };
+    return { edition: editionId, told: marked, unknown: ids.filter((id) => !seen.has(id)), link: editionLink(editionId) };
   },
 };
 
@@ -558,7 +574,7 @@ export function quietWords(until: Date | null, now: Date, zone: string): string 
 }
 
 const editionsInput = z.object({
-  attachAudio: z.boolean().optional().describe("Set true when showing or playing one saved edition: Telegram attaches its existing recording if available. Leave false for counts or lists."),
+  attachAudio: z.boolean().optional().describe("Set true when showing or playing one saved edition: its existing recording is sent first, if there is one. Leave false for counts or lists."),
   id: z.string().regex(/^e_[a-zA-Z0-9_-]+$/).optional(),
   kind: z.enum(EDITIONS).optional(),
   limit: z.number().int().min(1).max(10).optional(),
@@ -576,7 +592,11 @@ export const editionsTool: ToolDefinition<z.infer<typeof editionsInput>, unknown
        where text is not null and text <> '' and ($1::text is null or id = $1) and ($2::text is null or kind = $2)
        order by created_at desc, id desc limit $3`, [input.id ?? null, input.kind ?? null, input.limit ?? 1],
     );
-    return { attachAudio: input.attachAudio === true, total: count[0]?.total ?? 0, editions: rows.map(row => ({ id: row.id, kind: row.kind, createdAt: iso(row.created_at), text: row.text, storyIds: row.story_ids, link: `#/p/news/stories?edition=${encodeURIComponent(row.id)}` })) };
+    const editions = rows.map(row => ({ id: row.id, kind: row.kind, createdAt: iso(row.created_at), text: row.text, storyIds: row.story_ids, link: editionLink(row.id) }));
+    // Playing one saved edition: its recording goes first (host API 1.33 `attachments`), found by the
+    // link its report was sent under. A count or a list sends none.
+    const play = input.attachAudio === true && editions.length === 1;
+    return { total: count[0]?.total ?? 0, editions, ...(play ? { attachments: [{ kind: 'audio' as const, report: editions[0]!.link }] } : {}) };
   },
 };
 

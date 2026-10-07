@@ -563,7 +563,12 @@ export const storiesPage: PageDescriptor = {
     { kind: 'link', label: 'Latest edition', tone: 'accent', to: { page: 'stories', params: { edition: { const: 'latest' } } } },
   ],
   body: [
-    { kind: 'edition', param: 'edition', query: { query: 'edition', params: { id: { param: 'edition' } } } },
+    // Latest edition, a story's edition and a notification's link open the saved edition here (host API 1.33).
+    {
+      kind: 'sheet', param: 'edition', title: 'News edition',
+      query: { query: 'edition', params: { id: { param: 'edition' } } },
+      body: [{ kind: 'digest', path: 'edition', emptyTitle: 'No saved edition', empty: 'Anchor hasn’t saved this edition yet. Scheduled editions will appear here once they’re ready.' }],
+    },
     { kind: 'notice', text: { path: 'lede' } },
     ...FETCH_LINE,
     {

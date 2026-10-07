@@ -21,6 +21,7 @@
 import type { BuddiHost } from '@buddi/core/plugin';
 import { clock, weekHence } from './format.js';
 import { visibleArticles, type ArticleRow } from './reads.js';
+import { editionLink } from './edition.js';
 
 type Db = BuddiHost['db'];
 
@@ -118,6 +119,10 @@ export interface EditionView {
   notes: string[];
   /** The next edition's time, from "— Anchor · next at 12:30". */
   next?: string;
+  /** The card's closing line, in News's words (buddi's `digest`, host API 1.33). */
+  foot: string;
+  /** The link the edition's report was sent under: buddi plays its recording from it (1.33). */
+  report: string;
   /** The text as sent. */
   text: string;
   at: string;
@@ -356,6 +361,8 @@ export async function editionView(buddi: BuddiHost, id: string): Promise<Edition
     })),
     notes: parsed.notes,
     ...(parsed.next ? { next: parsed.next } : {}),
+    foot: `${parsed.next ? `Next edition at ${parsed.next}. ` : ''}Tell me what to leave out, or mute anything from News.`,
+    report: editionLink(row.id),
     text: row.text,
     at: row.created_at.toISOString(),
   };

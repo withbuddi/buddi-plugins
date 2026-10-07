@@ -39,7 +39,7 @@ describe('news manifest', () => {
   });
 
   it('exports headlines, story and the edition material, has a setup, one timer, two pages and the widget', () => {
-    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'edition_voice', 'headlines', 'story']);
+    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['consent_for_run', 'edition_material', 'headlines', 'story']);
     expect(manifest.setup).toBeDefined();
     expect(manifest.sources?.map((s) => [s.id, s.every])).toEqual([['news.fetch', 60]]);
     expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'meaning', 'news_settings', 'news_setup', 'overview', 'source_rows', 'sources', 'starter_review', 'stories', 'topic_rows', 'topics']);

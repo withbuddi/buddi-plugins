@@ -15,7 +15,7 @@ import type { PluginManifest } from '@buddi/core/plugin';
 import { fetchSourceDefinition } from './poller.js';
 import { newsQueries, ownerTools } from './settings.js';
 import { dashboardQueries, newsPages } from './dashboard.js';
-import { editionVoiceExport, editionMaterialExport, editionTools } from './edition.js';
+import { runConsentExport, editionMaterialExport, editionTools } from './edition.js';
 import { topStoriesWidget } from './widget.js';
 import { headlinesExport, newsSetup, storyExport } from './setup.js';
 import { starterHosts } from './starter.js';
@@ -46,12 +46,23 @@ export const manifest: PluginManifest = {
   uses: ['http', 'assets', 'onnx'],
   optional: { speech: '^0.1.3' },
   setup: newsSetup,
-  exports: { headlines: headlinesExport, story: storyExport, edition_material: editionMaterialExport, edition_voice: editionVoiceExport },
+  exports: { headlines: headlinesExport, story: storyExport, edition_material: editionMaterialExport, consent_for_run: runConsentExport },
   tools: [...modelTools, ...editionTools, ...ownerTools],
   sources: [fetchSourceDefinition],
   queries: [...newsQueries, ...dashboardQueries],
   pages: newsPages,
-  views: [{ tool: 'news.search', renderer: 'story', title: 'Search results', map: {} }, { tool: 'news.story', renderer: 'story', title: 'Story', map: {} }, { tool: 'news.edition_save', renderer: 'edition', title: 'Saved edition', map: {} }],
+  // Host API 1.33: buddi's generic story, query and messenger contracts.
+  views: [
+    { tool: 'news.search', renderer: 'story', title: 'Search results', map: { rows: 'articles' } },
+    // Opening a story leads with its cached picture on Telegram (`attachments`).
+    { tool: 'news.story', renderer: 'story', title: 'Story', map: {}, messenger: { mediaFirst: true } },
+    // Playing one saved edition leads with its recording; a count or a list does not.
+    { tool: 'news.editions', renderer: 'structured', title: 'Saved editions', map: {}, messenger: { mediaFirst: true, when: { path: 'attachAudio', equals: true } } },
+    {
+      tool: 'news.edition_save', renderer: 'query', title: 'Saved edition',
+      map: { query: 'edition', params: { id: 'edition' }, body: [{ kind: 'digest', path: 'edition', emptyTitle: 'This edition is no longer available.' }] },
+    },
+  ],
   widgets: [topStoriesWidget],
 };
 
