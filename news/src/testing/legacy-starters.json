@@ -1,0 +1,732 @@
+{
+  "topics": [
+    {
+      "id": "togo-west-africa",
+      "name": "Togo and West Africa",
+      "languages": [
+        "fr",
+        "en"
+      ],
+      "keywords": [
+        "Togo",
+        "Lomé",
+        "Gnassingbé",
+        "CEDEAO",
+        "ECOWAS",
+        "Bénin",
+        "Benin",
+        "Ghana",
+        "Sahel",
+        "UEMOA",
+        "Burkina",
+        "Niger",
+        "Mali",
+        "Nigeria",
+        "Côte d'Ivoire",
+        "Sénégal",
+        "Senegal"
+      ]
+    },
+    {
+      "id": "economy",
+      "name": "Economy",
+      "languages": [
+        "en",
+        "fr"
+      ],
+      "keywords": [
+        "economy",
+        "économie",
+        "inflation",
+        "central bank",
+        "banque centrale",
+        "Fed",
+        "ECB",
+        "BCE",
+        "jobs",
+        "emploi",
+        "markets",
+        "marchés",
+        "tariffs",
+        "GDP",
+        "PIB"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "togo-first-fr",
+      "name": "Togo First · Actualités",
+      "kind": "rss",
+      "url": "https://www.togofirst.com/fr/actualites?format=feed&type=rss",
+      "language": "fr",
+      "outlet": "togofirst.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "togo-first-economy",
+      "name": "Togo First · Economy",
+      "kind": "rss",
+      "url": "https://www.togofirst.com/en/economy?format=feed&type=rss",
+      "language": "en",
+      "outlet": "togofirst.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "togo-first-politics",
+      "name": "Togo First · Politics",
+      "kind": "rss",
+      "url": "https://www.togofirst.com/en/politics?format=feed&type=rss",
+      "language": "en",
+      "outlet": "togofirst.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "republic-of-togo",
+      "name": "République togolaise (Google News)",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=site%3Arepublicoftogo.com&hl=fr&gl=FR&ceid=FR:fr",
+      "language": "fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "jeune-afrique",
+      "name": "Jeune Afrique (Google News)",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=site%3Ajeuneafrique.com+when%3A2d&hl=fr&gl=FR&ceid=FR:fr",
+      "language": "fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "agence-ecofin",
+      "name": "Agence Ecofin (Google News)",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=site%3Aagenceecofin.com+when%3A2d&hl=fr&gl=FR&ceid=FR:fr",
+      "language": "fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "icilome",
+      "name": "icilome",
+      "kind": "rss",
+      "url": "https://icilome.com/feed/",
+      "language": "fr",
+      "outlet": "icilome.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "rfi-afrique",
+      "name": "RFI · Afrique",
+      "kind": "rss",
+      "url": "https://www.rfi.fr/fr/afrique/rss",
+      "language": "fr",
+      "outlet": "rfi.fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "rfi-africa",
+      "name": "RFI · Africa",
+      "kind": "rss",
+      "url": "https://www.rfi.fr/en/africa/rss",
+      "language": "en",
+      "outlet": "rfi.fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "le-monde-afrique",
+      "name": "Le Monde Afrique",
+      "kind": "rss",
+      "url": "https://www.lemonde.fr/afrique/rss_full.xml",
+      "language": "fr",
+      "outlet": "lemonde.fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "africanews-en",
+      "name": "Africanews",
+      "kind": "rss",
+      "url": "https://www.africanews.com/feed/rss",
+      "language": "en",
+      "outlet": "africanews.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "africanews-fr",
+      "name": "Africanews (fr)",
+      "kind": "rss",
+      "url": "https://fr.africanews.com/feed/rss",
+      "language": "fr",
+      "outlet": "africanews.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "bbc-africa",
+      "name": "BBC News · Africa",
+      "kind": "rss",
+      "url": "https://feeds.bbci.co.uk/news/world/africa/rss.xml",
+      "language": "en",
+      "outlet": "bbc.com",
+      "topics": [
+        {
+          "topic": "togo-west-africa",
+          "filter": "keywords"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "google-news-togo-fr",
+      "name": "Google News · Togo OR Lomé",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=Togo+OR+Lom%C3%A9&hl=fr&gl=FR&ceid=FR:fr",
+      "language": "fr",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "google-news-togo-en",
+      "name": "Google News · Togo",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=Togo+when%3A2d&hl=en-US&gl=US&ceid=US:en",
+      "language": "en",
+      "topics": [
+        {
+          "topic": "togo-west-africa"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "reuters-business",
+      "name": "Reuters (Google News)",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=site%3Areuters.com+business+when%3A1d&hl=en-US&gl=US&ceid=US:en",
+      "language": "en",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "nyt-economy",
+      "name": "The New York Times · Economy",
+      "kind": "rss",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+      "language": "en",
+      "outlet": "nytimes.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "guardian-economics",
+      "name": "The Guardian · Economics",
+      "kind": "rss",
+      "url": "https://www.theguardian.com/business/economics/rss",
+      "language": "en",
+      "outlet": "theguardian.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "financial-times",
+      "name": "Financial Times",
+      "kind": "rss",
+      "url": "https://www.ft.com/rss/home/international",
+      "language": "en",
+      "outlet": "ft.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "bloomberg-markets",
+      "name": "Bloomberg · Markets",
+      "kind": "rss",
+      "url": "https://www.bloomberg.com/feeds/markets/news.rss",
+      "language": "en",
+      "outlet": "bloomberg.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "economist-finance",
+      "name": "The Economist · Finance and economics",
+      "kind": "rss",
+      "url": "https://www.economist.com/finance-and-economics/rss.xml",
+      "language": "en",
+      "outlet": "economist.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "cnbc-top-news",
+      "name": "CNBC · Top News",
+      "kind": "rss",
+      "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+      "language": "en",
+      "outlet": "cnbc.com",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "le-monde-economie",
+      "name": "Le Monde · Économie",
+      "kind": "rss",
+      "url": "https://www.lemonde.fr/economie/rss_full.xml",
+      "language": "fr",
+      "outlet": "lemonde.fr",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "le-monde-economie-mondiale",
+      "name": "Le Monde · Économie mondiale",
+      "kind": "rss",
+      "url": "https://www.lemonde.fr/economie-mondiale/rss_full.xml",
+      "language": "fr",
+      "outlet": "lemonde.fr",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "le-figaro-economie",
+      "name": "Le Figaro · Économie",
+      "kind": "rss",
+      "url": "https://www.lefigaro.fr/rss/figaro_economie.xml",
+      "language": "fr",
+      "outlet": "lefigaro.fr",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "liberation-economie",
+      "name": "Libération · Économie",
+      "kind": "rss",
+      "url": "https://www.liberation.fr/arc/outboundfeeds/rss-all/category/economie/?outputType=xml",
+      "language": "fr",
+      "outlet": "liberation.fr",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    },
+    {
+      "id": "les-echos",
+      "name": "Les Echos (Google News)",
+      "kind": "gnews",
+      "url": "https://news.google.com/rss/search?q=site%3Alesechos.fr+when%3A1d&hl=fr&gl=FR&ceid=FR:fr",
+      "language": "fr",
+      "topics": [
+        {
+          "topic": "economy"
+        }
+      ],
+      "verified": true
+    }
+  ],
+  "outlets": [
+    {
+      "domain": "theverge.com",
+      "name": "The Verge",
+      "kind": "specialist",
+      "language": "en"
+    },
+    {
+      "domain": "arstechnica.com",
+      "name": "Ars Technica",
+      "kind": "specialist",
+      "language": "en"
+    },
+    {
+      "domain": "techcrunch.com",
+      "name": "TechCrunch",
+      "kind": "specialist",
+      "language": "en"
+    },
+    {
+      "domain": "wired.com",
+      "name": "Wired",
+      "kind": "specialist",
+      "language": "en"
+    },
+    {
+      "domain": "nytimes.com",
+      "name": "The New York Times",
+      "kind": "national",
+      "language": "en",
+      "paywall": true,
+      "lean": "lean-left"
+    },
+    {
+      "domain": "lemonde.fr",
+      "name": "Le Monde",
+      "kind": "national",
+      "language": "fr"
+    },
+    {
+      "domain": "numerama.com",
+      "name": "Numerama",
+      "kind": "specialist",
+      "language": "fr"
+    },
+    {
+      "domain": "01net.com",
+      "name": "01net",
+      "kind": "specialist",
+      "language": "fr"
+    },
+    {
+      "domain": "frandroid.com",
+      "name": "Frandroid",
+      "kind": "specialist",
+      "language": "fr"
+    },
+    {
+      "domain": "journaldunet.com",
+      "name": "Journal du Net",
+      "kind": "specialist",
+      "language": "fr"
+    },
+    {
+      "domain": "technologyreview.com",
+      "name": "MIT Technology Review",
+      "kind": "specialist",
+      "language": "en"
+    },
+    {
+      "domain": "theguardian.com",
+      "name": "The Guardian",
+      "kind": "national",
+      "language": "en",
+      "lean": "left"
+    },
+    {
+      "domain": "importai.substack.com",
+      "name": "Import AI",
+      "kind": "blog",
+      "language": "en"
+    },
+    {
+      "domain": "simonwillison.net",
+      "name": "Simon Willison",
+      "kind": "blog",
+      "language": "en"
+    },
+    {
+      "domain": "openai.com",
+      "name": "OpenAI",
+      "kind": "company",
+      "language": "en"
+    },
+    {
+      "domain": "blog.google",
+      "name": "Google",
+      "kind": "company",
+      "language": "en"
+    },
+    {
+      "domain": "actuia.com",
+      "name": "ActuIA",
+      "kind": "specialist",
+      "language": "fr"
+    },
+    {
+      "domain": "togofirst.com",
+      "name": "Togo First",
+      "kind": "regional"
+    },
+    {
+      "domain": "republicoftogo.com",
+      "name": "République togolaise",
+      "kind": "state",
+      "language": "fr"
+    },
+    {
+      "domain": "jeuneafrique.com",
+      "name": "Jeune Afrique",
+      "kind": "regional",
+      "language": "fr",
+      "paywall": true
+    },
+    {
+      "domain": "agenceecofin.com",
+      "name": "Agence Ecofin",
+      "kind": "regional",
+      "language": "fr"
+    },
+    {
+      "domain": "icilome.com",
+      "name": "icilome",
+      "kind": "regional",
+      "language": "fr"
+    },
+    {
+      "domain": "rfi.fr",
+      "name": "RFI",
+      "kind": "international"
+    },
+    {
+      "domain": "africanews.com",
+      "name": "Africanews",
+      "kind": "regional"
+    },
+    {
+      "domain": "bbc.com",
+      "name": "BBC News",
+      "kind": "international",
+      "language": "en",
+      "lean": "center"
+    },
+    {
+      "domain": "apnews.com",
+      "name": "AP",
+      "kind": "wire",
+      "language": "en",
+      "lean": "lean-left"
+    },
+    {
+      "domain": "reuters.com",
+      "name": "Reuters",
+      "kind": "wire",
+      "language": "en",
+      "lean": "center"
+    },
+    {
+      "domain": "npr.org",
+      "name": "NPR",
+      "kind": "national",
+      "language": "en",
+      "lean": "lean-left"
+    },
+    {
+      "domain": "politico.com",
+      "name": "Politico",
+      "kind": "national",
+      "language": "en",
+      "lean": "lean-left"
+    },
+    {
+      "domain": "axios.com",
+      "name": "Axios",
+      "kind": "national",
+      "language": "en",
+      "lean": "lean-left"
+    },
+    {
+      "domain": "semafor.com",
+      "name": "Semafor",
+      "kind": "national",
+      "language": "en",
+      "lean": "center"
+    },
+    {
+      "domain": "thehill.com",
+      "name": "The Hill",
+      "kind": "national",
+      "language": "en",
+      "lean": "center"
+    },
+    {
+      "domain": "foxnews.com",
+      "name": "Fox News",
+      "kind": "national",
+      "language": "en",
+      "lean": "right"
+    },
+    {
+      "domain": "washingtonexaminer.com",
+      "name": "Washington Examiner",
+      "kind": "national",
+      "language": "en",
+      "lean": "lean-right"
+    },
+    {
+      "domain": "nationalreview.com",
+      "name": "National Review",
+      "kind": "national",
+      "language": "en",
+      "lean": "right"
+    },
+    {
+      "domain": "economist.com",
+      "name": "The Economist",
+      "kind": "international",
+      "language": "en",
+      "paywall": true,
+      "lean": "lean-left"
+    },
+    {
+      "domain": "aljazeera.com",
+      "name": "Al Jazeera",
+      "kind": "international",
+      "language": "en"
+    },
+    {
+      "domain": "dw.com",
+      "name": "DW",
+      "kind": "international",
+      "language": "en"
+    },
+    {
+      "domain": "france24.com",
+      "name": "France 24",
+      "kind": "international"
+    },
+    {
+      "domain": "ft.com",
+      "name": "Financial Times",
+      "kind": "international",
+      "language": "en",
+      "paywall": true
+    },
+    {
+      "domain": "wsj.com",
+      "name": "The Wall Street Journal",
+      "kind": "national",
+      "language": "en",
+      "paywall": true,
+      "lean": "center"
+    },
+    {
+      "domain": "liberation.fr",
+      "name": "Libération",
+      "kind": "national",
+      "language": "fr"
+    },
+    {
+      "domain": "lefigaro.fr",
+      "name": "Le Figaro",
+      "kind": "national",
+      "language": "fr"
+    },
+    {
+      "domain": "bloomberg.com",
+      "name": "Bloomberg",
+      "kind": "international",
+      "language": "en",
+      "paywall": true
+    },
+    {
+      "domain": "cnbc.com",
+      "name": "CNBC",
+      "kind": "national",
+      "language": "en"
+    },
+    {
+      "domain": "lesechos.fr",
+      "name": "Les Echos",
+      "kind": "national",
+      "language": "fr",
+      "paywall": true
+    },
+    {
+      "domain": "voaafrique.com",
+      "name": "VOA Afrique",
+      "kind": "international",
+      "language": "fr"
+    }
+  ]
+}

@@ -26,8 +26,7 @@ export type EditionKind = (typeof EDITIONS)[number];
 /** Candidates an edition is offered by default, and at most. */
 export const MATERIAL_DEFAULT = 12;
 export const MATERIAL_MAX = 20;
-/** The editions' usual times (Anchor's missions, spec §8), and which follows which. */
-export const USUAL_TIMES: Record<EditionKind, string> = { morning: '07:00', midday: '12:30', evening: '19:00' };
+/** The conventional order, used only when a caller supplies a next time. */
 const NEXT_EDITION: Record<EditionKind, EditionKind> = { morning: 'midday', midday: 'evening', evening: 'morning' };
 
 /** Articles shown per story in the material. */
@@ -43,7 +42,7 @@ export const editionMaterialInput = z
   .object({
     edition: z.enum(EDITIONS).describe('Which edition: morning, midday or evening.'),
     maxStories: z.coerce.number().int().min(3).max(MATERIAL_MAX).optional().describe(`How many candidates, ${MATERIAL_DEFAULT} when left out.`),
-    next: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'a time, HH:MM').optional().describe('The next edition\'s time when you know it ("12:30"); the usual times otherwise.'),
+    next: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'a time, HH:MM').optional().describe('The next edition\'s time when you know it ("12:30"); omitted when the active schedule is not known.'),
   })
   .strict();
 
@@ -78,6 +77,8 @@ export interface MaterialStory {
 export interface EditionMaterial {
   edition: EditionKind;
   at: string;
+  localDate: string;
+  timezone: string;
   /** The owner's language: write in it, and note an outlet's when it differs. */
   language: string;
   /** Read this edition aloud too (Speech is there and the owner asked for it). */
@@ -87,8 +88,8 @@ export interface EditionMaterial {
   /** The owner said "Quiet news today": tell nothing, report nothing. */
   quietToday: boolean;
   lastEdition: { kind: string; at: string } | null;
-  /** The next edition, for the edition's last line ("— Anchor · next at 12:30"): the time given, or the usual one. */
-  next: { edition: EditionKind; at: string };
+  /** The next edition, for the edition's last line ("— Anchor · next at 12:30"): only an explicitly supplied time; no guessed schedule. */
+  next: { edition: EditionKind; at: string } | null;
   /** Untold first: stories grouped by topic, the topics in the owner's order, best first within each. */
   topics: Array<{ topic: string; topicId: string; stories: MaterialStory[] }>;
   /** Told already, nothing material since: never tell again, only so that no two lines are about one event. */
@@ -175,6 +176,15 @@ export function chooseMaterial(
   return { picked, told };
 }
 
+/** Read-only consent from the owner's News settings, checked at narration time. */
+export const editionVoiceExport: PluginExport = {
+  params: z.object({ edition: z.enum(EDITIONS) }).strict(),
+  async produce(args, ctx) {
+    const settings = await settingsRow(ctx.buddi!.db);
+    return { enabled: settings.voice_editions.includes((args as { edition: EditionKind }).edition) };
+  },
+};
+
 async function settingsRow(db: Db): Promise<{ voice_editions: string[]; quiet_until: Date | null }> {
   const { rows } = await db.query<{ voice_editions: string[]; quiet_until: Date | null }>(`select voice_editions, quiet_until from news.settings`);
   return rows[0] ?? { voice_editions: [], quiet_until: null };
@@ -216,12 +226,14 @@ export async function editionMaterial(buddi: BuddiHost, input: z.infer<typeof ed
   return {
     edition: input.edition,
     at: iso(now),
+    localDate: new Intl.DateTimeFormat('en-CA', { timeZone: buddi.owner.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now),
+    timezone: buddi.owner.timezone,
     language,
     voice: asked && speech,
     ...(asked && !speech ? { voiceOff: 'the Speech plugin is not installed' } : {}),
     quietToday,
     lastEdition: last[0] ? { kind: last[0].kind, at: iso(last[0].created_at) } : null,
-    next: { edition: NEXT_EDITION[input.edition], at: input.next ?? USUAL_TIMES[NEXT_EDITION[input.edition]] },
+    next: input.next ? { edition: NEXT_EDITION[input.edition], at: input.next } : null,
     topics: topics.filter((t) => byTopic.has(t.id)).map((t) => ({ topic: t.name, topicId: t.id, stories: byTopic.get(t.id)! })),
     alreadyTold: told.slice(0, 10).map((r) => ({ id: r.summary.id, title: r.summary.title, topic: r.summary.topic })),
     note: quietToday
@@ -545,4 +557,27 @@ export function quietWords(until: Date | null, now: Date, zone: string): string 
   return until && until > now ? `Quiet until ${shortDate(until, zone)}` : null;
 }
 
-export const editionTools = [editionMaterialTool, editionSaveTool, quietTodayTool, readTool, muteOutletTool];
+const editionsInput = z.object({
+  attachAudio: z.boolean().optional().describe("Set true when showing or playing one saved edition: Telegram attaches its existing recording if available. Leave false for counts or lists."),
+  id: z.string().regex(/^e_[a-zA-Z0-9_-]+$/).optional(),
+  kind: z.enum(EDITIONS).optional(),
+  limit: z.number().int().min(1).max(10).optional(),
+}).strict();
+
+export const editionsTool: ToolDefinition<z.infer<typeof editionsInput>, unknown> = {
+  name: 'news.editions', tier: 'auto', untrusted: 'web',
+  description: 'Retrieve saved editions, newest first, with their exact text and links. With no arguments returns the latest saved edition and total saved count. Filter by kind for the latest morning, midday or evening edition, or id for a specific edition. Increase limit to list recent editions. Use this when asked to show the last edition or how many editions are saved; never reconstruct one from headlines or edition material.',
+  input: editionsInput,
+  async execute(input, ctx) {
+    const db = ctx.buddi!.db;
+    const { rows: count } = await db.query<{ total: number }>(`select count(*)::int as total from news.editions where text is not null and text <> ''`);
+    const { rows } = await db.query<{ id: string; kind: string; created_at: Date; text: string; story_ids: string[] }>(
+      `select id, kind, created_at, text, story_ids from news.editions
+       where text is not null and text <> '' and ($1::text is null or id = $1) and ($2::text is null or kind = $2)
+       order by created_at desc, id desc limit $3`, [input.id ?? null, input.kind ?? null, input.limit ?? 1],
+    );
+    return { attachAudio: input.attachAudio === true, total: count[0]?.total ?? 0, editions: rows.map(row => ({ id: row.id, kind: row.kind, createdAt: iso(row.created_at), text: row.text, storyIds: row.story_ids, link: `#/p/news/stories?edition=${encodeURIComponent(row.id)}` })) };
+  },
+};
+
+export const editionTools = [editionsTool, editionMaterialTool, editionSaveTool, quietTodayTool, readTool, muteOutletTool];

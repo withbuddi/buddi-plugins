@@ -46,6 +46,7 @@ export const manifest: PluginManifest = {
     { host: 'registry.npmjs.org', why: 'Install of Kokoro: the eSpeak NG package (12.5 MB, GPL-3.0), pinned and checked, which pronounces the languages other than English; nothing is sent.' },
   ],
   tools: [transcribeTool, sayTool, setSettingsTool, testTool, previewTool, installTool, removeTool, telegramVoiceTool],
+  views: [{ tool: 'speech.say', renderer: 'audio', title: 'Voice recording', map: {} }],
   pages: speechPages,
   queries: speechQueries,
   skills: speechSkills,

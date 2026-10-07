@@ -1,3 +1,4 @@
+import { feedImage, type FeedImage } from './feed-images.js';
 /**
  * RSS 2.0, RSS 1.0 (RDF) and Atom, read into one shape. Pure: bytes and the
  * address they came from in, items out.
@@ -16,6 +17,7 @@
 import { ATOM, CONTENT, DC, RDF, RSS1, childOf, childrenOf, decodeEntities, deepText, parseXml, type XmlElement } from './xml.js';
 
 export interface FeedItem {
+  image?: FeedImage;
   title: string;
   url: string;
   summary: string;
@@ -166,6 +168,7 @@ function rssItem(item: XmlElement, base: string): FeedItem | null {
   const outletName = source ? textOf(source) : '';
   const outletUrl = source ? absolute(source.attrs.url, base) : undefined;
   return {
+    ...(feedImage(item, base) ? { image: feedImage(item, base)! } : {}),
     title,
     url,
     summary,
@@ -205,7 +208,7 @@ function readAtom(doc: XmlElement, feedUrl: string): ParsedFeed {
     const summary = clip(textOf(childOf(entry, ATOM, 'summary')) || textOf(childOf(entry, ATOM, 'content')));
     const publishedAt = parseDate(childOf(entry, ATOM, 'published')?.text ?? childOf(entry, ATOM, 'updated')?.text);
     const categories = childrenOf(entry, ATOM, 'category').map((c) => c.attrs.label ?? c.attrs.term ?? '').filter(Boolean);
-    items.push({ title, url, summary, publishedAt, categories });
+    items.push({ title, url, summary, publishedAt, categories, ...(feedImage(entry, entryBase) ? { image: feedImage(entry, entryBase)! } : {}) });
   }
   const language = doc.attrs.lang;
   return { format: 'atom', title: textOf(childOf(doc, ATOM, 'title')), ...(link ? { link } : {}), ...(language ? { language } : {}), items };

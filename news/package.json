@@ -41,7 +41,7 @@
     "optional": {
       "speech": "^0.1.3"
     },
-    "hostApi": "^1.32"
+    "hostApi": "^1.33"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

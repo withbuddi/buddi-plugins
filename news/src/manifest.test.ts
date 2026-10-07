@@ -15,7 +15,7 @@ describe('news manifest', () => {
     const registry = new ToolRegistry();
     expect(() => registry.register(manifest)).not.toThrow();
     expect(registry.list().map((t) => t.name).sort()).toEqual([
-      'news.edition_material', 'news.edition_save', 'news.feedback', 'news.headlines', 'news.mark_told', 'news.mute_outlet',
+      'news.edition_material', 'news.edition_save', 'news.editions', 'news.feedback', 'news.headlines', 'news.mark_told', 'news.mute_outlet',
       'news.quiet_today', 'news.read', 'news.search', 'news.story', 'news.topics',
     ]);
     for (const tool of manifest.tools) {
@@ -23,12 +23,12 @@ describe('news manifest', () => {
       expect(tool.tier).toBe(tool.name === 'news.mute_outlet' ? 'gated' : 'auto');
     }
     expect(manifest.tools.filter((t) => t.ownerOnly).map((t) => t.name).sort()).toEqual([
-      'news.add_feed', 'news.add_source', 'news.add_topic', 'news.download_meaning', 'news.enable_starter', 'news.hide_story', 'news.refresh',
+      'news.add_feed', 'news.add_source', 'news.add_topic', 'news.choose_custom_sources', 'news.download_meaning', 'news.enable_starter', 'news.finish_meaning_setup', 'news.hide_story', 'news.refresh',
       'news.remove_source', 'news.remove_topic', 'news.retry_source', 'news.set_settings', 'news.set_source', 'news.set_topic',
     ]);
     // What outlets wrote is someone else's text.
     expect(manifest.tools.filter((t) => t.untrusted === 'web').map((t) => t.name).sort()).toEqual([
-      'news.edition_material', 'news.headlines', 'news.read', 'news.search', 'news.story',
+      'news.edition_material', 'news.editions', 'news.headlines', 'news.read', 'news.search', 'news.story',
     ]);
   });
 
@@ -39,10 +39,10 @@ describe('news manifest', () => {
   });
 
   it('exports headlines, story and the edition material, has a setup, one timer, two pages and the widget', () => {
-    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'headlines', 'story']);
+    expect(Object.keys(manifest.exports ?? {}).sort()).toEqual(['edition_material', 'edition_voice', 'headlines', 'story']);
     expect(manifest.setup).toBeDefined();
     expect(manifest.sources?.map((s) => [s.id, s.every])).toEqual([['news.fetch', 60]]);
-    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'meaning', 'news_settings', 'overview', 'source_rows', 'sources', 'stories', 'topic_rows', 'topics']);
+    expect(manifest.queries?.map((q) => q.name).sort()).toEqual(['edition', 'meaning', 'news_settings', 'news_setup', 'overview', 'source_rows', 'sources', 'starter_review', 'stories', 'topic_rows', 'topics']);
     expect(manifest.pages?.map((p) => [p.id, p.place])).toEqual([['stories', 'rail'], ['sources', 'settings']]);
     expect(manifest.widgets?.map((w) => [w.id, w.sizes])).toEqual([['news.top', ['small', 'medium']]]);
     expect(manifest.optional).toEqual({ speech: '^0.1.3' });
@@ -57,12 +57,12 @@ describe('news manifest', () => {
 
   it('declares what leaves the machine and what it uses, as package.json and buddi.md do', () => {
     expect(manifest.network?.map((n) => n.host)).toEqual(starterHosts());
-    expect(manifest.network?.map((n) => n.host)).toEqual(expect.arrayContaining(['news.google.com', 'hn.algolia.com', 'feeds.bbci.co.uk', '*.lemonde.fr']));
+    expect(manifest.network?.map((n) => n.host)).toEqual(expect.arrayContaining(['news.google.com', 'feeds.bbci.co.uk', '*.lemonde.fr']));
     expect(manifest.uses).toEqual(pkg.buddi.uses);
     expect(pkg.buddi.name).toBe(manifest.name);
     expect(pkg.license).toBe('Apache-2.0');
     expect(manifest.version).toBe(pkg.version);
-    expect(pkg.buddi.hostApi).toBe('^1.32');
+    expect(pkg.buddi.hostApi).toBe('^1.33');
     expect(manifest.uses).toContain('onnx');
     const md = readFileSync(new URL('../buddi.md', import.meta.url), 'utf8');
     expect(md).toMatch(/^Schema: news$/m);

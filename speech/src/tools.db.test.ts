@@ -338,6 +338,19 @@ suite('speech tools (postgres)', () => {
     expect(owned.rows).toEqual([{ side: 'listen' }, { side: 'speak' }]);
   });
 
+  it('uses owner settings only in the bound run, rechecks revocation, and rejects inherited consent', async () => {
+    await choose(settingsWith({ speak: { backend: 'openai', accountId: OPENAI.id } }));
+    let enabled = true;
+    const configuredConsent = { agentId: 'buddy', conversationId, allows: async (name: string) => enabled && name === 'speech.say' };
+    expect(await run('speech.say', { text: 'Your evening edition.' }, { configuredConsent })).toMatchObject({ ok: true });
+    expect(await tool('speech.say').tierFor!({ text: 'A delegated request.' } as never, ctx({ configuredConsent, delegationDepth: 1 }))).toMatchObject({ tier: 'gated' });
+    expect(await run('speech.say', { text: 'Another agent.' }, { configuredConsent, agentId: 'anchor' })).toMatchObject({ reason: 'approval-required' });
+    const other = (await pool.query(`insert into core.conversations (agent_id) values ('buddy') returning id`)).rows[0].id;
+    expect(await run('speech.say', { text: 'Another conversation.' }, { configuredConsent, conversationId: other })).toMatchObject({ reason: 'approval-required' });
+    enabled = false;
+    expect(await run('speech.say', { text: 'No longer enabled.' }, { configuredConsent })).toMatchObject({ reason: 'approval-required' });
+  });
+
   it('say: "Always: this agent" once, and that agent\'s next conversations speak without a card; another agent still asks', async () => {
     await choose(settingsWith({ speak: { backend: 'openai', accountId: OPENAI.id } }));
     const fresh = async (agent: string): Promise<string> =>

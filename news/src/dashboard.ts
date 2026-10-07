@@ -12,7 +12,8 @@ import type { BuddiHost, PageDescriptor, PageQuery } from '@buddi/core/plugin';
 import { ago, clock, languageMark, languageName, shortDate, stamp, startOfDay, weekHence, whenWords } from './format.js';
 import { rankedStories, sourceHealth, type ArticleRow, type RankedStory } from './reads.js';
 import { STARTER_TOPICS, starterSources } from './starter.js';
-import { MEANING_NOTE } from './settings.js';
+import { meaningFor, megabytes } from './meaning.js';
+import { meaningRow, MEANING_NOTE } from './settings.js';
 
 type Db = BuddiHost['db'];
 
@@ -113,8 +114,13 @@ export type Filter = (typeof FILTERS)[number];
 
 /** What the page is handed for a story: the kit's card and sheet, in words. */
 export interface StoryCardRow {
+  image?: import('./reads.js').StoryImage;
   id: string;
   title: string;
+  /** Source labels supplied by the plugin for the text actually displayed. */
+  titleAttribution?: string;
+  summaryAttribution?: string;
+  updateAttribution?: string;
   lead?: string;
   summary?: string;
   update?: string;
@@ -132,7 +138,9 @@ export interface StoryCardRow {
   kicker: string;
   meta: string;
   told: boolean;
+  editionId?: string;
   anchor: string | null;
+  chatContext: string;
   quietHint: string;
   quietDone: string;
   sources: Array<{ title: string; url: string; outlet: string; logo?: string; meta: string }>;
@@ -160,19 +168,19 @@ function outletsOf(articles: ArticleRow[]): ArticleRow[] {
   });
 }
 
-async function toldEvents(db: Db, ids: string[]): Promise<Map<string, Array<{ kind: string; at: Date }>>> {
-  const out = new Map<string, Array<{ kind: string; at: Date }>>();
+async function toldEvents(db: Db, ids: string[]): Promise<Map<string, Array<{ kind: string; at: Date; editionId?: string }>>> {
+  const out = new Map<string, Array<{ kind: string; at: Date; editionId?: string }>>();
   if (ids.length === 0) return out;
-  const { rows } = await db.query<{ story_id: string; kind: string; told_at: Date }>(
-    `select t.story_id, e.kind, t.told_at from news.told t join news.editions e on e.id = t.edition_id where t.story_id = any($1) order by t.told_at`,
+  const { rows } = await db.query<{ story_id: string; kind: string; told_at: Date; edition_id: string }>(
+    `select t.story_id, e.kind, t.told_at, t.edition_id from news.told t join news.editions e on e.id = t.edition_id where t.story_id = any($1) order by t.told_at`,
     [ids],
   );
-  for (const r of rows) out.set(r.story_id, [...(out.get(r.story_id) ?? []), { kind: r.kind, at: r.told_at }]);
+  for (const r of rows) out.set(r.story_id, [...(out.get(r.story_id) ?? []), { kind: r.kind, at: r.told_at, editionId: r.edition_id }]);
   return out;
 }
 
 export function storyCard(
-  r: RankedStory, told: Array<{ kind: string; at: Date }>, ctx: { now: Date; zone: string; format: '12h' | '24h' | null; anchor: string | null },
+  r: RankedStory, told: Array<{ kind: string; at: Date; editionId?: string }>, ctx: { now: Date; zone: string; format: '12h' | '24h' | null; anchor: string | null },
 ): StoryCardRow {
   const s = r.summary;
   const { now, zone, format } = ctx;
@@ -180,7 +188,9 @@ export function storyCard(
   const when = toldAt ? whenWords(toldAt, now, zone) : null;
   const since = toldAt ? r.articles.filter((a) => a.fetched_at > toldAt) : [];
   const newest = since[since.length - 1];
-  const update = s.status === 'update' && newest ? (newest.lead || newest.title).slice(0, 280) : undefined;
+  const candidateUpdate = s.status === 'update' && newest ? (newest.lead || newest.title) : undefined;
+  const sameText = (a: string, b: string) => a.replace(/\s+/g, ' ').trim().toLocaleLowerCase() === b.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+  const update = candidateUpdate && !sameText(candidateUpdate, s.lead) && !sameText(candidateUpdate, s.title) ? candidateUpdate.slice(0, 280) : undefined;
   const distinct = outletsOf(r.articles);
   // The outlet whose article names the story first: the card's "Reuters and 3 more".
   const lead = distinct.find((a) => a.outlet === s.outlet) ?? distinct[0];
@@ -188,7 +198,7 @@ export function storyCard(
   const first = r.articles[0];
   const week = weekHence(now, zone);
   const timeline: StoryCardRow['timeline'] = [];
-  if (first) timeline.push({ at: stamp(first.published_at, now, zone, format), text: `First reported by ${first.outlet}.` });
+  if (first) timeline.push({ at: stamp(first.published_at, now, zone, format), text: `Earliest collected coverage: ${first.outlet}.` });
   const events: Array<{ at: Date; text: string; told?: boolean }> = [
     ...distinct.slice(1).map((a) => ({ at: a.published_at, text: `${a.outlet}: ${a.title}` })),
     ...told.map((t) => ({ at: t.at, text: `Told you in the ${t.kind} edition.`, told: true })),
@@ -197,7 +207,13 @@ export function storyCard(
   const count = distinct.length;
   return {
     id: s.id,
+    ...(s.image ? { image: s.image } : {}),
     title: s.title,
+    titleAttribution: s.titleOutlet ? `Headline from ${s.titleOutlet}` : 'Source headline',
+    summaryAttribution: s.lead
+      ? s.leadOutlet ? `Feed excerpt from ${s.leadOutlet}` : 'Feed excerpt'
+      : update && newest ? `${newest.lead ? 'Feed excerpt' : 'Headline'} from ${newest.outlet}` : undefined,
+    ...(update && newest ? { updateAttribution: `${newest.lead ? 'Feed excerpt' : 'Headline'} from ${newest.outlet}` } : {}),
     ...(update ? { lead: update, summary: s.lead || undefined } : s.lead ? { lead: s.lead } : {}),
     ...(update ? { update } : {}),
     ...(s.url ? { url: s.url } : {}),
@@ -217,7 +233,9 @@ export function storyCard(
       ...(when ? [`told you ${when}`] : []),
     ].join(' · '),
     told: toldAt !== null,
+    ...(told.at(-1)?.editionId ? { editionId: told.at(-1)!.editionId } : {}),
     anchor: ctx.anchor,
+    chatContext: `News story ID: ${s.id}. Retrieve its collected articles with news.story using this ID before answering.`,
     quietHint: week.hint,
     quietDone: `${s.topic} is quiet until ${week.until}.`,
     sources: ordered.map((a) => ({
@@ -428,6 +446,18 @@ export async function settingsView(buddi: BuddiHost): Promise<NewsSettingsView> 
   };
 }
 
+/** One polled row keeps the first-run gate and its download state in sync. */
+export async function setupView(buddi: BuddiHost) {
+  const [settings, choice, state] = await Promise.all([
+    settingsView(buddi),
+    buddi.db.query<{ done: boolean; has_sources: boolean; custom_source_setup: boolean }>(`select meaning_setup_done or exists (select 1 from news.sources) as done, exists (select 1 from news.sources) as has_sources, custom_source_setup from news.settings`),
+    meaningFor().state(buddi),
+  ]);
+  const row = meaningRow(state);
+  const gate = !choice.rows[0]?.done;
+  return { busy: gate && (row.state === 'waiting' || row.state === 'downloading'), rows: [{ ...settings, ...row, gate, sourcesGate: !gate && !choice.rows[0]?.has_sources, settingsReady: !gate && !!choice.rows[0]?.has_sources, customSources: choice.rows[0]?.custom_source_setup ?? false, setupDownload: `Download · ${megabytes(state.bytes)}. Includes the model and shared engine. Download once.` }] };
+}
+
 /* ------------------------------------------------------------------ *
  * Queries
  * ------------------------------------------------------------------ */
@@ -444,6 +474,11 @@ export const dashboardQueries: PageQuery[] = [
   },
   { name: 'source_rows', params: none, produce: async (_p, ctx) => sourceRows(ctx.buddi!) },
   { name: 'topic_rows', params: none, produce: async (_p, ctx) => topicRows(ctx.buddi!) },
+  { name: 'starter_review', params: none, produce: async () => ({ sources: starterSources().flatMap((source) => source.topics.map((topic) => ({
+    id: `${topic.topic}:${source.id}`, name: source.name, language: languageName(source.language), url: source.url,
+    topic: STARTER_TOPICS.find((t) => t.id === topic.topic)?.name ?? topic.topic,
+  }))) }) },
+  { name: 'news_setup', params: none, produce: async (_p, ctx) => setupView(ctx.buddi!) },
   { name: 'news_settings', params: none, produce: async (_p, ctx) => settingsView(ctx.buddi!) },
   /** One saved edition, parsed for the chat's edition card; `edition: null` when it is gone. */
   {
@@ -485,8 +520,8 @@ const STORIES = (filter: Filter) => ({
       undo: { tool: 'news.set_topic', label: 'Undo', args: { topic: { row: 'topicId' }, muted: { const: false } } },
     },
   ],
-  ask: { label: 'Ask Anchor', to: { chat: { path: 'anchor' } } },
-  edition: { label: 'Read the edition', to: { chat: { path: 'anchor' } }, when: { path: 'told', equals: true } },
+  ask: { label: 'Ask Anchor', to: { chat: { path: 'anchor' } }, context: { title: { path: 'title' }, text: { path: 'chatContext' }, suggestions: ['Explain this story', 'Compare the sources'] } },
+  edition: { label: 'Read the edition', to: { page: 'stories', params: { edition: { path: 'editionId' } } }, when: { path: 'editionId', not: true, equals: null } },
   emptyStates: [
     {
       when: { path: 'state', equals: 'none' }, warm: true as const, title: 'No news yet',
@@ -525,10 +560,12 @@ export const storiesPage: PageDescriptor = {
   data: { query: 'overview' },
   actions: [
     { kind: 'link', label: 'Sources', to: { page: 'sources' } },
-    { kind: 'link', label: 'Latest edition', tone: 'accent', to: { chat: { path: 'anchor' } }, when: { path: 'anchor', not: true, equals: null } },
+    { kind: 'link', label: 'Latest edition', tone: 'accent', to: { page: 'stories', params: { edition: { const: 'latest' } } } },
   ],
   body: [
+    { kind: 'edition', param: 'edition', query: { query: 'edition', params: { id: { param: 'edition' } } } },
     { kind: 'notice', text: { path: 'lede' } },
+    ...FETCH_LINE,
     {
       kind: 'tabs',
       title: 'Show',
@@ -540,7 +577,7 @@ export const storiesPage: PageDescriptor = {
       tabs: FILTERS.map((filter) => ({
         id: filter,
         label: filter === 'all' ? 'All' : filter === 'untold' ? 'Not yet told' : filter === 'today' ? 'Today' : 'Deals',
-        body: [...FETCH_LINE, STORIES(filter)],
+        body: [STORIES(filter)],
       })),
     },
   ],
@@ -554,9 +591,63 @@ export const sourcesPage: PageDescriptor = {
   place: 'settings',
   icon: 'news',
   data: { query: 'news_settings' },
-  body: [
+  body: [{
+    kind: 'repeat', query: { query: 'news_setup' }, rows: 'rows', key: 'id',
+    poll: { seconds: 2, while: { path: 'busy', equals: true } },
+    body: [
+      {
+        kind: 'section', look: 'setup', title: 'Set up News',
+        when: { path: 'gate', equals: true },
+        note: 'Step 1 of 2 · Story grouping',
+        body: [
+          { kind: 'section', title: 'One story, even when headlines differ', body: [
+            { kind: 'notice', look: 'quiet', text: 'Group reporting about the same event across English and French sources. Everything runs on your computer.' },
+          ] },
+          { kind: 'notice', when: { path: 'state', equals: 'absent' }, text: { path: 'setupDownload' } },
+          { kind: 'notice', when: { path: 'state', equals: 'waiting' }, text: 'Confirm the download below. Setup continues here once it is ready.' },
+          { kind: 'notice', tone: 'warning', when: { path: 'state', equals: 'failed' }, text: { path: 'line' } },
+          { kind: 'approval', path: 'approvalId', when: { path: 'state', equals: 'waiting' } },
+          { kind: 'progress', when: { path: 'state', in: ['downloading', 'ready'] }, value: { path: 'bytes' }, total: { path: 'total' }, label: { path: 'heading' }, done: 'Ready. Your stories can now be grouped by meaning.' },
+          { kind: 'button', when: { path: 'state', equals: 'absent' }, action: { tool: 'news.download_meaning', tone: 'accent', label: 'Review download', busy: 'Preparing download…' } },
+          { kind: 'button', when: { path: 'state', equals: 'failed' }, action: { tool: 'news.download_meaning', tone: 'accent', label: 'Try again', busy: 'Preparing download…' } },
+          { kind: 'button', when: { path: 'state', equals: 'ready' }, action: { tool: 'news.finish_meaning_setup', tone: 'accent', label: 'Choose sources', args: { skip: { const: false } } } },
+          { kind: 'button', when: { path: 'state', not: true, equals: 'ready' }, action: { tool: 'news.finish_meaning_setup', label: 'Set up without downloading', args: { skip: { const: true } } } },
+          { kind: 'notice', look: 'quiet', when: { path: 'state', in: ['absent', 'failed'] }, text: 'Without the download, similar headlines are grouped using shared words.' },
+          { kind: 'notice', look: 'quiet', when: { path: 'state', in: ['waiting', 'downloading'] }, text: 'You can leave this page; the download will continue once approved.' },
+          { kind: 'notice', look: 'quiet', text: 'Next: choose your US and International sources.' },
+        ],
+      },
+
+      {
+        kind: 'section', look: 'setup', title: 'Choose your sources',
+        note: 'Step 2 of 2 · Sources', when: { path: 'sourcesGate', equals: true },
+        body: [
+          { kind: 'section', title: 'US and International', body: [
+            { kind: 'notice', look: 'quiet', text: 'Start with 28 feeds in English and French, from wire services, public broadcasters and other news outlets. You can change them at any time.' },
+          ] },
+          { kind: 'expand', label: 'Review the 28 starter feeds', body: [
+            { kind: 'list', query: { query: 'starter_review' }, rows: 'sources', key: 'id',
+              groupBy: { key: 'topic', label: 'topic' },
+              item: { title: { path: 'name' }, tag: { path: 'language' }, sub: { path: 'url' } },
+            },
+          ] },
+          { kind: 'form', title: 'Add your first topic', when: { path: 'customSources', equals: true },
+            fields: [
+              { name: 'name', label: 'Topic name', type: 'text', required: true },
+              { name: 'keywords', label: 'Keywords', type: 'text', required: true, hint: 'Separate words or phrases with commas.' },
+              { name: 'feeds', label: 'Feed or website (optional)', type: 'text', hint: 'Without a feed, News searches Google News for these keywords in English and French.' },
+            ],
+            submit: { tool: 'news.add_topic', label: 'Add topic and sources', tone: 'accent', busy: 'Adding…', done: { path: 'note' }, args: { name: { field: 'name' }, keywords: { field: 'keywords' }, feeds: { field: 'feeds' } } },
+          },
+          { kind: 'notice', look: 'quiet', text: 'Once added, News starts reading your sources. The first stories may take a minute or two.' },
+          { kind: 'button', when: { path: 'customSources', equals: false }, action: { tool: 'news.choose_custom_sources', label: 'Add my own sources' } },
+          { kind: 'button', action: { tool: 'news.enable_starter', label: 'Use starter sources', tone: 'accent', busy: 'Adding sources…', done: { path: 'note' } } },
+        ],
+      },
+
     {
       kind: 'section',
+      when: { path: 'settingsReady', equals: true },
       title: 'Sources',
       note: 'What each topic reads. It started with a mix of wire services, public broadcasters and local outlets, in English and French; change any of it.',
       body: [
@@ -612,6 +703,7 @@ export const sourcesPage: PageDescriptor = {
     },
     {
       kind: 'section',
+      when: { path: 'settingsReady', equals: true },
       title: 'Topics',
       body: [
         {
@@ -632,7 +724,8 @@ export const sourcesPage: PageDescriptor = {
     },
     {
       kind: 'section',
-      title: 'Stories by meaning',
+      when: { path: 'settingsReady', equals: true },
+      title: 'Story grouping',
       note: MEANING_NOTE,
       body: [
         {
@@ -643,6 +736,7 @@ export const sourcesPage: PageDescriptor = {
           poll: { seconds: 2, while: { path: 'busy', equals: true } },
           body: [
             { kind: 'notice', text: { path: 'line' }, when: { path: 'state', in: ['absent', 'waiting', 'failed'] } },
+            { kind: 'approval', path: 'approvalId', when: { path: 'state', equals: 'waiting' } },
             {
               kind: 'progress',
               when: { path: 'state', in: ['downloading', 'ready'] },
@@ -654,7 +748,7 @@ export const sourcesPage: PageDescriptor = {
             {
               kind: 'button',
               when: { path: 'state', in: ['absent', 'failed'] },
-              action: { tool: 'news.download_meaning', label: '{action}', busy: 'Asking…', done: { path: 'note' } },
+              action: { tool: 'news.download_meaning', tone: 'accent', label: '{action}', busy: 'Asking…', done: { path: 'note' } },
             },
           ],
         },
@@ -662,6 +756,7 @@ export const sourcesPage: PageDescriptor = {
     },
     {
       kind: 'section',
+      when: { path: 'settingsReady', equals: true },
       title: 'Read aloud',
       body: [
         { kind: 'notice', text: 'Needs the Speech plugin and a voice: without them, editions arrive as text.', when: { path: 'speech', equals: false } },
@@ -670,7 +765,7 @@ export const sourcesPage: PageDescriptor = {
           initial: { query: 'news_settings' },
           fields: [
             {
-              name: 'voiceEditions', label: 'Editions Anchor also sends as a voice message', type: 'select', multiple: true, from: 'voiceEditions',
+              name: 'voiceEditions', label: 'Editions Anchor also sends as a voice message', hint: 'Enabling an edition authorizes its narration using your Speech settings, without another approval each run.', type: 'select', multiple: true, from: 'voiceEditions',
               options: [{ value: 'morning', label: 'Morning' }, { value: 'midday', label: 'Midday' }, { value: 'evening', label: 'Evening' }],
             },
           ],
@@ -680,13 +775,16 @@ export const sourcesPage: PageDescriptor = {
     },
     {
       kind: 'section',
-      title: 'What was told',
+      when: { path: 'settingsReady', equals: true },
+      title: 'History',
       note: 'Anchor remembers which stories it told, so nothing is told twice. Stories are kept 30 days.',
       body: [
+        { kind: 'notice', look: 'quiet', text: 'Clear the record of what was told. Your topics, sources and saved stories are kept.' },
         { kind: 'button', action: { tool: 'news.set_settings', label: 'Forget what was told', confirm: 'Forget every edition and what it told? The next edition may repeat stories.', args: { forgetTold: { const: true } }, done: 'Forgotten.' } },
       ],
     },
-  ],
+      ],
+  }],
 } as PageDescriptor;
 
 export const newsPages: PageDescriptor[] = [storiesPage, sourcesPage];

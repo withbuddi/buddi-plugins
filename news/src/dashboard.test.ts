@@ -78,10 +78,21 @@ describe('a story on the page', () => {
     expect(card.quiet).toBe(true);
     expect(card.meta).toBe('First seen 06:10 · 3 sources · told you this morning');
     expect(card.sources[0]).toMatchObject({ title: 'Title', url: 'https://www.rfi.fr/x', outlet: 'RFI Afrique', logo: 'rfi.fr', meta: 'RFI Afrique · French · 06:10' });
-    expect(card.timeline[0]).toEqual({ at: '06:10', text: 'First reported by RFI Afrique.' });
+    expect(card.timeline[0]).toEqual({ at: '06:10', text: 'Earliest collected coverage: RFI Afrique.' });
     expect(card.timeline.some((t) => t.told && t.text === 'Told you in the morning edition.')).toBe(true);
     expect(card.quietHint).toBe('Back on its own next Saturday');
     expect(card.anchor).toBe('anchor');
+  });
+
+  it('labels the actual publishers and suppresses an update that repeats the excerpt', () => {
+    const r = ranked('same', 'us', 'update', 3, [article({ lead: '  Lead.  ', fetched_at: NOW })]);
+    r.summary.titleOutlet = 'Publisher A';
+    r.summary.leadOutlet = 'Publisher B';
+    const card = storyCard(r, [], { now: NOW, zone: ZONE, format: '24h', anchor: null });
+    expect(card.titleAttribution).toBe('Headline from Publisher A');
+    expect(card.summaryAttribution).toBe('Feed excerpt from Publisher B');
+    expect(card.update).toBeUndefined();
+    expect(card.updateAttribution).toBeUndefined();
   });
 
   it('leads an update with what is new since it was told', () => {
@@ -93,6 +104,7 @@ describe('a story on the page', () => {
     expect(card.mark).toEqual({ kind: 'new', text: 'New since this morning' });
     expect(card.lead).toBe('Ghana proposes a common customs window by 2028.');
     expect(card.update).toBe(card.lead);
+    expect(card.updateAttribution).toBe('Feed excerpt from Jeune Afrique');
     expect(card.summary).toBe('Lead.');
     expect(card.quiet).toBeUndefined();
   });

@@ -248,6 +248,11 @@ export async function ingest(db: Db, source: SourceRow, links: TopicLink[], item
       );
       articleRow = id;
     }
+    if (item.image && !aggregator) await db.query(
+      `update news.articles set image_url = $2, image_caption = $3, image_credit = $4
+       where id = $1 and image_url is null`,
+      [articleRow, item.image.url, item.image.caption ?? null, item.image.credit ?? null],
+    );
     for (const t of topics) {
       const { rowCount } = await db.query(
         `insert into news.article_topics (article_id, topic_id) values ($1, $2) on conflict do nothing`,

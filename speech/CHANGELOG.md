@@ -6,6 +6,10 @@ What changes in @withbuddi/plugin-speech from one release to the next, newest fi
 
 ### Changed
 
+- Saved editions include their recording in the drawer; edition players support seeking and local MP3 downloads. Speech and saved-edition canvas results show the content with technical details collapsed.
+
+- Enabling Read aloud for a News edition authorizes Speech for that edition run; other conversations keep their approval rules.
+
 - Settings → Speech is simpler: no more Service menu. Listening and Speaking each pick an account, and every account that can do it is in the list with what it does: "Gemini · listens and speaks", "OpenAI key · listens and speaks", "Ollama Cloud · speaks (untested)". Whisper and Kokoro stay first, and are used by themselves once installed.
 - Accounts that can't do audio are no longer hidden: a ChatGPT subscription or a Claude sign-in shows under each row, greyed, with the reason ("ChatGPT subscription: its backend has no audio").
 - Models come from the account itself: OpenAI's transcribe and TTS models, Gemini's Flash and TTS models, or whatever your own server lists. Before an account is saved or tested you see its usual audio models.

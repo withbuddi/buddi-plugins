@@ -1,3 +1,4 @@
+import { cacheStoryImages } from './images.js';
 /**
  * The timer: `news.fetch`, a source in core's sense with no agent in the loop
  * (spec §4.1). Every minute it takes the sources that are due — at most
@@ -210,6 +211,7 @@ async function doRefresh(buddi: BuddiHost, opts: RefreshOptions): Promise<Refres
   }
   report.links = await resolvePending(db, http, now, RESOLVE_PER_TICK, (line) => buddi.log(line), opts.sleep);
   await moveKeptLogos(buddi);
+  await cacheStoryImages(buddi);
   report.logos = await fetchMissingLogos(buddi, LOGOS_PER_TICK, opts.sleep);
   if (now.getTime() - lastPrune >= PRUNE_EVERY_MS) {
     lastPrune = now.getTime();
