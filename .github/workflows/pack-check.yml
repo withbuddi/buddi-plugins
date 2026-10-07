@@ -62,7 +62,13 @@ jobs:
             echo "BUDDI_PLUGINS_FILE=$scratch/plugins.json"
             echo "BUDDI_ENV_FILE=$scratch/empty.env"
           } >> "$GITHUB_ENV"
-      - run: buddi migrate
+      # `buddi migrate` is a checkout command; the packaged CLI from npm refuses it
+      # and migrates when it starts instead. The checkout built above migrates
+      # core's schema here, with the same database; plugin migrations are applied
+      # by `buddi plugins approve` below.
+      - name: Migrate core from the checkout
+        working-directory: buddi
+        run: pnpm db:migrate
       - name: Stage, approve, list
         run: |
           for p in $PLUGINS; do
