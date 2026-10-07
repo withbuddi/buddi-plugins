@@ -2,7 +2,7 @@
 
 What changes in @withbuddi/plugin-speech from one release to the next, newest first.
 
-## 0.1.5 — unreleased
+## 0.1.6 — 2026-10-07
 
 ### Changed
 

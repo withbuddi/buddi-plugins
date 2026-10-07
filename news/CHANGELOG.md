@@ -2,7 +2,7 @@
 
 What changes in @withbuddi/plugin-news from one release to the next, newest first.
 
-## Unreleased
+## 0.2.6 — 2026-10-07
 
 ### Added
 
